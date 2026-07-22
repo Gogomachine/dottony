@@ -1,0 +1,513 @@
+<title>Doton v2 — пиксельные направления</title>
+<style>
+  :root{
+    --bg:#F4F5F7;
+    --surface:#FFFFFF;
+    --ink:#15181E;
+    --muted:#636B78;
+    --line:#E3E6EB;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0E1013;
+      --surface:#16191E;
+      --ink:#E8EAEE;
+      --muted:#8B93A0;
+      --line:#262B33;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0E1013;
+    --surface:#16191E;
+    --ink:#E8EAEE;
+    --muted:#8B93A0;
+    --line:#262B33;
+  }
+  :root[data-theme="light"]{
+    --bg:#F4F5F7;
+    --surface:#FFFFFF;
+    --ink:#15181E;
+    --muted:#636B78;
+    --line:#E3E6EB;
+  }
+
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    line-height:1.55;
+  }
+  main{
+    max-width:1020px;
+    margin:0 auto;
+    padding:48px 20px 80px;
+    display:flex;
+    flex-direction:column;
+    gap:56px;
+  }
+
+  header.hero h1{
+    font-size:clamp(28px,4.5vw,42px);
+    font-weight:800;
+    letter-spacing:-0.02em;
+    text-wrap:balance;
+    margin-bottom:10px;
+  }
+  header.hero p{color:var(--muted);max-width:58ch;}
+
+  .eyebrow{
+    display:inline-block;
+    font-size:12px;
+    font-weight:700;
+    letter-spacing:0.12em;
+    text-transform:uppercase;
+    color:var(--k,var(--muted));
+    margin-bottom:6px;
+  }
+
+  section.dir{
+    display:grid;
+    grid-template-columns:362px 1fr;
+    gap:36px;
+    align-items:start;
+  }
+  section.dir h2{
+    font-size:26px;
+    font-weight:800;
+    letter-spacing:-0.01em;
+    margin-bottom:8px;
+  }
+  .dir-copy{display:flex;flex-direction:column;gap:16px;max-width:60ch;}
+  .dir-copy p.lead{font-size:16px;}
+
+  .chips{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+  .chips i{
+    width:34px;height:34px;
+    background:var(--c);
+    border:1px solid rgba(0,0,0,0.08);
+    display:inline-block;
+  }
+  .chips .chip-note{font-size:13px;color:var(--muted);margin-left:4px;}
+
+  .facts{display:flex;flex-direction:column;gap:8px;padding:0;margin:0;list-style:none;}
+  .facts li{display:grid;grid-template-columns:92px 1fr;gap:12px;font-size:14px;}
+  .facts li b{
+    font-weight:700;font-size:12px;letter-spacing:0.08em;
+    text-transform:uppercase;color:var(--muted);padding-top:2px;
+  }
+
+  /* ---------- Phone mockup ---------- */
+  .phone{
+    width:362px;
+    padding:14px;
+    border-radius:44px;
+    background:#101216;
+    box-shadow:0 24px 50px -24px rgba(10,14,24,0.5);
+    flex-shrink:0;
+  }
+  .screen{
+    position:relative;
+    border-radius:32px;
+    padding:18px 16px 16px;
+    display:flex;
+    flex-direction:column;
+    gap:14px;
+    overflow:hidden;
+  }
+  .hud{
+    display:grid;
+    grid-template-columns:1fr auto 1fr;
+    align-items:center;
+    gap:10px;
+  }
+  .pl{display:flex;flex-direction:column;gap:5px;}
+  .pl.opp{align-items:flex-end;}
+  .pname{
+    font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    font-size:11px;font-weight:700;
+    letter-spacing:0.14em;text-transform:uppercase;
+    opacity:0.55;
+  }
+  .timer{display:flex;flex-direction:column;align-items:center;gap:6px;}
+  .tbar{
+    width:84px;height:6px;
+    background:var(--track,rgba(0,0,0,0.1));
+    overflow:hidden;
+  }
+  .tbar i{display:block;height:100%;background:var(--fill,#333);}
+
+  .board{
+    position:relative;
+    display:grid;
+    grid-template-columns:repeat(6,48px);
+    grid-auto-rows:48px;
+    width:288px;
+    margin:0 auto;
+    padding:10px;
+    box-sizing:content-box;
+  }
+  .board svg.chainline{
+    position:absolute;
+    left:10px;top:10px;
+    z-index:0;
+    pointer-events:none;
+  }
+  .pdot{place-self:center;position:relative;z-index:1;display:block;}
+  .pdot.on{transform:scale(1.16);}
+
+  .px{position:relative;display:inline-block;}
+  .px > i{position:absolute;left:0;top:0;display:block;}
+
+  .foot{display:flex;align-items:center;gap:14px;}
+  .mini{
+    display:grid;
+    grid-template-columns:repeat(6,12px);
+    grid-auto-rows:12px;
+    padding:6px;
+  }
+  .mini .mdot{width:8px;height:8px;background:var(--c);place-self:center;}
+  .fmeta{display:flex;flex-direction:column;gap:4px;}
+  .flabel{
+    font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    font-size:10px;font-weight:700;
+    letter-spacing:0.12em;text-transform:uppercase;
+    opacity:0.5;
+  }
+  .combo{
+    font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    font-size:14px;font-weight:800;
+    font-variant-numeric:tabular-nums;
+  }
+
+  @media (prefers-reduced-motion: no-preference){
+    svg.chainline polyline{
+      stroke-dasharray:170;
+      animation:draw 2.8s ease-in-out infinite;
+    }
+    @keyframes draw{
+      0%{stroke-dashoffset:170;}
+      50%{stroke-dashoffset:0;}
+      85%{stroke-dashoffset:0;}
+      100%{stroke-dashoffset:0;opacity:0;}
+    }
+    .skin-led .pdot.on{animation:ledPulse 1.4s ease-in-out infinite;}
+    @keyframes ledPulse{
+      0%,100%{filter:drop-shadow(0 0 5px rgba(255,255,255,0.25));}
+      50%{filter:drop-shadow(0 0 10px rgba(255,255,255,0.5));}
+    }
+  }
+
+  /* ---------- Skin A: Табло (LED dot-matrix) ---------- */
+  .skin-led .screen{background:#0B0C0F;color:#F2E8D5;}
+  .skin-led .board{
+    background:#08090B;
+    border:1px solid #1B1E24;
+    background-image:radial-gradient(circle, #15181E 1.3px, transparent 1.6px);
+    background-size:6px 6px;
+  }
+  .skin-led .mini{
+    background:#08090B;border:1px solid #1B1E24;
+    background-image:radial-gradient(circle, #15181E 0.9px, transparent 1.1px);
+    background-size:4px 4px;
+  }
+  .skin-led .mini .mdot{border-radius:50%;box-shadow:0 0 5px -1px var(--c);}
+  .skin-led .timer{
+    --track:#1B1E24;--fill:#FFB224;
+  }
+  .skin-led .tbar{background-image:repeating-linear-gradient(90deg, transparent 0 4px, #0B0C0F 4px 6px);}
+  .skin-led .tbar i{box-shadow:0 0 8px rgba(255,178,36,0.5);}
+  .skin-led .combo{color:#FFB224;text-shadow:0 0 10px rgba(255,178,36,0.45);}
+  .skin-led .pdot{filter:drop-shadow(0 0 4px rgba(255,255,255,0.12));}
+  .skin-led svg.chainline polyline{filter:drop-shadow(0 0 5px rgba(61,139,255,0.8));}
+
+  /* ---------- Skin B: Аркада (CRT) ---------- */
+  .skin-crt .screen{background:#131028;color:#EDEBFF;}
+  .skin-crt .screen::after{
+    content:"";
+    position:absolute;inset:0;z-index:5;pointer-events:none;
+    background:
+      repeating-linear-gradient(0deg, rgba(4,2,16,0.22) 0 1px, transparent 1px 3px),
+      radial-gradient(120% 100% at 50% 40%, transparent 55%, rgba(4,2,16,0.5) 100%);
+  }
+  .skin-crt .board{background:#0D0B1E;border:2px solid #2A2450;}
+  .skin-crt .mini{background:#0D0B1E;border:2px solid #2A2450;}
+  .skin-crt .timer{--track:#2A2450;--fill:#3CF06B;}
+  .skin-crt .tbar{background-image:repeating-linear-gradient(90deg, transparent 0 6px, #131028 6px 8px);}
+  .skin-crt .combo{color:#FFE24A;}
+  .skin-crt .pname{opacity:0.7;color:#8F86D8;}
+  .skin-crt svg.chainline polyline{opacity:0.75;}
+
+  /* ---------- Skin C: Пиксель-корт (light) ---------- */
+  .skin-court .screen{
+    background:#F7F8FA;color:#15181D;
+    background-image:
+      linear-gradient(#EDEFF3 1px, transparent 1px),
+      linear-gradient(90deg, #EDEFF3 1px, transparent 1px);
+    background-size:12px 12px;
+  }
+  .skin-court .board{background:#FFFFFF;border:2px solid #15181D;}
+  .skin-court .mini{background:#FFFFFF;border:2px solid #15181D;}
+  .skin-court .timer{--track:#E4E7EC;--fill:#15181D;}
+  .skin-court .combo{color:#2E5BFF;}
+  .skin-court .pdot{filter:drop-shadow(3px 3px 0 rgba(21,24,29,0.18));}
+  .skin-court .pdot.on{filter:drop-shadow(3px 3px 0 rgba(21,24,29,0.28));}
+
+  /* ---------- Comparison ---------- */
+  .card{
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:16px;
+    padding:24px;
+  }
+  .table-wrap{overflow-x:auto;}
+  table{border-collapse:collapse;width:100%;font-size:14px;min-width:560px;}
+  th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top;}
+  th{font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);font-weight:700;}
+  tr:last-child td{border-bottom:none;}
+  td b{font-weight:700;}
+
+  .reco{border-left:3px solid #FFB224;padding-left:20px;}
+  .reco h3{font-size:19px;font-weight:800;margin-bottom:8px;}
+  .footnote{font-size:13px;color:var(--muted);max-width:70ch;}
+
+  @media (max-width:780px){
+    section.dir{grid-template-columns:1fr;}
+    .phone{margin:0 auto;}
+  }
+  @media (max-width:420px){
+    .phone{transform:scale(0.88);transform-origin:top center;margin-bottom:-60px;}
+  }
+</style>
+
+<main>
+  <header class="hero">
+    <span class="eyebrow" style="--k:#FFB224">Doton v2 · визуал, раунд 2</span>
+    <h1>Пиксель: три трактовки</h1>
+    <p>Отталкиваемся от «Стадиона», но ищем уникальное. Ключевая находка: стадионное табло — само по себе пиксельное. Ниже три пиксельных мира, экран дуэли тот же — поле 6×6, цепочка из четырёх синих, 0:47 на таймере. Все цифры на макетах реально собраны из пикселей.</p>
+  </header>
+
+  <section class="dir">
+    <div class="phone skin-led">
+      <div class="screen">
+        <div class="hud">
+          <div class="pl you"><span class="pname">Ты</span><span class="px-text" data-px="1 240" data-unit="3" data-color="#FFB224" data-round="1"></span></div>
+          <div class="timer"><span class="px-text" data-px="0:47" data-unit="3" data-color="#FFB224" data-round="1"></span><div class="tbar"><i style="width:52%"></i></div></div>
+          <div class="pl opp"><span class="pname">Kira</span><span class="px-text" data-px="1 105" data-unit="3" data-color="#8A7A55" data-round="1"></span></div>
+        </div>
+        <div class="board" data-skin="led">
+          <svg class="chainline" viewBox="0 0 288 288" width="288" height="288" aria-hidden="true">
+            <polyline points="120,24 72,72 120,72 120,120" fill="none" stroke="#3D8BFF" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="0.1 12" opacity="0.9"/>
+          </svg>
+        </div>
+        <div class="foot">
+          <div class="mini" data-skin="led"></div>
+          <div class="fmeta"><span class="flabel">Поле соперника</span><span class="combo">+40 · цепь ×4</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="dir-copy">
+      <div>
+        <span class="eyebrow" style="--k:#FFB224">Вариант A</span>
+        <h2>Табло</h2>
+      </div>
+      <p class="lead">Весь интерфейс — стадионное LED-табло: и счёт, и таймер, и сами фишки собраны из светящихся точек на матрице неактивных диодов. Тезис направления: <b>игра про точки, в которой из точек сделано всё</b>. Это и есть «Стадион», доведённый до уникальности — спорт и пиксель в одном образе.</p>
+      <div class="chips">
+        <i style="--c:#FF4B3E;border-radius:50%"></i><i style="--c:#3D8BFF;border-radius:50%"></i><i style="--c:#FFB224;border-radius:50%"></i><i style="--c:#35D461;border-radius:50%"></i>
+        <i style="--c:#0B0C0F;border-radius:50%"></i>
+        <span class="chip-note">LED-диоды на погашенной матрице, янтарь — служебный</span>
+      </div>
+      <ul class="facts">
+        <li><b>Шрифты</b><span>Doto — дот-матричный variable-шрифт (само название играет с «Doton»), IBM Plex Mono — для текста.</span></li>
+        <li><b>Сильное</b><span>Уникальная, цельная метафора, которой нет ни у одной игры жанра. Кольцо = весь цвет «вспыхивает» на табло. Тёмная база идеальна для вечернего Telegram.</span></li>
+        <li><b>Риск</b><span>Нужен светлый режим — решается инверсией: «дневное табло» с тёмными точками на светлой матрице (e-ink). Проверим на прототипе.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="dir">
+    <div class="phone skin-crt">
+      <div class="screen">
+        <div class="hud">
+          <div class="pl you"><span class="pname">1UP</span><span class="px-text" data-px="1 240" data-unit="3" data-color="#EDEBFF"></span></div>
+          <div class="timer"><span class="px-text" data-px="0:47" data-unit="3" data-color="#3CF06B"></span><div class="tbar"><i style="width:52%"></i></div></div>
+          <div class="pl opp"><span class="pname">2UP</span><span class="px-text" data-px="1 105" data-unit="3" data-color="#8F86D8"></span></div>
+        </div>
+        <div class="board" data-skin="crt">
+          <svg class="chainline" viewBox="0 0 288 288" width="288" height="288" aria-hidden="true">
+            <polyline points="120,24 72,72 120,72 120,120" fill="none" stroke="#00E5FF" stroke-width="8" stroke-linecap="square" stroke-linejoin="miter" opacity="0.8"/>
+          </svg>
+        </div>
+        <div class="foot">
+          <div class="mini" data-skin="crt"></div>
+          <div class="fmeta"><span class="flabel">Поле соперника</span><span class="combo">+40 · цепь ×4</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="dir-copy">
+      <div>
+        <span class="eyebrow" style="--k:#3CF06B">Вариант B</span>
+        <h2>Аркада</h2>
+      </div>
+      <p class="lead">Аркадный автомат: CRT-развёртка, глубокий индиго, кислотные спрайты, счёт как «1UP / 2UP». Дуэль превращается в версус-режим на одном автомате — ностальгия по залу игровых автоматов, честная и без иронии.</p>
+      <div class="chips">
+        <i style="--c:#FF3355"></i><i style="--c:#00E5FF"></i><i style="--c:#FFE24A"></i><i style="--c:#3CF06B"></i>
+        <i style="--c:#131028"></i>
+        <span class="chip-note">аркадный RGB на глубоком индиго</span>
+      </div>
+      <ul class="facts">
+        <li><b>Шрифты</b><span>Press Start 2P — заголовки и счёт, VT323 или IBM Plex Mono — текст.</span></li>
+        <li><b>Сильное</b><span>Мгновенно считываемая эстетика, море готовых приёмов: вспышки, «COMBO», встряска экрана. Ретро продаёт себя в шеринге.</span></li>
+        <li><b>Риск</b><span>Самое людное поле: ретро-аркад в сторах сотни, сложнее выделиться. Скан-линии на мелких экранах съедают читаемость — придётся дозировать.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="dir">
+    <div class="phone skin-court">
+      <div class="screen">
+        <div class="hud">
+          <div class="pl you"><span class="pname">Ты</span><span class="px-text" data-px="1 240" data-unit="3" data-color="#15181D"></span></div>
+          <div class="timer"><span class="px-text" data-px="0:47" data-unit="3" data-color="#15181D"></span><div class="tbar"><i style="width:52%"></i></div></div>
+          <div class="pl opp"><span class="pname">Kira</span><span class="px-text" data-px="1 105" data-unit="3" data-color="#9AA1AC"></span></div>
+        </div>
+        <div class="board" data-skin="court">
+          <svg class="chainline" viewBox="0 0 288 288" width="288" height="288" aria-hidden="true">
+            <polyline points="120,24 72,72 120,72 120,120" fill="none" stroke="#2E5BFF" stroke-width="8" stroke-linecap="square" stroke-linejoin="miter" opacity="0.85"/>
+          </svg>
+        </div>
+        <div class="foot">
+          <div class="mini" data-skin="court"></div>
+          <div class="fmeta"><span class="flabel">Поле соперника</span><span class="combo">+40 · цепь ×4</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="dir-copy">
+      <div>
+        <span class="eyebrow" style="--k:#2E5BFF">Вариант C</span>
+        <h2>Пиксель-корт</h2>
+      </div>
+      <p class="lead">«Стадион» в пиксельном исполнении: светлый корт на миллиметровке, флэтовые пиксель-фишки с жёстким офсетным падением тени, чернильные пиксель-цифры. Спортивная ясность остаётся главной, пиксель — характер, а не костюм.</p>
+      <div class="chips">
+        <i style="--c:#E5484D"></i><i style="--c:#2E5BFF"></i><i style="--c:#FFB224"></i><i style="--c:#30A46C"></i>
+        <i style="--c:#F7F8FA"></i>
+        <span class="chip-note">палитра «Стадиона», отрисованная пикселями</span>
+      </div>
+      <ul class="facts">
+        <li><b>Шрифты</b><span>Silkscreen — пиксельные цифры и заголовки, Archivo — текст интерфейса.</span></li>
+        <li><b>Сильное</b><span>Читаемость «Стадиона» + запоминающийся пиксельный почерк. Светлая и тёмная темы получаются симметрично, без ухищрений.</span></li>
+        <li><b>Риск</b><span>Самый компромиссный: уникальности меньше, чем у «Табло». Пиксель здесь украшение, а не идея.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="card">
+    <span class="eyebrow">Сравнение</span>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Направление</th><th>Идея</th><th>Уникальность</th><th>Главный риск</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><b>A · Табло</b></td><td>Игра про точки, где всё из точек</td><td>Высокая — своей метафоры нет ни у кого</td><td>Светлую тему надо изобрести (e-ink инверсия)</td></tr>
+          <tr><td><b>B · Аркада</b></td><td>Версус на одном автомате</td><td>Средняя — жанр ретро переполнен</td><td>Скан-линии против читаемости</td></tr>
+          <tr><td><b>C · Пиксель-корт</b></td><td>«Стадион» пиксельным почерком</td><td>Средняя — пиксель как украшение</td><td>Компромисс без сильного тезиса</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="reco">
+    <h3>Моя рекомендация</h3>
+    <p>Ставлю на <b>«Табло»</b>. Это не «Стадион или пиксель», а их пересечение: спортивное табло по природе пиксельное, и метафора «игра про точки, где из точек сделано всё» — тот самый уникальный, запоминающийся образ, который ты ищешь. Она масштабируется на всю игру: кольцо — вспышка всего цвета на матрице, победа — бегущая строка, лого — имя из диодов, звук — стадионный баззер. Плюс шрифт Doto будто создан для нас по названию. От «Аркады» возьмём дозированные приёмы (встряска, вспышка COMBO), «Пиксель-корт» держим запасным, если «дневное табло» не решится красиво.</p>
+  </section>
+
+  <p class="footnote">Цифры на макетах собраны из настоящих пиксельных матриц (5×7, как на реальных LED-табло), фишки — пиксельные круги 7×7. В продакшене их заменит согласованная пиксель-сетка и шрифты Doto / Press Start 2P / Silkscreen соответственно.</p>
+</main>
+
+<script>
+  const MATRIX = [
+    ['a','c','b','d','b','a'],
+    ['c','b','b','a','d','c'],
+    ['d','a','b','c','a','b'],
+    ['b','d','a','a','c','d'],
+    ['a','b','c','d','b','a'],
+    ['c','a','d','b','a','c'],
+  ];
+  const CHAIN = new Set(['0,2','1,1','1,2','2,2']);
+  const SKINS = {
+    led:  {a:'#FF4B3E', b:'#3D8BFF', c:'#FFB224', d:'#35D461', round:true,  shrink:1},
+    crt:  {a:'#FF3355', b:'#00E5FF', c:'#FFE24A', d:'#3CF06B', round:false, shrink:0},
+    court:{a:'#E5484D', b:'#2E5BFF', c:'#FFB224', d:'#30A46C', round:false, shrink:0},
+  };
+
+  const DOT_MASK = ['0011100','0111110','1111111','1111111','1111111','0111110','0011100'];
+  const DIGITS = {
+    '0':['01110','10001','10011','10101','11001','10001','01110'],
+    '1':['00100','01100','00100','00100','00100','00100','01110'],
+    '2':['01110','10001','00001','00110','01000','10000','11111'],
+    '3':['11110','00001','00001','01110','00001','00001','11110'],
+    '4':['00010','00110','01010','10010','11111','00010','00010'],
+    '5':['11111','10000','11110','00001','00001','10001','01110'],
+    '6':['00110','01000','10000','11110','10001','10001','01110'],
+    '7':['11111','00001','00010','00100','01000','01000','01000'],
+    '8':['01110','10001','10001','01110','10001','10001','01110'],
+    '9':['01110','10001','10001','01111','00001','00010','01100'],
+    ':':['0','0','1','0','1','0','0'],
+    ' ':['00','00','00','00','00','00','00'],
+  };
+
+  function pixelEl(mask, unit, color, round, shrink){
+    const cols = mask[0].length, rows = mask.length;
+    const wrap = document.createElement('span');
+    wrap.className = 'px';
+    wrap.style.width = cols * unit + 'px';
+    wrap.style.height = rows * unit + 'px';
+    const base = document.createElement('i');
+    base.style.width = unit + 'px';
+    base.style.height = unit + 'px';
+    if (round) base.style.borderRadius = '50%';
+    const parts = [];
+    mask.forEach((row, r) => {
+      for (let c = 0; c < row.length; c++) {
+        if (row[c] === '1') parts.push(`${c*unit}px ${r*unit}px 0 ${-shrink}px ${color}`);
+      }
+    });
+    base.style.boxShadow = parts.join(',');
+    wrap.appendChild(base);
+    return wrap;
+  }
+
+  // Пиксельные цифры (счёт, таймер)
+  document.querySelectorAll('.px-text').forEach(el => {
+    const unit = +el.dataset.unit;
+    const color = el.dataset.color;
+    const round = !!el.dataset.round;
+    el.style.display = 'inline-flex';
+    el.style.gap = unit + 'px';
+    [...el.dataset.px].forEach(ch => {
+      el.appendChild(pixelEl(DIGITS[ch] || DIGITS[' '], unit, color, round, round ? 0.5 : 0));
+    });
+  });
+
+  // Поля
+  document.querySelectorAll('.board[data-skin]').forEach(el => {
+    const s = SKINS[el.dataset.skin];
+    MATRIX.forEach((row, r) => row.forEach((letter, c) => {
+      const d = pixelEl(DOT_MASK, 5, s[letter], s.round, s.shrink);
+      d.classList.add('pdot');
+      if (CHAIN.has(r + ',' + c)) d.classList.add('on');
+      el.appendChild(d);
+    }));
+  });
+
+  // Мини-поля
+  document.querySelectorAll('.mini[data-skin]').forEach(el => {
+    const s = SKINS[el.dataset.skin];
+    MATRIX.forEach(row => row.forEach(letter => {
+      const d = document.createElement('div');
+      d.className = 'mdot';
+      d.style.setProperty('--c', s[letter]);
+      el.appendChild(d);
+    }));
+  });
+</script>
