@@ -1,0 +1,460 @@
+<title>Doton v2 — направления визуала</title>
+<style>
+  :root{
+    --bg:#F4F5F7;
+    --surface:#FFFFFF;
+    --ink:#15181E;
+    --muted:#636B78;
+    --line:#E3E6EB;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0E1013;
+      --surface:#16191E;
+      --ink:#E8EAEE;
+      --muted:#8B93A0;
+      --line:#262B33;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0E1013;
+    --surface:#16191E;
+    --ink:#E8EAEE;
+    --muted:#8B93A0;
+    --line:#262B33;
+  }
+  :root[data-theme="light"]{
+    --bg:#F4F5F7;
+    --surface:#FFFFFF;
+    --ink:#15181E;
+    --muted:#636B78;
+    --line:#E3E6EB;
+  }
+
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    line-height:1.55;
+  }
+  main{
+    max-width:1020px;
+    margin:0 auto;
+    padding:48px 20px 80px;
+    display:flex;
+    flex-direction:column;
+    gap:56px;
+  }
+
+  header.hero h1{
+    font-size:clamp(28px,4.5vw,42px);
+    font-weight:800;
+    letter-spacing:-0.02em;
+    text-wrap:balance;
+    margin-bottom:10px;
+  }
+  header.hero p{
+    color:var(--muted);
+    max-width:56ch;
+  }
+
+  .eyebrow{
+    display:inline-block;
+    font-size:12px;
+    font-weight:700;
+    letter-spacing:0.12em;
+    text-transform:uppercase;
+    color:var(--k,var(--muted));
+    margin-bottom:6px;
+  }
+
+  section.dir{
+    display:grid;
+    grid-template-columns:362px 1fr;
+    gap:36px;
+    align-items:start;
+  }
+  section.dir h2{
+    font-size:26px;
+    font-weight:800;
+    letter-spacing:-0.01em;
+    margin-bottom:8px;
+  }
+  .dir-copy{display:flex;flex-direction:column;gap:16px;max-width:60ch;}
+  .dir-copy p.lead{font-size:16px;}
+  .dir-copy .muted{color:var(--muted);font-size:14px;}
+
+  .chips{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+  .chips i{
+    width:34px;height:34px;border-radius:50%;
+    background:var(--c);
+    border:1px solid rgba(0,0,0,0.08);
+    display:inline-block;
+  }
+  .chips .chip-note{font-size:13px;color:var(--muted);margin-left:4px;}
+
+  .facts{
+    display:flex;flex-direction:column;gap:8px;
+    padding:0;margin:0;list-style:none;
+  }
+  .facts li{
+    display:grid;
+    grid-template-columns:92px 1fr;
+    gap:12px;
+    font-size:14px;
+  }
+  .facts li b{
+    font-weight:700;
+    font-size:12px;
+    letter-spacing:0.08em;
+    text-transform:uppercase;
+    color:var(--muted);
+    padding-top:2px;
+  }
+
+  /* ---------- Phone mockup ---------- */
+  .phone{
+    width:362px;
+    padding:14px;
+    border-radius:44px;
+    background:#101216;
+    box-shadow:0 24px 50px -24px rgba(10,14,24,0.5);
+    flex-shrink:0;
+  }
+  .screen{
+    border-radius:32px;
+    padding:18px 16px 16px;
+    display:flex;
+    flex-direction:column;
+    gap:14px;
+    overflow:hidden;
+  }
+  .hud{
+    display:grid;
+    grid-template-columns:1fr auto 1fr;
+    align-items:center;
+    gap:10px;
+  }
+  .pl{display:flex;flex-direction:column;gap:1px;}
+  .pl.opp{text-align:right;}
+  .pname{
+    font-size:11px;
+    font-weight:700;
+    letter-spacing:0.1em;
+    text-transform:uppercase;
+    opacity:0.55;
+  }
+  .pscore{
+    font-size:24px;
+    font-weight:800;
+    letter-spacing:-0.02em;
+    font-variant-numeric:tabular-nums;
+  }
+  .timer{display:flex;flex-direction:column;align-items:center;gap:4px;}
+  .ttime{
+    font-size:15px;
+    font-weight:800;
+    font-variant-numeric:tabular-nums;
+  }
+  .tbar{
+    width:84px;height:5px;border-radius:99px;
+    background:var(--track,rgba(0,0,0,0.1));
+    overflow:hidden;
+  }
+  .tbar i{display:block;height:100%;border-radius:99px;background:var(--fill,#333);}
+
+  .board{
+    position:relative;
+    display:grid;
+    grid-template-columns:repeat(6,48px);
+    grid-auto-rows:48px;
+    width:288px;
+    margin:0 auto;
+    padding:10px;
+    box-sizing:content-box;
+    border-radius:20px;
+  }
+  .board svg.chainline{
+    position:absolute;
+    left:10px;top:10px;
+    z-index:0;
+    pointer-events:none;
+  }
+  .dot{
+    width:34px;height:34px;border-radius:50%;
+    place-self:center;
+    background:var(--c);
+    position:relative;
+    z-index:1;
+  }
+  .dot.on{
+    transform:scale(1.14);
+    box-shadow:inset 0 0 0 3px rgba(255,255,255,0.55);
+  }
+
+  .foot{
+    display:flex;
+    align-items:center;
+    gap:14px;
+  }
+  .mini{
+    display:grid;
+    grid-template-columns:repeat(6,12px);
+    grid-auto-rows:12px;
+    padding:6px;
+    border-radius:10px;
+  }
+  .mini .dot{width:8px;height:8px;z-index:auto;}
+  .fmeta{display:flex;flex-direction:column;gap:4px;}
+  .flabel{
+    font-size:10px;font-weight:700;
+    letter-spacing:0.1em;text-transform:uppercase;
+    opacity:0.5;
+  }
+  .combo{font-size:15px;font-weight:800;font-variant-numeric:tabular-nums;}
+
+  @media (prefers-reduced-motion: no-preference){
+    svg.chainline polyline{
+      stroke-dasharray:170;
+      animation:draw 2.8s ease-in-out infinite;
+    }
+    @keyframes draw{
+      0%{stroke-dashoffset:170;}
+      50%{stroke-dashoffset:0;}
+      85%{stroke-dashoffset:0;}
+      100%{stroke-dashoffset:0;opacity:0;}
+    }
+  }
+
+  /* ---------- Skin: Стадион ---------- */
+  .skin-arena .screen{background:#F7F8FA;color:#15181D;}
+  .skin-arena .board{background:#FFFFFF;border:1px solid #E7E9EE;}
+  .skin-arena .mini{background:#FFFFFF;border:1px solid #E7E9EE;}
+  .skin-arena .timer{--track:#E4E7EC;--fill:#15181D;}
+  .skin-arena .combo{color:#2E5BFF;}
+  .skin-arena .dot{box-shadow:0 2px 4px rgba(21,24,29,0.14);}
+  .skin-arena .dot.on{box-shadow:0 3px 8px rgba(21,24,29,0.2),inset 0 0 0 3px rgba(255,255,255,0.7);}
+
+  /* ---------- Skin: Неон ---------- */
+  .skin-neon .screen{background:#0A0D12;color:#EAF3F5;}
+  .skin-neon .board{background:#0F141B;border:1px solid #1C2531;}
+  .skin-neon .mini{background:#0F141B;border:1px solid #1C2531;}
+  .skin-neon .timer{--track:#1C2531;--fill:#27E8F0;}
+  .skin-neon .ttime{color:#27E8F0;}
+  .skin-neon .combo{color:#C6F432;}
+  .skin-neon .dot{box-shadow:0 0 16px -4px var(--c);}
+  .skin-neon .dot.on{box-shadow:0 0 22px -2px var(--c),inset 0 0 0 3px rgba(255,255,255,0.5);}
+  .skin-neon svg.chainline polyline{filter:drop-shadow(0 0 6px rgba(39,232,240,0.7));}
+
+  /* ---------- Skin: Ризо ---------- */
+  .skin-riso .screen{background:#F6F2E8;color:#20304F;}
+  .skin-riso .board{background:#FFFDF6;border:2px solid #20304F;border-radius:16px;}
+  .skin-riso .mini{background:#FFFDF6;border:2px solid #20304F;}
+  .skin-riso .timer{--track:#E4DECC;--fill:#20304F;}
+  .skin-riso .combo{color:#FF48B0;}
+  .skin-riso .dot{box-shadow:2.5px 3px 0 rgba(32,48,79,0.25);}
+  .skin-riso .dot.on{box-shadow:2.5px 3px 0 rgba(32,48,79,0.35),inset 0 0 0 3px rgba(255,253,246,0.85);}
+
+  /* ---------- Comparison ---------- */
+  .card{
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:16px;
+    padding:24px;
+  }
+  .table-wrap{overflow-x:auto;}
+  table{border-collapse:collapse;width:100%;font-size:14px;min-width:560px;}
+  th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top;}
+  th{
+    font-size:11px;letter-spacing:0.1em;text-transform:uppercase;
+    color:var(--muted);font-weight:700;
+  }
+  tr:last-child td{border-bottom:none;}
+  td b{font-weight:700;}
+
+  .reco{border-left:3px solid #2E5BFF;padding-left:20px;}
+  .reco h3{font-size:19px;font-weight:800;margin-bottom:8px;}
+  .footnote{font-size:13px;color:var(--muted);max-width:70ch;}
+
+  @media (max-width:780px){
+    section.dir{grid-template-columns:1fr;}
+    .phone{margin:0 auto;}
+  }
+  @media (max-width:420px){
+    .phone{transform:scale(0.88);transform-origin:top center;margin-bottom:-60px;}
+  }
+</style>
+
+<main>
+  <header class="hero">
+    <span class="eyebrow" style="--k:#2E5BFF">Doton v2 · этап 0</span>
+    <h1>Три направления визуала</h1>
+    <p>Один и тот же экран дуэли в трёх характерах: поле 6×6, собирается цепочка из четырёх синих, до конца матча 47 секунд. Смотреть лучше с телефона — целевой форм-фактор портретный.</p>
+  </header>
+
+  <section class="dir">
+    <div class="phone skin-arena">
+      <div class="screen">
+        <div class="hud">
+          <div class="pl you"><span class="pname">Ты</span><span class="pscore">1 240</span></div>
+          <div class="timer"><span class="ttime">0:47</span><div class="tbar"><i style="width:52%"></i></div></div>
+          <div class="pl opp"><span class="pname">Kira</span><span class="pscore">1 105</span></div>
+        </div>
+        <div class="board" data-skin="arena">
+          <svg class="chainline" viewBox="0 0 288 288" width="288" height="288" aria-hidden="true">
+            <polyline points="120,24 72,72 120,72 120,120" fill="none" stroke="#2E5BFF" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" opacity="0.85"/>
+          </svg>
+        </div>
+        <div class="foot">
+          <div class="mini" data-skin="arena"></div>
+          <div class="fmeta"><span class="flabel">Поле соперника</span><span class="combo">+40 · цепочка ×4</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="dir-copy">
+      <div>
+        <span class="eyebrow" style="--k:#2E5BFF">Вариант A</span>
+        <h2>Стадион</h2>
+      </div>
+      <p class="lead">Светлый спортивный минимализм: белый корт, сочные фишки, тяжёлые цифры табло. Ничего не отвлекает от поля — интерфейс ведёт себя как судья: заметен только когда нужен.</p>
+      <div class="chips">
+        <i style="--c:#E5484D"></i><i style="--c:#2E5BFF"></i><i style="--c:#FFB224"></i><i style="--c:#30A46C"></i>
+        <i style="--c:#F7F8FA"></i>
+        <span class="chip-note">сигнальные цвета на белом корте</span>
+      </div>
+      <ul class="facts">
+        <li><b>Шрифты</b><span>Archivo (Expanded, 800) для цифр и заголовков, Archivo — для текста. Табличные цифры везде, где счёт.</span></li>
+        <li><b>Сильное</b><span>Максимальная читаемость — хоть на солнце, хоть в вебвью Telegram. Счёт и таймер — главные герои, как на спортивной трансляции.</span></li>
+        <li><b>Риск</b><span>Без моушена может показаться суховатым — характер добавят пружинистое падение точек и вспышка кольца.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="dir">
+    <div class="phone skin-neon">
+      <div class="screen">
+        <div class="hud">
+          <div class="pl you"><span class="pname">Ты</span><span class="pscore">1 240</span></div>
+          <div class="timer"><span class="ttime">0:47</span><div class="tbar"><i style="width:52%"></i></div></div>
+          <div class="pl opp"><span class="pname">Kira</span><span class="pscore">1 105</span></div>
+        </div>
+        <div class="board" data-skin="neon">
+          <svg class="chainline" viewBox="0 0 288 288" width="288" height="288" aria-hidden="true">
+            <polyline points="120,24 72,72 120,72 120,120" fill="none" stroke="#27E8F0" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"/>
+          </svg>
+        </div>
+        <div class="foot">
+          <div class="mini" data-skin="neon"></div>
+          <div class="fmeta"><span class="flabel">Поле соперника</span><span class="combo">+40 · цепочка ×4</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="dir-copy">
+      <div>
+        <span class="eyebrow" style="--k:#27E8F0">Вариант B</span>
+        <h2>Неон</h2>
+      </div>
+      <p class="lead">Ночная арена: интерфейс отступает в темноту, светятся только точки и счёт. Киберспортивный глянец — эволюция тёмной темы v1, но резче и дороже. Кольцо здесь — настоящий световой взрыв.</p>
+      <div class="chips">
+        <i style="--c:#FF3D81"></i><i style="--c:#27E8F0"></i><i style="--c:#C6F432"></i><i style="--c:#FF8A3D"></i>
+        <i style="--c:#0A0D12"></i>
+        <span class="chip-note">неон на почти-чёрном</span>
+      </div>
+      <ul class="facts">
+        <li><b>Шрифты</b><span>Unbounded для заголовков и цифр (фирменный шрифт экосистемы TON — задел на будущее), Manrope — для текста.</span></li>
+        <li><b>Сильное</b><span>Самый зрелищный в записи: стримы, ролики, шеринг результатов. Свечение делает длинные цепочки и кольца «дорогими» без слов.</span></li>
+        <li><b>Риск</b><span>Глянец утомляет в длинных сессиях, нужна дисциплина: светятся точки, а не всё подряд. Светлой темы у направления нет по определению.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="dir">
+    <div class="phone skin-riso">
+      <div class="screen">
+        <div class="hud">
+          <div class="pl you"><span class="pname">Ты</span><span class="pscore">1 240</span></div>
+          <div class="timer"><span class="ttime">0:47</span><div class="tbar"><i style="width:52%"></i></div></div>
+          <div class="pl opp"><span class="pname">Kira</span><span class="pscore">1 105</span></div>
+        </div>
+        <div class="board" data-skin="riso">
+          <svg class="chainline" viewBox="0 0 288 288" width="288" height="288" aria-hidden="true">
+            <polyline points="120,24 72,72 120,72 120,120" fill="none" stroke="#0078BF" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" opacity="0.85"/>
+          </svg>
+        </div>
+        <div class="foot">
+          <div class="mini" data-skin="riso"></div>
+          <div class="fmeta"><span class="flabel">Поле соперника</span><span class="combo">+40 · цепочка ×4</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="dir-copy">
+      <div>
+        <span class="eyebrow" style="--k:#FF48B0">Вариант C</span>
+        <h2>Ризо</h2>
+      </div>
+      <p class="lead">Печатная графика: бумага, чистые чернильные цвета ризографа, офсетные тени вместо глянца. Игра ощущается как красивая настолка из независимой типографии — тактильно и по-человечески.</p>
+      <div class="chips">
+        <i style="--c:#FF48B0"></i><i style="--c:#0078BF"></i><i style="--c:#FFD900"></i><i style="--c:#00A95C"></i>
+        <i style="--c:#F6F2E8"></i>
+        <span class="chip-note">чернила ризографа на бумаге</span>
+      </div>
+      <ul class="facts">
+        <li><b>Шрифты</b><span>Syne для заголовков (характерный, чуть странный — как зин), Karla — для текста.</span></li>
+        <li><b>Сильное</b><span>Самый узнаваемый и «свой»: отлично тянется в стикеры, мерч, промо. Ни на одну игру в сторе не похож.</span></li>
+        <li><b>Риск</b><span>Меньше всего «спорта»: скорость и накал дуэли придётся доносить моушеном. Тёмная тема для бумаги — нетривиальная задача.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="card">
+    <span class="eyebrow">Сравнение</span>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Направление</th><th>Настроение</th><th>Где блестит</th><th>Главный риск</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><b>A · Стадион</b></td><td>Спорт, честность, скорость</td><td>Читаемость в бою, Telegram-вебвью</td><td>Суховат без моушена</td></tr>
+          <tr><td><b>B · Неон</b></td><td>Киберспорт, ночь, дофамин</td><td>Зрелищность, шеринг, кольца</td><td>Утомляет глаза, нет светлой темы</td></tr>
+          <tr><td><b>C · Ризо</b></td><td>Тактильность, инди, характер</td><td>Узнаваемость, мерч, тёплое соло</td><td>Мало «спорта» для дуэлей</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="reco">
+    <h3>Моя рекомендация</h3>
+    <p>Базой брать <b>«Стадион»</b> — он лучше всех работает на главную цель (честная спортивная дуэль) и лучше всех живёт в Telegram. А тёмную тему «Стадиона» вырастить из «Неона», приглушив свечение до акцентов: получаем спортивную светлую и эффектную тёмную в одной системе, а не два разных мира. «Ризо» не выбрасываем — это готовый язык для стикер-пака, промо и, возможно, скина-косметики в будущем.</p>
+  </section>
+
+  <p class="footnote">Макеты собраны на системных шрифтах — фирменные (Archivo / Unbounded / Syne) подключаются на этапе прототипа. Раскладка поля и цепочка на всех трёх макетах намеренно одинаковые, чтобы сравнивать только характер, а не контент.</p>
+</main>
+
+<script>
+  const MATRIX = [
+    ['a','c','b','d','b','a'],
+    ['c','b','b','a','d','c'],
+    ['d','a','b','c','a','b'],
+    ['b','d','a','a','c','d'],
+    ['a','b','c','d','b','a'],
+    ['c','a','d','b','a','c'],
+  ];
+  const CHAIN = new Set(['0,2','1,1','1,2','2,2']);
+  const SKINS = {
+    arena:{a:'#E5484D', b:'#2E5BFF', c:'#FFB224', d:'#30A46C'},
+    neon: {a:'#FF3D81', b:'#27E8F0', c:'#C6F432', d:'#FF8A3D'},
+    riso: {a:'#FF48B0', b:'#0078BF', c:'#FFD900', d:'#00A95C'},
+  };
+
+  document.querySelectorAll('[data-skin]').forEach(el => {
+    const palette = SKINS[el.dataset.skin];
+    const isMini = el.classList.contains('mini');
+    MATRIX.forEach((row, r) => row.forEach((letter, c) => {
+      const dot = document.createElement('div');
+      dot.className = 'dot';
+      dot.style.setProperty('--c', palette[letter]);
+      if (!isMini && CHAIN.has(r + ',' + c)) dot.classList.add('on');
+      el.appendChild(dot);
+    }));
+  });
+</script>
