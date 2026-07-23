@@ -1,0 +1,444 @@
+<title>Doton v2 — мир и маскот</title>
+<style>
+  :root{
+    --bg:#F4F5F7;
+    --surface:#FFFFFF;
+    --ink:#15181E;
+    --muted:#636B78;
+    --line:#E3E6EB;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0E1013;--surface:#16191E;--ink:#E8EAEE;--muted:#8B93A0;--line:#262B33;}
+  }
+  :root[data-theme="dark"]{--bg:#0E1013;--surface:#16191E;--ink:#E8EAEE;--muted:#8B93A0;--line:#262B33;}
+  :root[data-theme="light"]{--bg:#F4F5F7;--surface:#FFFFFF;--ink:#15181E;--muted:#636B78;--line:#E3E6EB;}
+
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    line-height:1.55;
+  }
+  main{
+    max-width:1020px;
+    margin:0 auto;
+    padding:48px 20px 80px;
+    display:flex;flex-direction:column;gap:64px;
+  }
+
+  header.hero h1{
+    font-size:clamp(28px,4.5vw,42px);
+    font-weight:800;letter-spacing:-0.02em;
+    text-wrap:balance;margin-bottom:10px;
+  }
+  header.hero p{color:var(--muted);max-width:60ch;}
+
+  .eyebrow{
+    display:inline-block;font-size:12px;font-weight:700;
+    letter-spacing:0.12em;text-transform:uppercase;
+    color:var(--k,var(--muted));margin-bottom:6px;
+  }
+
+  section.dir{display:flex;flex-direction:column;gap:24px;}
+  .dir-grid{
+    display:grid;
+    grid-template-columns:362px 1fr;
+    gap:36px;align-items:start;
+  }
+  section.dir h2{font-size:26px;font-weight:800;letter-spacing:-0.01em;margin-bottom:6px;}
+  .dir-copy{display:flex;flex-direction:column;gap:16px;max-width:62ch;}
+  .dir-copy p.lead{font-size:16px;}
+
+  .mascot-card{
+    display:grid;
+    grid-template-columns:130px 1fr;
+    gap:18px;align-items:center;
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:16px;padding:18px;
+  }
+  .mascot-card svg{display:block;width:110px;height:110px;margin:0 auto;}
+  .mascot-card h4{font-size:16px;font-weight:800;margin-bottom:4px;}
+  .mascot-card p{font-size:14px;color:var(--muted);}
+  .mascot-card .mrole{font-size:13px;margin-top:8px;color:var(--ink);}
+
+  .facts{display:flex;flex-direction:column;gap:8px;padding:0;margin:0;list-style:none;}
+  .facts li{display:grid;grid-template-columns:104px 1fr;gap:12px;font-size:14px;}
+  .facts li b{
+    font-weight:700;font-size:12px;letter-spacing:0.08em;
+    text-transform:uppercase;color:var(--muted);padding-top:2px;
+  }
+
+  /* ---------- Phone ---------- */
+  .phone{
+    width:362px;padding:14px;border-radius:44px;
+    background:#101216;
+    box-shadow:0 24px 50px -24px rgba(10,14,24,0.5);
+    flex-shrink:0;
+  }
+  .screen{
+    position:relative;border-radius:32px;
+    padding:18px 16px 16px;
+    display:flex;flex-direction:column;gap:14px;
+    overflow:hidden;
+  }
+  .hud{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:10px;}
+  .pl{display:flex;flex-direction:column;gap:1px;}
+  .pl.opp{text-align:right;}
+  .pname{
+    font-size:11px;font-weight:700;letter-spacing:0.12em;
+    text-transform:uppercase;opacity:0.55;
+  }
+  .pscore{
+    font-size:24px;font-weight:800;letter-spacing:-0.01em;
+    font-variant-numeric:tabular-nums;
+  }
+  .timer{display:flex;flex-direction:column;align-items:center;gap:4px;}
+  .ttime{font-size:15px;font-weight:800;font-variant-numeric:tabular-nums;}
+  .tbar{width:84px;height:5px;border-radius:99px;background:var(--track,rgba(0,0,0,0.1));overflow:hidden;}
+  .tbar i{display:block;height:100%;border-radius:99px;background:var(--fill,#333);}
+
+  .board{
+    position:relative;
+    display:grid;
+    grid-template-columns:repeat(6,48px);
+    grid-auto-rows:48px;
+    width:288px;margin:0 auto;padding:10px;
+    box-sizing:content-box;border-radius:18px;
+  }
+  .board svg.chainline{position:absolute;left:10px;top:10px;z-index:0;pointer-events:none;}
+  .dot{
+    width:34px;height:34px;border-radius:50%;
+    place-self:center;background:var(--c);
+    position:relative;z-index:1;
+  }
+  .dot.on{transform:scale(1.14);box-shadow:inset 0 0 0 3px rgba(255,255,255,0.55);}
+
+  .foot{display:flex;align-items:center;gap:14px;}
+  .mini{display:grid;grid-template-columns:repeat(6,12px);grid-auto-rows:12px;padding:6px;border-radius:10px;}
+  .mini .dot{width:8px;height:8px;z-index:auto;}
+  .fmeta{display:flex;flex-direction:column;gap:4px;}
+  .flabel{font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;opacity:0.5;}
+  .combo{font-size:14px;font-weight:800;font-variant-numeric:tabular-nums;}
+
+  @media (prefers-reduced-motion: no-preference){
+    svg.chainline polyline{stroke-dasharray:170;animation:draw 2.8s ease-in-out infinite;}
+    @keyframes draw{
+      0%{stroke-dashoffset:170;}
+      50%{stroke-dashoffset:0;}
+      85%{stroke-dashoffset:0;}
+      100%{stroke-dashoffset:0;opacity:0;}
+    }
+  }
+
+  /* ---------- Skin A: Цепь (PCB) ---------- */
+  .skin-pcb .screen{background:#07231B;color:#E8F3EC;}
+  .skin-pcb .board{
+    background:#052018;
+    border:1px solid #14483A;
+    background-image:
+      repeating-linear-gradient(0deg, rgba(224,164,88,0.14) 0 1px, transparent 1px 48px),
+      repeating-linear-gradient(90deg, rgba(224,164,88,0.14) 0 1px, transparent 1px 48px);
+    background-position:24px 24px;
+  }
+  .skin-pcb .mini{background:#052018;border:1px solid #14483A;}
+  .skin-pcb .timer{--track:#14483A;--fill:#E0A458;}
+  .skin-pcb .ttime{color:#E0A458;font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;}
+  .skin-pcb .pscore{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;color:#E0A458;}
+  .skin-pcb .pl.opp .pscore{color:#7E8F84;}
+  .skin-pcb .combo{color:#E0A458;}
+  .skin-pcb .dot{border:3px solid rgba(224,164,88,0.65);box-shadow:0 0 12px -3px var(--c);}
+  .skin-pcb .dot.on{box-shadow:0 0 18px -2px var(--c),inset 0 0 0 3px rgba(255,255,255,0.5);}
+  .skin-pcb svg.chainline polyline{filter:drop-shadow(0 0 5px rgba(224,164,88,0.8));}
+
+  /* ---------- Skin B: Полдень (вестерн) ---------- */
+  .skin-west .screen{
+    background:#EDE3CE;color:#2B2118;
+    background-image:radial-gradient(rgba(43,33,24,0.05) 1px, transparent 1.3px);
+    background-size:5px 5px;
+  }
+  .skin-west .board{
+    background:#F3EAD7;
+    border:2px solid #2B2118;
+    box-shadow:inset 0 0 0 4px #F3EAD7, inset 0 0 0 6px #2B2118;
+    border-radius:10px;
+  }
+  .skin-west .mini{background:#F3EAD7;border:2px solid #2B2118;border-radius:6px;}
+  .skin-west .timer{--track:#D8CBAE;--fill:#A63D2F;}
+  .skin-west .pscore{font-family:Georgia,"Times New Roman",serif;}
+  .skin-west .ttime{font-family:Georgia,serif;color:#A63D2F;}
+  .skin-west .combo{color:#A63D2F;font-family:Georgia,serif;}
+  .skin-west .dot{border:3px solid #2B2118;box-shadow:2px 3px 0 rgba(43,33,24,0.25);}
+  .skin-west .dot.on{box-shadow:2px 3px 0 rgba(43,33,24,0.35),inset 0 0 0 3px rgba(243,234,215,0.85);}
+
+  /* ---------- Skin C: Созвездие ---------- */
+  .skin-star .screen{
+    background:linear-gradient(180deg,#0B1030 0%,#141A45 100%);
+    color:#EDEFFB;
+  }
+  .skin-star .board{
+    background:rgba(6,9,32,0.55);
+    border:1px solid #262E63;
+    background-image:
+      radial-gradient(rgba(237,239,251,0.25) 0.7px, transparent 1px),
+      radial-gradient(rgba(237,239,251,0.12) 0.6px, transparent 0.9px);
+    background-size:67px 53px, 41px 37px;
+  }
+  .skin-star .mini{background:rgba(6,9,32,0.55);border:1px solid #262E63;}
+  .skin-star .timer{--track:#262E63;--fill:#F5D67B;}
+  .skin-star .ttime{color:#F5D67B;font-weight:600;}
+  .skin-star .pscore{font-weight:600;letter-spacing:0.02em;}
+  .skin-star .combo{color:#F5D67B;font-weight:600;}
+  .skin-star .dot{box-shadow:0 0 14px -2px var(--c);}
+  .skin-star .dot.on{box-shadow:0 0 20px 0 var(--c),inset 0 0 0 3px rgba(255,255,255,0.5);}
+  .skin-star svg.chainline polyline{filter:drop-shadow(0 0 4px rgba(245,214,123,0.8));}
+
+  /* ---------- Comparison ---------- */
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:24px;}
+  .table-wrap{overflow-x:auto;}
+  table{border-collapse:collapse;width:100%;font-size:14px;min-width:560px;}
+  th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top;}
+  th{font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);font-weight:700;}
+  tr:last-child td{border-bottom:none;}
+  td b{font-weight:700;}
+
+  .reco{border-left:3px solid #E0A458;padding-left:20px;}
+  .reco h3{font-size:19px;font-weight:800;margin-bottom:8px;}
+  .footnote{font-size:13px;color:var(--muted);max-width:70ch;}
+
+  @media (max-width:780px){
+    .dir-grid{grid-template-columns:1fr;}
+    .phone{margin:0 auto;}
+    .mascot-card{grid-template-columns:100px 1fr;}
+  }
+  @media (max-width:420px){
+    .phone{transform:scale(0.88);transform-origin:top center;margin-bottom:-60px;}
+  }
+</style>
+
+<main>
+  <header class="hero">
+    <span class="eyebrow" style="--k:#E0A458">Doton v2 · визуал, раунд 3</span>
+    <h1>Мир и маскот</h1>
+    <p>Механика неизбежно перекликается с Two Dots — значит, отстраиваемся не формой точек, а миром, в котором дуэль имеет смысл, и персонажем с характером. Two Dots — милота; мы — азарт, скорость, взрослый тон. Три мира ниже: у каждого — история, маскот с ролью в продукте и свой словарь для механик (что такое кольцо, как называются очки и лиги).</p>
+  </header>
+
+  <section class="dir">
+    <div>
+      <span class="eyebrow" style="--k:#E0A458">Вариант A</span>
+      <h2>Цепь</h2>
+    </div>
+    <div class="dir-grid">
+      <div class="phone skin-pcb">
+        <div class="screen">
+          <div class="hud">
+            <div class="pl you"><span class="pname">Ты</span><span class="pscore">1 240</span></div>
+            <div class="timer"><span class="ttime">0:47</span><div class="tbar"><i style="width:52%"></i></div></div>
+            <div class="pl opp"><span class="pname">Kira</span><span class="pscore">1 105</span></div>
+          </div>
+          <div class="board" data-skin="pcb">
+            <svg class="chainline" viewBox="0 0 288 288" width="288" height="288" aria-hidden="true">
+              <polyline points="120,24 72,72 120,72 120,120" fill="none" stroke="#E0A458" stroke-width="8" stroke-linecap="square" stroke-linejoin="miter" opacity="0.9"/>
+            </svg>
+          </div>
+          <div class="foot">
+            <div class="mini" data-skin="pcb"></div>
+            <div class="fmeta"><span class="flabel">Плата соперника</span><span class="combo">+40 В · цепь ×4</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="dir-copy">
+        <p class="lead">История растёт из самой механики: по-русски «цепочка» и «электрическая цепь» — одно слово. Поле — печатная плата, точки — контакты, провёл цепочку — пустил ток, замкнул кольцо — <b>короткое замыкание</b>: весь цвет выгорает с платы вспышкой. Дуэль — подпольная лига электриков: кто снимет больше вольт с одной и той же платы за 90 секунд.</p>
+        <div class="mascot-card">
+          <svg viewBox="0 0 100 120" aria-label="Эскиз маскота Вольта">
+            <polygon points="56,6 24,64 45,64 36,114 79,48 55,48 72,6" fill="#FFD166" stroke="#07231B" stroke-width="3" stroke-linejoin="round"/>
+            <circle cx="47" cy="30" r="6.5" fill="#07231B"/>
+            <circle cx="63" cy="27" r="6.5" fill="#07231B"/>
+            <circle cx="49" cy="28.5" r="2" fill="#FFF6DF"/>
+            <circle cx="65" cy="25.5" r="2" fill="#FFF6DF"/>
+            <line x1="40" y1="21" x2="50" y2="24" stroke="#07231B" stroke-width="3" stroke-linecap="round"/>
+            <line x1="70" y1="18" x2="60" y2="22" stroke="#07231B" stroke-width="3" stroke-linecap="round"/>
+            <line x1="14" y1="40" x2="24" y2="42" stroke="#E0A458" stroke-width="3" stroke-linecap="round" opacity="0.7"/>
+            <line x1="12" y1="52" x2="22" y2="52" stroke="#E0A458" stroke-width="3" stroke-linecap="round" opacity="0.45"/>
+            <line x1="86" y1="62" x2="78" y2="60" stroke="#E0A458" stroke-width="3" stroke-linecap="round" opacity="0.7"/>
+          </svg>
+          <div>
+            <h4>Вольт — живая искра</h4>
+            <p>Дерзкий, нетерпеливый, говорит короткими разрядами: «Перегруз!», «Контакт!», «Слабый ток». Не милый — быстрый.</p>
+            <p class="mrole">В игре: ведёт онбординг, вспыхивает на кольцах, комментирует дуэль, приносит результат ежедневного вызова в пуше.</p>
+          </div>
+        </div>
+        <ul class="facts">
+          <li><b>Словарь</b><span>Очки — вольты. Кольцо — короткое замыкание. Лиги — 9V → Киловатт → Мегаватт. Серия дней — «не разрывай цепь».</span></li>
+          <li><b>Визуал</b><span>PCB-зелёный, медные дорожки, неоновые контакты, счёт как на мультиметре. Ни одна игра жанра так не выглядит.</span></li>
+          <li><b>Риск</b><span>Технарская эстетика может показаться холодной — теплоту даёт именно Вольт.</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="dir">
+    <div>
+      <span class="eyebrow" style="--k:#A63D2F">Вариант B</span>
+      <h2>Полдень</h2>
+    </div>
+    <div class="dir-grid">
+      <div class="phone skin-west">
+        <div class="screen">
+          <div class="hud">
+            <div class="pl you"><span class="pname">Ты</span><span class="pscore">1 240</span></div>
+            <div class="timer"><span class="ttime">0:47</span><div class="tbar"><i style="width:52%"></i></div></div>
+            <div class="pl opp"><span class="pname">Kira</span><span class="pscore">1 105</span></div>
+          </div>
+          <div class="board" data-skin="west">
+            <svg class="chainline" viewBox="0 0 288 288" width="288" height="288" aria-hidden="true">
+              <polyline points="120,24 72,72 120,72 120,120" fill="none" stroke="#2B2118" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" opacity="0.75" stroke-dasharray="1 11"/>
+            </svg>
+          </div>
+          <div class="foot">
+            <div class="mini" data-skin="west"></div>
+            <div class="fmeta"><span class="flabel">Стол соперника</span><span class="combo">+40 · серия ×4</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="dir-copy">
+        <p class="lead">Городок дуэлянтов, где споры решают не свинцом, а точками. Каждый матч — дуэль ровно в полдень: 90 секунд, пока солнце в зените. Точки — жетоны четырёх мастей, кольцо — <b>полный барабан</b>: замкнул — весь цвет «выстреливает» со стола. Рейтинг — награда за твою голову: чем выше, тем дороже тебя «разыскивают». Таблица лидеров — стена WANTED-афиш.</p>
+        <div class="mascot-card">
+          <svg viewBox="0 0 120 120" aria-label="Эскиз маскота грифа Дока">
+            <ellipse cx="60" cy="88" rx="33" ry="26" fill="#2B2118"/>
+            <circle cx="46" cy="62" r="10" fill="#EDE3CE"/>
+            <circle cx="60" cy="66" r="10" fill="#EDE3CE"/>
+            <circle cx="74" cy="62" r="10" fill="#EDE3CE"/>
+            <circle cx="60" cy="42" r="14" fill="#C4886F"/>
+            <path d="M72 38 Q88 40 85 52 Q82 60 71 51 Z" fill="#C99700" stroke="#2B2118" stroke-width="2" stroke-linejoin="round"/>
+            <circle cx="64" cy="38" r="4" fill="#2B2118"/>
+            <circle cx="65.5" cy="36.5" r="1.3" fill="#EDE3CE"/>
+            <circle cx="64" cy="38" r="7" fill="none" stroke="#2B2118" stroke-width="1.5"/>
+            <line x1="71" y1="41" x2="76" y2="58" stroke="#2B2118" stroke-width="1.5"/>
+            <rect x="48" y="14" width="24" height="15" fill="#2B2118"/>
+            <rect x="42" y="27" width="36" height="4" rx="2" fill="#2B2118"/>
+            <rect x="48" y="22" width="24" height="4" fill="#A63D2F"/>
+          </svg>
+          <div>
+            <h4>Док — гриф-секундант</h4>
+            <p>Сухой, невозмутимый, считает всё. Объявляет дуэли, ведёт книгу счетов, юмор — чёрный и в одну строку.</p>
+            <p class="mrole">В игре: секундант в матчах и голос правил. А когда придут ставки — он же станет букмекером: персонаж уже готов к главной бизнес-механике.</p>
+          </div>
+        </div>
+        <ul class="facts">
+          <li><b>Словарь</b><span>Рейтинг — награда за голову (в будущем буквально деньги). Лиги — от Салуна до Легенды Фронтира. Кольцо — барабан.</span></li>
+          <li><b>Визуал</b><span>Пыльная бумага, сургучные жетоны, деревянная афишная типографика (Alfa Slab), красная охра.</span></li>
+          <li><b>Риск</b><span>Вестерн — сильная стилизация «поверх» механики, а не из неё. И светлый мир — труднее делать зрелищные вспышки.</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="dir">
+    <div>
+      <span class="eyebrow" style="--k:#F5D67B">Вариант C</span>
+      <h2>Созвездие</h2>
+    </div>
+    <div class="dir-grid">
+      <div class="phone skin-star">
+        <div class="screen">
+          <div class="hud">
+            <div class="pl you"><span class="pname">Ты</span><span class="pscore">1 240</span></div>
+            <div class="timer"><span class="ttime">0:47</span><div class="tbar"><i style="width:52%"></i></div></div>
+            <div class="pl opp"><span class="pname">Kira</span><span class="pscore">1 105</span></div>
+          </div>
+          <div class="board" data-skin="star">
+            <svg class="chainline" viewBox="0 0 288 288" width="288" height="288" aria-hidden="true">
+              <polyline points="120,24 72,72 120,72 120,120" fill="none" stroke="#F5D67B" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"/>
+            </svg>
+          </div>
+          <div class="foot">
+            <div class="mini" data-skin="star"></div>
+            <div class="fmeta"><span class="flabel">Небо соперника</span><span class="combo">+40 · созвездие ×4</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="dir-copy">
+        <p class="lead">Игроки — картографы неба. Одно и то же звёздное поле на двоих, 90 секунд: кто вычертит больше созвездий. Кольцо — <b>замкнутое созвездие</b>: рождается сверхновая, и весь цвет вспыхивает и сходит с неба. Ежедневный вызов — «небо дня», одно на весь мир. Взрослая, тихая красота — полная противоположность конфетти Two Dots.</p>
+        <div class="mascot-card">
+          <svg viewBox="0 0 120 120" aria-label="Эскиз маскота зонда Пульсара">
+            <rect x="6" y="50" width="26" height="22" rx="2" fill="#1B2350" stroke="#7EA6FF" stroke-width="2"/>
+            <line x1="14" y1="50" x2="14" y2="72" stroke="#7EA6FF" stroke-width="1.5" opacity="0.6"/>
+            <line x1="22" y1="50" x2="22" y2="72" stroke="#7EA6FF" stroke-width="1.5" opacity="0.6"/>
+            <rect x="88" y="50" width="26" height="22" rx="2" fill="#1B2350" stroke="#7EA6FF" stroke-width="2"/>
+            <line x1="98" y1="50" x2="98" y2="72" stroke="#7EA6FF" stroke-width="1.5" opacity="0.6"/>
+            <line x1="106" y1="50" x2="106" y2="72" stroke="#7EA6FF" stroke-width="1.5" opacity="0.6"/>
+            <polygon points="60,32 84,46 84,76 60,90 36,76 36,46" fill="#232C63" stroke="#F5D67B" stroke-width="2.5" stroke-linejoin="round"/>
+            <circle cx="60" cy="60" r="14" fill="#0B1030" stroke="#7EA6FF" stroke-width="3"/>
+            <circle cx="60" cy="60" r="6" fill="#7EA6FF"/>
+            <circle cx="63" cy="57" r="2" fill="#EDEFFB"/>
+            <line x1="60" y1="32" x2="60" y2="18" stroke="#F5D67B" stroke-width="2.5"/>
+            <circle cx="60" cy="14" r="3.5" fill="#F5D67B"/>
+          </svg>
+          <div>
+            <h4>Пульсар — зонд-картограф</h4>
+            <p>Деловитый компаньон с одним глазом-объективом. Не разговаривает — мигает, сканирует, чертит. Характер — через моушен.</p>
+            <p class="mrole">В игре: подсвечивает первое кольцо в онбординге, фотографирует лучший ход матча (готовая картинка для шеринга), приносит «небо дня».</p>
+          </div>
+        </div>
+        <ul class="facts">
+          <li><b>Словарь</b><span>Очки — светимость. Кольцо — сверхновая. Лиги — от Любителя с биноклем до Обсерватории. Серия — «ночи без облаков».</span></li>
+          <li><b>Визуал</b><span>Индиго-небо, точки-звёзды со свечением, тонкие золотые линии, лёгкая элегантная типографика.</span></li>
+          <li><b>Риск</b><span>«Звёздных» казуалок много, тон спокойный — меньше азарта дуэли, чем у A и B.</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <span class="eyebrow">Сравнение</span>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Мир</th><th>Откуда история</th><th>Маскот</th><th>Стыковка со ставками</th><th>Главный риск</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><b>A · Цепь</b></td><td>Из механики: цепочка = эл. цепь, кольцо = замыкание</td><td>Вольт, искра — резкий и быстрый</td><td>Нейтральная (вольты ≠ деньги)</td><td>Холодновата без персонажа</td></tr>
+          <tr><td><b>B · Полдень</b></td><td>Из формата: дуэль и есть дуэль</td><td>Док, гриф-секундант → будущий букмекер</td><td>Идеальная: bounty, книга ставок</td><td>Стилизация поверх механики</td></tr>
+          <tr><td><b>C · Созвездие</b></td><td>Из образа: соединять точки = чертить созвездия</td><td>Пульсар, зонд — молчаливый</td><td>Слабая</td><td>Тихо для дуэльного азарта</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="reco">
+    <h3>Моя рекомендация</h3>
+    <p>Ставлю на <b>«Цепь» с Вольтом</b>: это единственный мир, который вырастает из самой механики, а не надевается на неё — «замкни цепь» объясняет игру одной фразой, кольцо-замыкание оправдывает главный вау-приём, а PCB-визуал не похож ни на Two Dots, ни на кого-либо ещё. Вольт даёт характер и мемность без милоты. Сильный второй кандидат — <b>«Полдень»</b>: гриф-букмекер Док идеально стыкуется с будущими ставками, и если ставки для тебя — сердце продукта, вестерн может перевесить. «Созвездие» красиво, но для спортивного азарта слишком тихое.</p>
+  </section>
+
+  <p class="footnote">Эскизы маскотов — геометрические наброски характера, не финальный арт: финального персонажа рисуем после выбора мира. Экран дуэли на всех макетах одинаковый по контенту — сравниваем миры, не раскладку.</p>
+</main>
+
+<script>
+  const MATRIX = [
+    ['a','c','b','d','b','a'],
+    ['c','b','b','a','d','c'],
+    ['d','a','b','c','a','b'],
+    ['b','d','a','a','c','d'],
+    ['a','b','c','d','b','a'],
+    ['c','a','d','b','a','c'],
+  ];
+  const CHAIN = new Set(['0,2','1,1','1,2','2,2']);
+  const SKINS = {
+    pcb: {a:'#FF5D5D', b:'#4DE1FF', c:'#FFD166', d:'#55E6A0'},
+    west:{a:'#A63D2F', b:'#274060', c:'#C99700', d:'#4A6B48'},
+    star:{a:'#FF7E67', b:'#7EA6FF', c:'#F5D67B', d:'#7BE0C3'},
+  };
+
+  document.querySelectorAll('[data-skin]').forEach(el => {
+    const palette = SKINS[el.dataset.skin];
+    const isMini = el.classList.contains('mini');
+    MATRIX.forEach((row, r) => row.forEach((letter, c) => {
+      const dot = document.createElement('div');
+      dot.className = 'dot';
+      dot.style.setProperty('--c', palette[letter]);
+      if (!isMini && CHAIN.has(r + ',' + c)) dot.classList.add('on');
+      el.appendChild(dot);
+    }));
+  });
+</script>
