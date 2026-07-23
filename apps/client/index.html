@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+  <title>Doton — Цепь</title>
+  <style>
+    :root {
+      --screen: #edf0f3;
+      --board: #fafbfc;
+      --board-border: #d8dee6;
+      --grid-line: rgba(47, 79, 110, 0.08);
+      --ink: #232b33;
+      --muted: #9aa4af;
+      --accent: #b87b4b;
+      --control: #ffffff;
+      --control-border: #d8dee6;
+    }
+    :root[data-theme='graphite'] {
+      --screen: #202329;
+      --board: #1a1d22;
+      --board-border: #2b2f37;
+      --grid-line: rgba(201, 146, 92, 0.09);
+      --ink: #e6e4df;
+      --muted: #8b8f97;
+      --accent: #c9925c;
+      --control: #262a31;
+      --control-border: #2b2f37;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      background: var(--screen);
+      color: var(--ink);
+      font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      display: flex;
+      justify-content: center;
+      -webkit-tap-highlight-color: transparent;
+      transition: background 0.25s;
+    }
+    .mono { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
+
+    .app {
+      width: min(100vw, 460px);
+      padding: 18px 16px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      user-select: none;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .logo {
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+    }
+    #volt { flex-shrink: 0; }
+    #volt.zap { animation: zap 0.45s ease-out; }
+    @keyframes zap {
+      0% { transform: scale(1) rotate(0deg); }
+      30% { transform: scale(1.45) rotate(-12deg); }
+      60% { transform: scale(1.2) rotate(9deg); }
+      100% { transform: scale(1) rotate(0deg); }
+    }
+    header .spacer { flex: 1; }
+
+    button {
+      font: inherit;
+      color: var(--ink);
+      background: var(--control);
+      border: 1px solid var(--control-border);
+      border-radius: 10px;
+      padding: 7px 12px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    button.active {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    button:active { transform: translateY(1px); }
+
+    .hud {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: end;
+      gap: 10px;
+    }
+    .score-block { display: flex; flex-direction: column; gap: 2px; }
+    .score-label {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    #score {
+      font-size: 34px;
+      font-weight: 800;
+      color: var(--accent);
+      font-variant-numeric: tabular-nums;
+      line-height: 1.1;
+    }
+    .timer-block { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+    #time {
+      font-size: 17px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    .tbar {
+      width: 110px;
+      height: 5px;
+      border-radius: 99px;
+      background: var(--board-border);
+      overflow: hidden;
+    }
+    .tbar i {
+      display: block;
+      height: 100%;
+      border-radius: 99px;
+      background: var(--accent);
+      transition: width 0.3s linear;
+    }
+
+    .board-wrap { position: relative; }
+    canvas {
+      display: block;
+      width: 100%;
+      touch-action: none;
+      border-radius: 18px;
+      border: 1px solid var(--board-border);
+      background: var(--board);
+    }
+    .float-label {
+      position: absolute;
+      pointer-events: none;
+      font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+      font-weight: 800;
+      font-size: 18px;
+      color: var(--accent);
+      transform: translate(-50%, -50%);
+      animation: floatUp 0.9s ease-out forwards;
+      z-index: 3;
+    }
+    @keyframes floatUp {
+      0% { opacity: 0; translate: 0 6px; }
+      15% { opacity: 1; }
+      100% { opacity: 0; translate: 0 -34px; }
+    }
+
+    .controls {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .controls .spacer { flex: 1; }
+    #seed {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .overlay {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: color-mix(in srgb, var(--screen) 72%, transparent);
+      backdrop-filter: blur(4px);
+      z-index: 10;
+    }
+    .overlay[hidden] { display: none; }
+    .modal {
+      background: var(--control);
+      border: 1px solid var(--control-border);
+      border-radius: 18px;
+      padding: 32px 40px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      box-shadow: 0 20px 50px -20px rgba(0, 0, 0, 0.35);
+    }
+    .modal h2 { font-size: 15px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+    #final-score {
+      font-size: 44px;
+      font-weight: 800;
+      color: var(--accent);
+      font-variant-numeric: tabular-nums;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <svg id="volt" width="26" height="30" viewBox="0 0 100 120" aria-hidden="true">
+        <polygon points="56,6 24,64 45,64 36,114 79,48 55,48 72,6"
+          fill="#FFD166" stroke="#232B33" stroke-width="6" stroke-linejoin="round" />
+      </svg>
+      <span class="logo">DOTON</span>
+      <span class="spacer"></span>
+      <button id="theme-toggle" title="Сменить тему">◐</button>
+    </header>
+
+    <div class="hud">
+      <div class="score-block">
+        <span class="score-label">Вольты</span>
+        <span id="score" class="mono">0</span>
+      </div>
+      <div class="timer-block">
+        <span id="time" class="mono">3:00</span>
+        <div class="tbar"><i id="time-fill" style="width: 100%"></i></div>
+      </div>
+    </div>
+
+    <div class="board-wrap">
+      <canvas id="game"></canvas>
+    </div>
+
+    <div class="controls">
+      <button id="mode-sprint" class="active">Спринт</button>
+      <button id="mode-free">Свободно</button>
+      <span class="spacer"></span>
+      <button id="new-board">Новая плата</button>
+      <span id="seed" class="mono"></span>
+    </div>
+  </div>
+
+  <div id="game-over" class="overlay" hidden>
+    <div class="modal">
+      <h2>Время вышло</h2>
+      <span id="final-score" class="mono">0</span>
+      <button id="restart">Ещё раз</button>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
