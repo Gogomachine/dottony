@@ -5,6 +5,8 @@ export interface Theme {
   board: string;
   gridLine: string;
   chainOutline: string;
+  insulator: string;
+  insulatorBorder: string;
 }
 
 export const THEMES: Record<Theme['name'], Theme> = {
@@ -14,6 +16,8 @@ export const THEMES: Record<Theme['name'], Theme> = {
     board: '#FAFBFC',
     gridLine: 'rgba(47, 79, 110, 0.08)',
     chainOutline: 'rgba(255, 255, 255, 0.75)',
+    insulator: '#AEB9C6',
+    insulatorBorder: '#7D8A99',
   },
   graphite: {
     name: 'graphite',
@@ -21,6 +25,8 @@ export const THEMES: Record<Theme['name'], Theme> = {
     board: '#1A1D22',
     gridLine: 'rgba(201, 146, 92, 0.09)',
     chainOutline: 'rgba(230, 228, 223, 0.4)',
+    insulator: '#3C424C',
+    insulatorBorder: '#5A626E',
   },
 };
 

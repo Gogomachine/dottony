@@ -10,23 +10,40 @@ interface DotAnim {
 interface Ghost {
   x: number;
   y: number;
-  color: Color;
+  fill: string;
+  age: number;
+}
+
+interface Shockwave {
+  x: number;
+  y: number;
   age: number;
 }
 
 const GHOST_LIFE = 0.4;
+const SHOCK_LIFE = 0.5;
 /** Ускорение падения в клетках/с² — подбиралось на глаз. */
 const GRAVITY_CELLS = 34;
 const BOUNCE = 0.16;
+/** Контур молнии заряда, в долях радиуса точки. */
+const BOLT = [
+  [0.18, -0.55],
+  [-0.3, 0.1],
+  [-0.02, 0.1],
+  [-0.18, 0.55],
+  [0.34, -0.14],
+  [0.06, -0.14],
+] as const;
 
 /**
- * Canvas-рендер поля: точки, линия цепочки, падение.
+ * Canvas-рендер поля: точки, изоляторы, заряды, линия цепочки, падение.
  * Свечение — только как ответ на действие (стайлгайд «Цепи»).
  */
 export class Renderer {
   private readonly ctx: CanvasRenderingContext2D;
   private anims: DotAnim[][] = [];
   private ghosts: Ghost[] = [];
+  private shocks: Shockwave[] = [];
   private cell = 0;
   private pad = 0;
 
@@ -77,24 +94,39 @@ export class Renderer {
       Array.from({ length: this.cfg.cols }, () => ({ offset: 0, velocity: 0 })),
     );
     this.ghosts = [];
+    this.shocks = [];
   }
 
-  /** Ставит анимации падения по результату хода (grid уже новый). */
+  /** Ставит анимации падения и призраков по результату хода (grid уже новый). */
   animateMove(oldGrid: Grid, result: MoveResult): void {
+    const gone: Cell[] = [...result.removed, ...result.exploded, ...result.destroyed];
     const removedByCol = new Map<number, Set<number>>();
-    for (const cell of result.removed) {
+
+    for (const cell of gone) {
+      const content = oldGrid[cell.r]![cell.c]!;
+      const fill =
+        content.kind === 'dot' ? this.theme.dots[content.color]! : this.theme.insulator;
       const center = this.center(cell);
-      this.ghosts.push({ x: center.x, y: center.y, color: result.color, age: 0 });
+      this.ghosts.push({ x: center.x, y: center.y, fill, age: 0 });
+
       let rows = removedByCol.get(cell.c);
       if (!rows) removedByCol.set(cell.c, (rows = new Set()));
       rows.add(cell.r);
+    }
+
+    // Ударная волна из каждой заряженной точки цепочки.
+    for (const cell of result.removed) {
+      const content = oldGrid[cell.r]![cell.c]!;
+      if (content.kind === 'dot' && content.charged) {
+        const center = this.center(cell);
+        this.shocks.push({ x: center.x, y: center.y, age: 0 });
+      }
     }
 
     for (let c = 0; c < this.cfg.cols; c++) {
       const removedRows = removedByCol.get(c);
       if (!removedRows) continue;
       const missing = removedRows.size;
-      // Уцелевшие точки столбца сверху вниз — их старые строки.
       const survivorRows: number[] = [];
       for (let r = 0; r < this.cfg.rows; r++) {
         if (!removedRows.has(r)) survivorRows.push(r);
@@ -113,7 +145,13 @@ export class Renderer {
     }
   }
 
-  draw(dt: number, grid: Grid, chain: Cell[], pointer: { x: number; y: number } | null): void {
+  draw(
+    dt: number,
+    grid: Grid,
+    chain: Cell[],
+    pointer: { x: number; y: number } | null,
+    phaseColor: Color | null,
+  ): void {
     const size = this.canvas.clientWidth;
     const ctx = this.ctx;
     const theme = this.theme;
@@ -137,38 +175,52 @@ export class Renderer {
     ctx.stroke();
 
     // Линия цепочки — под точками.
-    if (chain.length > 0) {
-      const color = grid[chain[0]!.r]?.[chain[0]!.c];
-      if (color !== undefined) {
-        ctx.strokeStyle = theme.dots[color]!;
-        ctx.globalAlpha = 0.55;
-        ctx.lineWidth = this.cell * 0.18;
-        ctx.lineCap = 'square';
-        ctx.lineJoin = 'miter';
-        ctx.beginPath();
-        chain.forEach((cell, i) => {
-          const p = this.center(cell);
-          if (i === 0) ctx.moveTo(p.x, p.y);
-          else ctx.lineTo(p.x, p.y);
-        });
-        if (pointer) ctx.lineTo(pointer.x, pointer.y);
-        ctx.stroke();
-        ctx.globalAlpha = 1;
-      }
+    const first = chain[0];
+    const firstContent = first ? grid[first.r]?.[first.c] : undefined;
+    if (firstContent?.kind === 'dot') {
+      ctx.strokeStyle = theme.dots[firstContent.color]!;
+      ctx.globalAlpha = 0.55;
+      ctx.lineWidth = this.cell * 0.18;
+      ctx.lineCap = 'square';
+      ctx.lineJoin = 'miter';
+      ctx.beginPath();
+      chain.forEach((cell, i) => {
+        const p = this.center(cell);
+        if (i === 0) ctx.moveTo(p.x, p.y);
+        else ctx.lineTo(p.x, p.y);
+      });
+      if (pointer) ctx.lineTo(pointer.x, pointer.y);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
     }
 
-    // Точки.
+    // Содержимое клеток.
     const inChain = new Set(chain.map((cell) => `${cell.r},${cell.c}`));
     const radius = this.cell * 0.34;
     for (let r = 0; r < this.cfg.rows; r++) {
       for (let c = 0; c < this.cfg.cols; c++) {
-        const color = grid[r]![c]!;
+        const content = grid[r]![c]!;
         const anim = this.anims[r]![c]!;
         const center = this.center({ r, c });
         const y = center.y + anim.offset;
-        const active = inChain.has(`${r},${c}`);
 
-        ctx.fillStyle = this.theme.dots[color]!;
+        if (content.kind === 'insulator') {
+          this.drawInsulator(center.x, y, content.hp);
+          continue;
+        }
+
+        const active = inChain.has(`${r},${c}`);
+        // Точка цвета фазы — с ореолом: сейчас за неё ×2.
+        if (phaseColor !== null && content.color === phaseColor) {
+          ctx.globalAlpha = 0.25;
+          ctx.fillStyle = theme.dots[content.color]!;
+          ctx.beginPath();
+          ctx.arc(center.x, y, radius * 1.45, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        }
+
+        ctx.fillStyle = theme.dots[content.color]!;
         ctx.beginPath();
         ctx.arc(center.x, y, active ? radius * 1.14 : radius, 0, Math.PI * 2);
         ctx.fill();
@@ -178,19 +230,73 @@ export class Renderer {
           ctx.lineWidth = 3;
           ctx.stroke();
         }
+
+        if (content.charged) {
+          this.drawBolt(center.x, y, radius);
+        }
       }
     }
 
-    // Призраки снятых точек.
+    // Призраки снятых клеток.
     for (const ghost of this.ghosts) {
       const t = ghost.age / GHOST_LIFE;
       ctx.globalAlpha = 0.5 * (1 - t);
-      ctx.fillStyle = theme.dots[ghost.color]!;
+      ctx.fillStyle = ghost.fill;
       ctx.beginPath();
       ctx.arc(ghost.x, ghost.y, radius * (1 + t * 0.9), 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.globalAlpha = 1;
+
+    // Ударные волны перегрузки.
+    for (const shock of this.shocks) {
+      const t = shock.age / SHOCK_LIFE;
+      ctx.globalAlpha = 0.55 * (1 - t);
+      ctx.strokeStyle = theme.chainOutline;
+      ctx.lineWidth = 3 * (1 - t) + 1;
+      ctx.beginPath();
+      ctx.arc(shock.x, shock.y, this.cell * (0.4 + t * 1.3), 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  private drawInsulator(x: number, y: number, hp: number): void {
+    const ctx = this.ctx;
+    const half = this.cell * 0.36;
+    ctx.globalAlpha = hp < this.cfg.insulatorHp ? 0.8 : 1;
+    ctx.fillStyle = this.theme.insulator;
+    ctx.strokeStyle = this.theme.insulatorBorder;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(x - half, y - half, half * 2, half * 2, half * 0.35);
+    ctx.fill();
+    ctx.stroke();
+    // Трещина на повреждённом изоляторе.
+    if (hp < this.cfg.insulatorHp) {
+      ctx.strokeStyle = this.theme.insulatorBorder;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(x - half * 0.5, y - half * 0.7);
+      ctx.lineTo(x + half * 0.1, y - half * 0.05);
+      ctx.lineTo(x - half * 0.25, y + half * 0.3);
+      ctx.lineTo(x + half * 0.35, y + half * 0.75);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  private drawBolt(x: number, y: number, radius: number): void {
+    const ctx = this.ctx;
+    const scale = radius * 1.35;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+    ctx.beginPath();
+    BOLT.forEach(([bx, by], i) => {
+      if (i === 0) ctx.moveTo(x + bx * scale, y + by * scale);
+      else ctx.lineTo(x + bx * scale, y + by * scale);
+    });
+    ctx.closePath();
+    ctx.fill();
   }
 
   private step(dt: number): void {
@@ -214,5 +320,7 @@ export class Renderer {
     }
     for (const ghost of this.ghosts) ghost.age += dt;
     this.ghosts = this.ghosts.filter((ghost) => ghost.age < GHOST_LIFE);
+    for (const shock of this.shocks) shock.age += dt;
+    this.shocks = this.shocks.filter((shock) => shock.age < SHOCK_LIFE);
   }
 }

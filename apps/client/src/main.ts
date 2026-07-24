@@ -1,4 +1,4 @@
-import type { Cell } from '@doton/core';
+import { DEFAULT_CONFIG, type Cell, type FeatureFlags, type GameConfig } from '@doton/core';
 import { ChainInput } from './game/input';
 import { Renderer } from './game/renderer';
 import { Session, SPRINT_SECONDS, type Mode } from './game/session';
@@ -17,17 +17,40 @@ const timeFill = el<HTMLElement>('time-fill');
 const seedEl = el<HTMLSpanElement>('seed');
 const overlay = el<HTMLDivElement>('game-over');
 const finalScoreEl = el<HTMLSpanElement>('final-score');
+const phaseEl = el<HTMLDivElement>('phase');
+const phaseTextEl = el<HTMLSpanElement>('phase-text');
 const boardWrap = canvas.parentElement as HTMLElement;
+
+// ---------- Фичи (переключатели прототипа) ----------
+
+const FEATURES_KEY = 'doton-features';
+
+function loadFeatures(): FeatureFlags {
+  try {
+    const saved = JSON.parse(localStorage.getItem(FEATURES_KEY) ?? '');
+    return { ...DEFAULT_CONFIG.features, ...saved };
+  } catch {
+    return { ...DEFAULT_CONFIG.features };
+  }
+}
+
+const features = loadFeatures();
+
+function makeCfg(): GameConfig {
+  return { ...DEFAULT_CONFIG, features: { ...features } };
+}
+
+// ---------- Состояние ----------
 
 let themeName = loadThemeName();
 let theme: Theme = applyTheme(themeName);
 let mode: Mode = 'sprint';
 let session = newSession();
-const renderer = new Renderer(canvas, session.cfg, theme);
+const renderer = new Renderer(canvas, DEFAULT_CONFIG, theme);
 
 function newSession(): Session {
   const seed = Math.floor(Math.random() * 0xffffffff);
-  return new Session(seed, mode);
+  return new Session(seed, mode, makeCfg());
 }
 
 function startGame(): void {
@@ -52,10 +75,45 @@ function updateHud(): void {
   }
 }
 
-function showFloatingPoints(points: number, at: { x: number; y: number }): void {
+// ---------- Баннер фазы ----------
+
+let phaseBannerCache = '';
+
+function updatePhaseBanner(): void {
+  const { active, remaining, nextColor, nextIn } = session.phase();
+  let html: string;
+  let bannerClass: string;
+
+  if (!session.cfg.features.phases) {
+    html = '&nbsp;';
+    bannerClass = '';
+  } else if (active !== null) {
+    const color = theme.dots[active]!;
+    html = `<span class="swatch" style="--swatch:#fff"></span> Нагрузка сети ×${session.cfg.phaseMultiplier} — ${Math.ceil(remaining)} с`;
+    bannerClass = 'active';
+    phaseEl.style.setProperty('--phase-bg', color);
+  } else if (nextIn <= 5) {
+    const color = theme.dots[nextColor]!;
+    html = `<span class="swatch" style="--swatch:${color}"></span> Нагрузка через ${Math.ceil(nextIn)} с`;
+    bannerClass = '';
+  } else {
+    html = 'Сеть стабильна';
+    bannerClass = '';
+  }
+
+  const cacheKey = bannerClass + html;
+  if (cacheKey === phaseBannerCache) return;
+  phaseBannerCache = cacheKey;
+  phaseTextEl.innerHTML = html;
+  phaseEl.className = `phase ${bannerClass}`;
+}
+
+// ---------- Ходы ----------
+
+function showFloatingPoints(points: number, phased: boolean, at: { x: number; y: number }): void {
   const label = document.createElement('span');
   label.className = 'float-label';
-  label.textContent = `+${points} В`;
+  label.textContent = phased ? `+${points} В ×${session.cfg.phaseMultiplier}` : `+${points} В`;
   label.style.left = `${at.x}px`;
   label.style.top = `${at.y}px`;
   boardWrap.appendChild(label);
@@ -66,20 +124,22 @@ const input = new ChainInput(
   canvas,
   renderer,
   () => session.board,
-  session.cfg,
+  DEFAULT_CONFIG,
   (path: Cell[]) => {
     const oldGrid = session.board.grid;
     const at = input.pointer ?? renderer.center(path[path.length - 1]!);
     const result = session.tryMove(path);
     if (typeof result === 'string') return;
     renderer.animateMove(oldGrid, result);
-    showFloatingPoints(result.points, at);
+    showFloatingPoints(result.points, result.phased, at);
     updateHud();
   },
   () => {
     if (navigator.vibrate) navigator.vibrate(4);
   },
 );
+
+// ---------- Управление ----------
 
 el<HTMLButtonElement>('theme-toggle').addEventListener('click', () => {
   themeName = themeName === 'draft' ? 'graphite' : 'draft';
@@ -102,7 +162,20 @@ freeBtn.addEventListener('click', () => setMode('free'));
 el<HTMLButtonElement>('new-board').addEventListener('click', startGame);
 el<HTMLButtonElement>('restart').addEventListener('click', startGame);
 
+for (const key of ['insulators', 'phases', 'surge'] as const) {
+  const button = el<HTMLButtonElement>(`f-${key}`);
+  button.classList.toggle('active', features[key]);
+  button.addEventListener('click', () => {
+    features[key] = !features[key];
+    button.classList.toggle('active', features[key]);
+    localStorage.setItem(FEATURES_KEY, JSON.stringify(features));
+    startGame();
+  });
+}
+
 new ResizeObserver(() => renderer.resize()).observe(canvas);
+
+// ---------- Игровой цикл ----------
 
 let lastTime = performance.now();
 function frame(now: number): void {
@@ -114,10 +187,19 @@ function frame(now: number): void {
     overlay.hidden = false;
   }
   if (session.mode === 'sprint' && !session.over) updateHud();
+  updatePhaseBanner();
 
-  renderer.draw(dt, session.board.grid, input.chain, input.pointer);
+  renderer.draw(dt, session.board.grid, input.chain, input.pointer, session.phase().active);
   requestAnimationFrame(frame);
 }
 
 startGame();
 requestAnimationFrame(frame);
+
+// Read-only доступ к состоянию для e2e-тестов и отладки в консоли.
+declare global {
+  interface Window {
+    __doton?: { session: () => Session };
+  }
+}
+window.__doton = { session: () => session };

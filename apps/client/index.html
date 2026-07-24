@@ -122,6 +122,39 @@
       transition: width 0.3s linear;
     }
 
+    .phase {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 26px;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--muted);
+      border-radius: 10px;
+      transition: background 0.2s, color 0.2s;
+    }
+    .phase.active {
+      color: var(--phase-ink, #fff);
+      background: var(--phase-bg, var(--accent));
+    }
+    .phase .swatch {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: var(--swatch, transparent);
+      vertical-align: -1px;
+    }
+
+    .features .features-label {
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .features button { font-size: 12px; padding: 6px 10px; opacity: 0.55; }
+    .features button.active { opacity: 1; }
+
     .board-wrap { position: relative; }
     canvas {
       display: block;
@@ -214,6 +247,8 @@
       </div>
     </div>
 
+    <div id="phase" class="phase"><span id="phase-text">&nbsp;</span></div>
+
     <div class="board-wrap">
       <canvas id="game"></canvas>
     </div>
@@ -224,6 +259,13 @@
       <span class="spacer"></span>
       <button id="new-board">Новая плата</button>
       <span id="seed" class="mono"></span>
+    </div>
+
+    <div class="controls features">
+      <span class="features-label">Фичи:</span>
+      <button id="f-insulators" class="active">Изоляторы</button>
+      <button id="f-phases" class="active">Нагрузка</button>
+      <button id="f-surge" class="active">Перегрузка</button>
     </div>
   </div>
 
