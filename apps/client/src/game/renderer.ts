@@ -36,7 +36,7 @@ const BOLT = [
 ] as const;
 
 /**
- * Canvas-рендер поля: точки, изоляторы, заряды, линия цепочки, падение.
+ * Canvas-рендер поля: точки, заряды, линия цепочки, падение.
  * Свечение — только как ответ на действие (стайлгайд «Цепи»).
  */
 export class Renderer {
@@ -99,13 +99,12 @@ export class Renderer {
 
   /** Ставит анимации падения и призраков по результату хода (grid уже новый). */
   animateMove(oldGrid: Grid, result: MoveResult): void {
-    const gone: Cell[] = [...result.removed, ...result.exploded, ...result.destroyed];
+    const gone: Cell[] = [...result.removed, ...result.exploded];
     const removedByCol = new Map<number, Set<number>>();
 
     for (const cell of gone) {
       const content = oldGrid[cell.r]![cell.c]!;
-      const fill =
-        content.kind === 'dot' ? this.theme.dots[content.color]! : this.theme.insulator;
+      const fill = this.theme.dots[content.color]!;
       const center = this.center(cell);
       this.ghosts.push({ x: center.x, y: center.y, fill, age: 0 });
 
@@ -116,8 +115,7 @@ export class Renderer {
 
     // Ударная волна из каждой заряженной точки цепочки.
     for (const cell of result.removed) {
-      const content = oldGrid[cell.r]![cell.c]!;
-      if (content.kind === 'dot' && content.charged) {
+      if (oldGrid[cell.r]![cell.c]!.charged) {
         const center = this.center(cell);
         this.shocks.push({ x: center.x, y: center.y, age: 0 });
       }
@@ -177,7 +175,7 @@ export class Renderer {
     // Линия цепочки — под точками.
     const first = chain[0];
     const firstContent = first ? grid[first.r]?.[first.c] : undefined;
-    if (firstContent?.kind === 'dot') {
+    if (firstContent !== undefined) {
       ctx.strokeStyle = theme.dots[firstContent.color]!;
       ctx.globalAlpha = 0.55;
       ctx.lineWidth = this.cell * 0.18;
@@ -203,11 +201,6 @@ export class Renderer {
         const anim = this.anims[r]![c]!;
         const center = this.center({ r, c });
         const y = center.y + anim.offset;
-
-        if (content.kind === 'insulator') {
-          this.drawInsulator(center.x, y, content.hp);
-          continue;
-        }
 
         const active = inChain.has(`${r},${c}`);
         // Точка цвета фазы — с ореолом: сейчас за неё ×2.
@@ -256,31 +249,6 @@ export class Renderer {
       ctx.lineWidth = 3 * (1 - t) + 1;
       ctx.beginPath();
       ctx.arc(shock.x, shock.y, this.cell * (0.4 + t * 1.3), 0, Math.PI * 2);
-      ctx.stroke();
-    }
-    ctx.globalAlpha = 1;
-  }
-
-  private drawInsulator(x: number, y: number, hp: number): void {
-    const ctx = this.ctx;
-    const half = this.cell * 0.36;
-    ctx.globalAlpha = hp < this.cfg.insulatorHp ? 0.8 : 1;
-    ctx.fillStyle = this.theme.insulator;
-    ctx.strokeStyle = this.theme.insulatorBorder;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.roundRect(x - half, y - half, half * 2, half * 2, half * 0.35);
-    ctx.fill();
-    ctx.stroke();
-    // Трещина на повреждённом изоляторе.
-    if (hp < this.cfg.insulatorHp) {
-      ctx.strokeStyle = this.theme.insulatorBorder;
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(x - half * 0.5, y - half * 0.7);
-      ctx.lineTo(x + half * 0.1, y - half * 0.05);
-      ctx.lineTo(x - half * 0.25, y + half * 0.3);
-      ctx.lineTo(x + half * 0.35, y + half * 0.75);
       ctx.stroke();
     }
     ctx.globalAlpha = 1;

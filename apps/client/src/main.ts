@@ -1,4 +1,4 @@
-import { DEFAULT_CONFIG, type Cell, type FeatureFlags, type GameConfig } from '@doton/core';
+import { DEFAULT_CONFIG, type Cell } from '@doton/core';
 import { ChainInput } from './game/input';
 import { Renderer } from './game/renderer';
 import { Session, SPRINT_SECONDS, type Mode } from './game/session';
@@ -21,25 +21,6 @@ const phaseEl = el<HTMLDivElement>('phase');
 const phaseTextEl = el<HTMLSpanElement>('phase-text');
 const boardWrap = canvas.parentElement as HTMLElement;
 
-// ---------- Фичи (переключатели прототипа) ----------
-
-const FEATURES_KEY = 'doton-features';
-
-function loadFeatures(): FeatureFlags {
-  try {
-    const saved = JSON.parse(localStorage.getItem(FEATURES_KEY) ?? '');
-    return { ...DEFAULT_CONFIG.features, ...saved };
-  } catch {
-    return { ...DEFAULT_CONFIG.features };
-  }
-}
-
-const features = loadFeatures();
-
-function makeCfg(): GameConfig {
-  return { ...DEFAULT_CONFIG, features: { ...features } };
-}
-
 // ---------- Состояние ----------
 
 let themeName = loadThemeName();
@@ -50,7 +31,7 @@ const renderer = new Renderer(canvas, DEFAULT_CONFIG, theme);
 
 function newSession(): Session {
   const seed = Math.floor(Math.random() * 0xffffffff);
-  return new Session(seed, mode, makeCfg());
+  return new Session(seed, mode, DEFAULT_CONFIG);
 }
 
 function startGame(): void {
@@ -161,17 +142,6 @@ sprintBtn.addEventListener('click', () => setMode('sprint'));
 freeBtn.addEventListener('click', () => setMode('free'));
 el<HTMLButtonElement>('new-board').addEventListener('click', startGame);
 el<HTMLButtonElement>('restart').addEventListener('click', startGame);
-
-for (const key of ['insulators', 'phases', 'surge'] as const) {
-  const button = el<HTMLButtonElement>(`f-${key}`);
-  button.classList.toggle('active', features[key]);
-  button.addEventListener('click', () => {
-    features[key] = !features[key];
-    button.classList.toggle('active', features[key]);
-    localStorage.setItem(FEATURES_KEY, JSON.stringify(features));
-    startGame();
-  });
-}
 
 new ResizeObserver(() => renderer.resize()).observe(canvas);
 

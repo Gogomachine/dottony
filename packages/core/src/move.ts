@@ -1,4 +1,4 @@
-import { cellAt, collapse, countInsulators } from './board.js';
+import { cellAt, collapse } from './board.js';
 import type { Board, Cell, Color, GameConfig, MoveError, MoveResult } from './types.js';
 
 /** Соседство по 8 направлениям. */
@@ -15,14 +15,12 @@ function cellKey(cell: Cell): string {
 /**
  * Путь хода — последовательность клеток, по которым провёл игрок:
  * соседние точки одного цвета, без повторов, не короче минимума.
- * Изоляторы в путь не входят.
  */
 export function validatePath(board: Board, path: Cell[], cfg: GameConfig): Cell[] | MoveError {
   if (path.length === 0) return 'too-short';
 
   const first = cellAt(board.grid, path[0]!);
   if (first === undefined) return 'out-of-bounds';
-  if (first.kind !== 'dot') return 'color-mismatch';
   const color = first.color;
 
   const seen = new Set<string>([cellKey(path[0]!)]);
@@ -31,7 +29,7 @@ export function validatePath(board: Board, path: Cell[], cfg: GameConfig): Cell[
     const cell = path[i]!;
     const content = cellAt(board.grid, cell);
     if (content === undefined) return 'out-of-bounds';
-    if (content.kind !== 'dot' || content.color !== color) return 'color-mismatch';
+    if (content.color !== color) return 'color-mismatch';
     if (!areNeighbors(path[i - 1]!, cell)) return 'not-adjacent';
     if (seen.has(cellKey(cell))) return 'revisit';
     seen.add(cellKey(cell));
@@ -61,7 +59,6 @@ function neighborhood(center: Cell, cfg: GameConfig): Cell[] {
 /**
  * Применяет ход к полю. Помимо цепочки:
  * - перегрузка: заряженные точки в цепочке взрывают 3×3 вокруг себя;
- * - изоляторы рядом с цепочкой или взрывом получают 1 урон за ход;
  * - цепочка от surgeChainLength точек оставляет заряд на месте последней точки;
  * - phaseColor — активная фаза «нагрузки сети»: цепочка её цвета даёт ×множитель.
  * Единственная точка входа для клиента и сервера — гарантия одинакового счёта.
@@ -75,20 +72,16 @@ export function applyMove(
   const validated = validatePath(board, path, cfg);
   if (typeof validated === 'string') return validated;
 
-  const color = (cellAt(board.grid, path[0]!) as { color: Color }).color;
+  const color = cellAt(board.grid, path[0]!)!.color;
   const removedSet = new Set(validated.map(cellKey));
 
   // Взрывы перегрузки: 3×3 вокруг каждой заряженной точки цепочки.
   const exploded: Cell[] = [];
-  const blastZone: Cell[] = [];
   if (cfg.features.surge) {
     for (const cell of validated) {
-      const content = cellAt(board.grid, cell)!;
-      if (content.kind !== 'dot' || !content.charged) continue;
+      if (!cellAt(board.grid, cell)!.charged) continue;
       for (const near of neighborhood(cell, cfg)) {
-        blastZone.push(near);
-        const target = cellAt(board.grid, near)!;
-        if (target.kind === 'dot' && !removedSet.has(cellKey(near))) {
+        if (!removedSet.has(cellKey(near))) {
           removedSet.add(cellKey(near));
           exploded.push(near);
         }
@@ -96,82 +89,26 @@ export function applyMove(
     }
   }
 
-  // Урон изоляторам: 1 за ход от соседства с цепочкой + 1 от попадания в зону взрыва.
-  const damage = new Map<string, { cell: Cell; hits: number }>();
-  const addHit = (cell: Cell): void => {
-    const key = cellKey(cell);
-    const entry = damage.get(key);
-    if (entry) entry.hits++;
-    else damage.set(key, { cell, hits: 1 });
-  };
-  if (cfg.features.insulators) {
-    const touched = new Set<string>();
-    for (const cell of validated) {
-      for (const near of neighborhood(cell, cfg)) {
-        const key = cellKey(near);
-        if (touched.has(key)) continue;
-        if (cellAt(board.grid, near)!.kind === 'insulator') {
-          touched.add(key);
-          addHit(near);
-        }
-      }
-    }
-    for (const near of blastZone) {
-      if (cellAt(board.grid, near)!.kind === 'insulator') addHit(near);
-    }
-  }
-
-  const damaged: Cell[] = [];
-  const destroyed: Cell[] = [];
-  const grid = board.grid.map((row) => row.map((content) => ({ ...content })));
-  for (const { cell, hits } of damage.values()) {
-    const insulator = grid[cell.r]![cell.c]! as { kind: 'insulator'; hp: number };
-    insulator.hp -= hits;
-    if (insulator.hp <= 0) {
-      destroyed.push(cell);
-      removedSet.add(cellKey(cell));
-    } else {
-      damaged.push(cell);
-    }
-  }
-
-  // Очки: цепочка (×фаза) + взрыв + выжженные изоляторы.
   const phased = cfg.features.phases && phaseColor !== null && phaseColor === color;
   const points =
     chainPoints(validated.length, cfg) * (phased ? cfg.phaseMultiplier : 1) +
-    exploded.length * cfg.surgeDotValue +
-    destroyed.length * cfg.insulatorBonus;
+    exploded.length * cfg.surgeDotValue;
 
-  // Спавн изолятора — каждый N-й ход, пока их меньше лимита.
-  const insulatorsLeft = countInsulators(board.grid) - destroyed.length;
-  const spawnInsulator =
-    cfg.features.insulators &&
-    (board.moveCount + 1) % cfg.insulatorEveryMoves === 0 &&
-    insulatorsLeft < cfg.insulatorMax;
-
-  const allRemoved = [...removedSet].map((key) => {
-    const [r, c] = key.split(',').map(Number);
-    return { r: r!, c: c! };
-  });
-  const collapsed = collapse({ ...board, grid }, allRemoved, cfg, spawnInsulator);
+  const allRemoved = [...validated, ...exploded];
+  const collapsed = collapse(board, allRemoved, cfg);
 
   // Заряд перегрузки ложится туда, где кончилась длинная цепочка.
   let charged: Cell | null = null;
   if (cfg.features.surge && validated.length >= cfg.surgeChainLength) {
     const target = validated[validated.length - 1]!;
-    const landed = collapsed.grid[target.r]![target.c]!;
-    if (landed.kind === 'dot') {
-      landed.charged = true;
-      charged = target;
-    }
+    collapsed.grid[target.r]![target.c]!.charged = true;
+    charged = target;
   }
 
   return {
     board: { grid: collapsed.grid, rng: collapsed.rng, moveCount: board.moveCount + 1 },
     removed: validated,
     exploded,
-    damaged,
-    destroyed,
     charged,
     points,
     color,

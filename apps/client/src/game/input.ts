@@ -40,8 +40,7 @@ export class ChainInput {
     this.chain = [];
     this.pointer = this.toLocal(e);
     const cell = this.renderer.hitTest(this.pointer.x, this.pointer.y);
-    // Цепочка начинается только с точки — изоляторы не в счёт.
-    if (cell && cellAt(this.getBoard().grid, cell)?.kind === 'dot') {
+    if (cell) {
       this.chain.push(cell);
       this.onExtend(1);
     }
@@ -65,9 +64,7 @@ export class ChainInput {
 
     const board = this.getBoard();
     if (!areNeighbors(last, cell)) return;
-    const start = cellAt(board.grid, this.chain[0]!);
-    const next = cellAt(board.grid, cell);
-    if (start?.kind !== 'dot' || next?.kind !== 'dot' || next.color !== start.color) return;
+    if (cellAt(board.grid, cell)?.color !== cellAt(board.grid, this.chain[0]!)?.color) return;
 
     const visited = this.chain.some((taken) => sameCell(taken, cell));
     if (!visited) {
