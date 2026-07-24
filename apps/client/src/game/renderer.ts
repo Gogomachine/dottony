@@ -14,26 +14,19 @@ interface Ghost {
   age: number;
 }
 
-interface Flash {
-  color: Color;
-  age: number;
-}
-
 const GHOST_LIFE = 0.4;
-const FLASH_LIFE = 0.45;
 /** Ускорение падения в клетках/с² — подбиралось на глаз. */
 const GRAVITY_CELLS = 34;
 const BOUNCE = 0.16;
 
 /**
- * Canvas-рендер поля: точки, линия цепочки, падение, вспышка замыкания.
+ * Canvas-рендер поля: точки, линия цепочки, падение.
  * Свечение — только как ответ на действие (стайлгайд «Цепи»).
  */
 export class Renderer {
   private readonly ctx: CanvasRenderingContext2D;
   private anims: DotAnim[][] = [];
   private ghosts: Ghost[] = [];
-  private flash: Flash | null = null;
   private cell = 0;
   private pad = 0;
 
@@ -84,10 +77,9 @@ export class Renderer {
       Array.from({ length: this.cfg.cols }, () => ({ offset: 0, velocity: 0 })),
     );
     this.ghosts = [];
-    this.flash = null;
   }
 
-  /** Ставит анимации падения/вспышки по результату хода (grid уже новый). */
+  /** Ставит анимации падения по результату хода (grid уже новый). */
   animateMove(oldGrid: Grid, result: MoveResult): void {
     const removedByCol = new Map<number, Set<number>>();
     for (const cell of result.removed) {
@@ -118,10 +110,6 @@ export class Renderer {
           velocity: 0,
         };
       });
-    }
-
-    if (result.ring) {
-      this.flash = { color: result.color, age: 0 };
     }
   }
 
@@ -203,15 +191,6 @@ export class Renderer {
       ctx.fill();
     }
     ctx.globalAlpha = 1;
-
-    // Вспышка короткого замыкания.
-    if (this.flash) {
-      const t = this.flash.age / FLASH_LIFE;
-      ctx.globalAlpha = 0.22 * (1 - t);
-      ctx.fillStyle = theme.dots[this.flash.color]!;
-      ctx.fillRect(0, 0, size, size);
-      ctx.globalAlpha = 1;
-    }
   }
 
   private step(dt: number): void {
@@ -235,9 +214,5 @@ export class Renderer {
     }
     for (const ghost of this.ghosts) ghost.age += dt;
     this.ghosts = this.ghosts.filter((ghost) => ghost.age < GHOST_LIFE);
-    if (this.flash) {
-      this.flash.age += dt;
-      if (this.flash.age >= FLASH_LIFE) this.flash = null;
-    }
   }
 }

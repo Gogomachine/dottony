@@ -24,12 +24,10 @@ export interface GameConfig {
   rows: number;
   cols: number;
   colors: number;
-  /** Минимальная длина обычной цепочки. */
+  /** Минимальная длина цепочки. */
   minChain: number;
   /** Очки за n-ю точку цепочки: chainStep * (n - 1). */
   chainStep: number;
-  /** Очки за каждую точку, снятую коротким замыканием (кольцом). */
-  ringDotValue: number;
 }
 
 export const DEFAULT_CONFIG: GameConfig = {
@@ -38,16 +36,13 @@ export const DEFAULT_CONFIG: GameConfig = {
   colors: 4,
   minChain: 3,
   chainStep: 10,
-  ringDotValue: 20,
 };
 
 export interface MoveResult {
   board: Board;
-  /** Снятые с поля точки (в порядке: для цепочки — порядок пути, для кольца — скан поля). */
+  /** Снятые с поля точки в порядке пути. */
   removed: Cell[];
   points: number;
-  /** Ход замкнул кольцо — короткое замыкание цвета. */
-  ring: boolean;
   color: Color;
 }
 
@@ -56,4 +51,4 @@ export type MoveError =
   | 'out-of-bounds'
   | 'not-adjacent'
   | 'color-mismatch'
-  | 'revisit-without-ring';
+  | 'revisit';

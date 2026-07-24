@@ -85,8 +85,7 @@ describe('validatePath', () => {
       { r: 0, c: 1 },
       { r: 1, c: 0 },
     ];
-    const result = validatePath(board, path, cfg);
-    expect(result).toEqual({ cells: path, ring: false });
+    expect(validatePath(board, path, cfg)).toEqual(path);
   });
 
   it('отклоняет цепочку короче минимума', () => {
@@ -113,7 +112,15 @@ describe('validatePath', () => {
     ).toBe('out-of-bounds');
   });
 
-  it('распознаёт кольцо: квадрат 2×2 с возвратом в старт', () => {
+  it('отклоняет любой повтор клетки — включая замыкание квадрата', () => {
+    const midRepeat: Cell[] = [
+      { r: 3, c: 0 },
+      { r: 3, c: 1 },
+      { r: 3, c: 0 },
+      { r: 4, c: 0 },
+    ];
+    expect(validatePath(board, midRepeat, cfg)).toBe('revisit');
+
     const square: Cell[] = [
       { r: 3, c: 0 },
       { r: 3, c: 1 },
@@ -121,28 +128,7 @@ describe('validatePath', () => {
       { r: 4, c: 0 },
       { r: 3, c: 0 },
     ];
-    const result = validatePath(board, square, cfg);
-    expect(result).toEqual({ cells: square.slice(0, -1), ring: true });
-  });
-
-  it('отклоняет повтор клетки в середине пути', () => {
-    const path: Cell[] = [
-      { r: 3, c: 0 },
-      { r: 3, c: 1 },
-      { r: 3, c: 0 },
-      { r: 4, c: 0 },
-    ];
-    expect(validatePath(board, path, cfg)).toBe('revisit-without-ring');
-  });
-
-  it('отклоняет петлю из двух клеток (A→B→A) — это не кольцо', () => {
-    const path: Cell[] = [
-      { r: 3, c: 0 },
-      { r: 3, c: 1 },
-      { r: 4, c: 1 },
-      { r: 3, c: 1 },
-    ];
-    expect(validatePath(board, path, cfg)).toBe('too-short');
+    expect(validatePath(board, square, cfg)).toBe('revisit');
   });
 
   it('отклоняет повтор той же клетки подряд (клетка сама себе не сосед)', () => {
@@ -152,40 +138,6 @@ describe('validatePath', () => {
       { r: 3, c: 1 },
     ];
     expect(validatePath(board, path, cfg)).toBe('not-adjacent');
-  });
-
-  it('отклоняет «кольцо» из трёх уникальных клеток', () => {
-    const path: Cell[] = [
-      { r: 3, c: 0 },
-      { r: 3, c: 1 },
-      { r: 4, c: 0 },
-      { r: 3, c: 0 },
-    ];
-    expect(validatePath(board, path, cfg)).toBe('too-short');
-  });
-
-  it('отклоняет возврат на предпоследнюю клетку длинного пути — цикл из 2 точек', () => {
-    const path: Cell[] = [
-      { r: 3, c: 0 },
-      { r: 4, c: 0 },
-      { r: 4, c: 1 },
-      { r: 3, c: 1 },
-      { r: 4, c: 1 },
-    ];
-    expect(validatePath(board, path, cfg)).toBe('too-short');
-  });
-
-  it('принимает кольцо с хвостом: цикл ≥4 в конце пути', () => {
-    const path: Cell[] = [
-      { r: 5, c: 0 },
-      { r: 4, c: 0 },
-      { r: 3, c: 0 },
-      { r: 3, c: 1 },
-      { r: 4, c: 1 },
-      { r: 4, c: 0 },
-    ];
-    const result = validatePath(board, path, cfg);
-    expect(result).toEqual({ cells: path.slice(0, -1), ring: true });
   });
 });
 
@@ -215,7 +167,6 @@ describe('applyMove', () => {
     );
     if (typeof result === 'string') throw new Error(result);
     expect(result.points).toBe(30);
-    expect(result.ring).toBe(false);
     expect(result.removed).toHaveLength(3);
     // Поле осталось полным.
     expect(result.board.grid).toHaveLength(cfg.rows);
@@ -223,33 +174,6 @@ describe('applyMove', () => {
     // Уцелевшая точка (2,0)=0 упала не ниже своего столбца и цвет сохранился.
     const col0 = result.board.grid.map((row) => row[0]);
     expect(col0.slice(2)).toEqual(board.grid.map((row) => row[0]).slice(2)); // нижние не тронуты
-  });
-
-  it('кольцо снимает все точки цвета и считает по ringDotValue', () => {
-    const board = boardFrom([
-      '001123',
-      '010223',
-      '001233',
-      '112233',
-      '112233',
-      '112233',
-    ]);
-    const zeros = cellsOfColor(board.grid, 0).length;
-    const square: Cell[] = [
-      { r: 3, c: 0 },
-      { r: 3, c: 1 },
-      { r: 4, c: 1 },
-      { r: 4, c: 0 },
-      { r: 3, c: 0 },
-    ];
-    const ones = cellsOfColor(board.grid, 1).length;
-    const result = applyMove(board, square, cfg);
-    if (typeof result === 'string') throw new Error(result);
-    expect(result.ring).toBe(true);
-    expect(result.removed).toHaveLength(ones);
-    expect(result.points).toBe(cfg.ringDotValue * ones);
-    // Точек цвета 0 не убавилось.
-    expect(cellsOfColor(board.grid, 0)).toHaveLength(zeros);
   });
 
   it('детерминирован: одинаковый ход на одинаковом поле даёт одинаковый результат', () => {

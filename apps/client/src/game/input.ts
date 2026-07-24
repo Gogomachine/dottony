@@ -1,4 +1,4 @@
-import { areNeighbors, cellAt, validatePath, type Board, type Cell, type GameConfig } from '@doton/core';
+import { areNeighbors, cellAt, type Board, type Cell, type GameConfig } from '@doton/core';
 import type { Renderer } from './renderer';
 
 function sameCell(a: Cell, b: Cell): boolean {
@@ -9,8 +9,6 @@ function sameCell(a: Cell, b: Cell): boolean {
  * Сбор цепочки пальцем/мышью. Правила расширения — локальные и быстрые,
  * итоговый ход всё равно проверяет ядро.
  * Возврат на предыдущую точку укорачивает цепочку (undo жестом).
- * Попадание в уже взятую точку — попытка замкнуть кольцо: если ядро согласно,
- * ход коммитится сразу, не дожидаясь отпускания.
  */
 export class ChainInput {
   chain: Cell[] = [];
@@ -72,14 +70,6 @@ export class ChainInput {
     if (!visited) {
       this.chain.push(cell);
       this.onExtend(this.chain.length);
-      return;
-    }
-
-    // Попытка замкнуть кольцо.
-    const closed = [...this.chain, cell];
-    const validated = validatePath(board, closed, this.cfg);
-    if (typeof validated !== 'string' && validated.ring) {
-      this.commit(closed);
     }
   };
 

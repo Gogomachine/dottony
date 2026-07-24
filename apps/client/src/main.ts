@@ -15,7 +15,6 @@ const scoreEl = el<HTMLSpanElement>('score');
 const timeEl = el<HTMLSpanElement>('time');
 const timeFill = el<HTMLElement>('time-fill');
 const seedEl = el<HTMLSpanElement>('seed');
-const voltEl = el<HTMLElement>('volt');
 const overlay = el<HTMLDivElement>('game-over');
 const finalScoreEl = el<HTMLSpanElement>('final-score');
 const boardWrap = canvas.parentElement as HTMLElement;
@@ -53,21 +52,14 @@ function updateHud(): void {
   }
 }
 
-function showFloatingPoints(points: number, ring: boolean, at: { x: number; y: number }): void {
+function showFloatingPoints(points: number, at: { x: number; y: number }): void {
   const label = document.createElement('span');
   label.className = 'float-label';
-  label.textContent = ring ? `⚡ +${points} В` : `+${points} В`;
+  label.textContent = `+${points} В`;
   label.style.left = `${at.x}px`;
   label.style.top = `${at.y}px`;
   boardWrap.appendChild(label);
   setTimeout(() => label.remove(), 900);
-}
-
-function zapVolt(): void {
-  voltEl.classList.remove('zap');
-  // Перезапуск CSS-анимации требует reflow между удалением и добавлением класса.
-  void (voltEl as HTMLElement & { offsetWidth: number }).offsetWidth;
-  voltEl.classList.add('zap');
 }
 
 const input = new ChainInput(
@@ -81,8 +73,7 @@ const input = new ChainInput(
     const result = session.tryMove(path);
     if (typeof result === 'string') return;
     renderer.animateMove(oldGrid, result);
-    showFloatingPoints(result.points, result.ring, at);
-    if (result.ring) zapVolt();
+    showFloatingPoints(result.points, at);
     updateHud();
   },
   () => {
