@@ -30,6 +30,9 @@ jobs:
       - run: pnpm --filter @doton/client build
         env:
           BASE_PATH: /dottony/
+          # Задаётся в Settings → Secrets and variables → Actions → Variables.
+          # Пока переменной нет — клиент собирается в оффлайн-режиме без сервера.
+          VITE_API_URL: ${{ vars.DOTON_API_URL }}
       - uses: actions/configure-pages@v5
         with:
           enablement: true

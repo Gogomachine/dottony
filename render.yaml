@@ -1,0 +1,24 @@
+# Деплой сервера Doton на Render (https://render.com), режим Blueprint:
+# New → Blueprint → выбрать этот репозиторий.
+services:
+  - type: web
+    name: doton-server
+    runtime: node
+    plan: free
+    buildCommand: corepack enable && pnpm install --frozen-lockfile
+    startCommand: pnpm --filter @doton/server start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DAILY_SECRET
+        generateValue: true
+      - key: DATABASE_PATH
+        value: /var/data/doton.sqlite
+      # TELEGRAM_BOT_TOKEN добавить вручную, когда появится бот.
+    disk:
+      name: doton-data
+      mountPath: /var/data
+      sizeGB: 1

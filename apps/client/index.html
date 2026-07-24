@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
   <title>Doton — Цепь</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     :root {
       --screen: #edf0f3;
@@ -214,6 +215,34 @@
       color: var(--accent);
       font-variant-numeric: tabular-nums;
     }
+    #over-note { font-size: 14px; color: var(--muted); max-width: 260px; }
+    .board-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 240px;
+      max-height: 40vh;
+      overflow-y: auto;
+      text-align: left;
+      font-size: 14px;
+    }
+    .board-list li {
+      display: grid;
+      grid-template-columns: 30px 1fr auto;
+      gap: 8px;
+      padding: 5px 10px;
+      border-radius: 8px;
+    }
+    .board-list li.me {
+      background: color-mix(in srgb, var(--accent) 16%, transparent);
+      font-weight: 700;
+    }
+    .board-list .rank { color: var(--muted); font-variant-numeric: tabular-nums; }
+    .board-list .pts {
+      font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+      font-variant-numeric: tabular-nums;
+    }
   </style>
 </head>
 <body>
@@ -248,6 +277,7 @@
     <div class="controls">
       <button id="mode-sprint" class="active">Спринт</button>
       <button id="mode-free">Свободно</button>
+      <button id="mode-daily">Вызов дня</button>
       <span class="spacer"></span>
       <button id="new-board">Новая плата</button>
       <span id="seed" class="mono"></span>
@@ -257,8 +287,10 @@
 
   <div id="game-over" class="overlay" hidden>
     <div class="modal">
-      <h2>Время вышло</h2>
+      <h2 id="over-title">Время вышло</h2>
       <span id="final-score" class="mono">0</span>
+      <p id="over-note" hidden></p>
+      <ol id="daily-board" class="board-list" hidden></ol>
       <button id="restart">Ещё раз</button>
     </div>
   </div>
