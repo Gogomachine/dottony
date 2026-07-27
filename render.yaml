@@ -11,8 +11,12 @@ services:
     name: zaapo-server
     runtime: node
     plan: free
-    buildCommand: corepack enable && pnpm install --frozen-lockfile
-    startCommand: pnpm --filter @doton/server start
+    # --prod=false: сборка требует devDependencies (esbuild), а NODE_ENV
+    # ниже иначе заставил бы pnpm поставить только runtime-зависимости.
+    buildCommand: corepack enable && pnpm install --frozen-lockfile --prod=false && pnpm --filter @doton/server build
+    # Запускаем собранный бандл чистым node: в рантайме не нужны ни pnpm,
+    # ни TypeScript.
+    startCommand: node apps/server/dist/index.js
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV

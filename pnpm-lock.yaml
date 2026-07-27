@@ -44,9 +44,6 @@ importers:
       fastify:
         specifier: ^5.2.0
         version: 5.10.0
-      tsx:
-        specifier: ^4.19.0
-        version: 4.23.1
       zod:
         specifier: ^3.24.0
         version: 3.25.76
@@ -54,6 +51,12 @@ importers:
       '@types/node':
         specifier: ^22.10.0
         version: 22.20.1
+      esbuild:
+        specifier: ^0.25.0
+        version: 0.25.12
+      tsx:
+        specifier: ^4.19.0
+        version: 4.23.1
       typescript:
         specifier: ^5.6.0
         version: 5.9.3
