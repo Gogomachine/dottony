@@ -53,9 +53,59 @@ export class Store {
          )`,
         `CREATE INDEX IF NOT EXISTS idx_daily_runs_date_score
            ON daily_runs (date, score DESC)`,
+        `CREATE TABLE IF NOT EXISTS duels (
+           id TEXT PRIMARY KEY,
+           seed INTEGER NOT NULL,
+           created_at TEXT NOT NULL DEFAULT (datetime('now'))
+         )`,
+        `CREATE TABLE IF NOT EXISTS duel_players (
+           duel_id TEXT NOT NULL REFERENCES duels(id),
+           user_id TEXT NOT NULL,
+           score INTEGER NOT NULL,
+           PRIMARY KEY (duel_id, user_id)
+         )`,
+        `CREATE INDEX IF NOT EXISTS idx_duel_players_user
+           ON duel_players (user_id)`,
       ],
       'write',
     );
+  }
+
+  /** Сохраняет завершённый матч: сама дуэль и результат каждого игрока. */
+  async saveDuel(
+    id: string,
+    seed: number,
+    players: { id: string; score: number }[],
+  ): Promise<void> {
+    await this.client.batch(
+      [
+        { sql: 'INSERT INTO duels (id, seed) VALUES (?, ?)', args: [id, seed] },
+        ...players.map((player) => ({
+          sql: 'INSERT INTO duel_players (duel_id, user_id, score) VALUES (?, ?, ?)',
+          args: [id, player.id, player.score],
+        })),
+      ],
+      'write',
+    );
+  }
+
+  /** Сводка дуэлей игрока: сыграно и выиграно. */
+  async duelRecord(userId: string): Promise<{ played: number; won: number }> {
+    const result = await this.client.execute({
+      sql: `SELECT
+              COUNT(*) AS played,
+              SUM(CASE WHEN mine.score > COALESCE(theirs.score, -1) THEN 1 ELSE 0 END) AS won
+            FROM duel_players mine
+            LEFT JOIN duel_players theirs
+              ON theirs.duel_id = mine.duel_id AND theirs.user_id <> mine.user_id
+            WHERE mine.user_id = ?`,
+      args: [userId],
+    });
+    const row = result.rows[0];
+    return {
+      played: Number(row?.played ?? 0),
+      won: Number(row?.won ?? 0),
+    };
   }
 
   async createUser(id: string, name: string, tgId: string | null = null): Promise<UserRow> {

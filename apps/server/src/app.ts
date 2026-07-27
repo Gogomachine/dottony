@@ -1,19 +1,23 @@
 import { randomUUID } from 'node:crypto';
 import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
+import websocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import {
+  DuelClientMessageSchema,
   GuestAuthRequestSchema,
   SubmitDailyRequestSchema,
   TelegramAuthRequestSchema,
   DateSchema,
   type AuthResponse,
   type DailyInfo,
+  type DuelServerMessage,
   type LeaderboardResponse,
   type SubmitDailyResponse,
 } from '@doton/protocol';
 import { dailySeed, replayDaily, todayUtc } from './daily.js';
 import { Store } from './db.js';
+import { Matchmaker } from './matchmaker.js';
 import { verifyTelegramInitData } from './telegram.js';
 
 export interface AppOptions {
@@ -46,8 +50,20 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
 
   await app.register(cors, { origin: true });
   await app.register(jwt, { secret: options.jwtSecret });
+  await app.register(websocket);
 
-  app.addHook('onClose', () => store.close());
+  const matchmaker = new Matchmaker({
+    onFinish: (result) => {
+      void store
+        .saveDuel(result.duelId, result.seed, result.players)
+        .catch((error: unknown) => app.log.error(error, 'failed to save duel'));
+    },
+  });
+
+  app.addHook('onClose', () => {
+    matchmaker.close();
+    store.close();
+  });
 
   const requireUser = async (request: FastifyRequest): Promise<TokenPayload> => {
     await request.jwtVerify();
@@ -146,7 +162,74 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return response;
   });
 
-  app.get('/api/health', () => ({ ok: true }));
+  // ---------- Дуэли ----------
+
+  app.get('/api/me/duels', async (request) => {
+    const user = await requireUser(request);
+    return store.duelRecord(user.sub);
+  });
+
+  /**
+   * Матч идёт по WebSocket: токен передаётся в query, так как браузерный
+   * WebSocket не умеет слать заголовки.
+   */
+  app.get('/duel', { websocket: true }, (socket, request) => {
+    const { token } = request.query as { token?: string };
+    let user: TokenPayload;
+    try {
+      user = app.jwt.verify<TokenPayload>(token ?? '');
+    } catch {
+      socket.send(JSON.stringify({ type: 'error', error: 'unauthorized' } satisfies DuelServerMessage));
+      socket.close();
+      return;
+    }
+
+    const player = {
+      id: user.sub,
+      name: user.name,
+      send: (message: DuelServerMessage) => {
+        if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
+      },
+    };
+
+    socket.on('message', (raw: Buffer | string) => {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(String(raw));
+      } catch {
+        player.send({ type: 'error', error: 'bad-json' });
+        return;
+      }
+
+      const message = DuelClientMessageSchema.safeParse(parsed);
+      if (!message.success) {
+        player.send({ type: 'error', error: 'bad-message' });
+        return;
+      }
+
+      switch (message.data.type) {
+        case 'join':
+          matchmaker.join(player, message.data.room);
+          break;
+        case 'move': {
+          const outcome = matchmaker.move(player.id, message.data.path, message.data.t);
+          player.send(
+            outcome.ok
+              ? { type: 'accepted', score: outcome.score, points: outcome.points }
+              : { type: 'rejected', reason: outcome.reason },
+          );
+          break;
+        }
+        case 'leave':
+          matchmaker.leave(player.id);
+          break;
+      }
+    });
+
+    socket.on('close', () => matchmaker.leave(player.id));
+  });
+
+  app.get('/api/health', () => ({ ok: true, ...matchmaker.stats }));
 
   return app;
 }

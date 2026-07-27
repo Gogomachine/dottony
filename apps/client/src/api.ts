@@ -28,6 +28,15 @@ function token(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
 
+/** Токен для WebSocket: браузерный WebSocket не умеет слать заголовки. */
+export function authToken(): string | null {
+  return token();
+}
+
+export function apiBase(): string {
+  return BASE || location.origin;
+}
+
 /**
  * Бесплатный инстанс сервера засыпает после простоя и просыпается
  * до минуты, поэтому таймаут щедрый.
@@ -116,6 +125,10 @@ export function submitDaily(date: string, moves: MoveLog[]): Promise<SubmitDaily
 export function getLeaderboard(date?: string): Promise<LeaderboardResponse> {
   const query = date ? `?date=${date}` : '';
   return request<LeaderboardResponse>(`/api/daily/leaderboard${query}`);
+}
+
+export function getDuelRecord(): Promise<{ played: number; won: number }> {
+  return request<{ played: number; won: number }>('/api/me/duels');
 }
 
 // ---------- Оффлайн-режим ----------

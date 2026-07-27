@@ -1,0 +1,180 @@
+import { randomUUID } from 'node:crypto';
+import {
+  applyMove,
+  createBoard,
+  phaseColorAt,
+  seedRng,
+  DEFAULT_CONFIG,
+  type Board,
+  type Cell,
+} from '@doton/core';
+import { DUEL_SECONDS, type DuelServerMessage } from '@doton/protocol';
+
+/**
+ * Дуэль — гонка на одинаковом поле: обоим игрокам выдаётся один сид,
+ * поэтому решает только скилл. Сервер держит поле каждого игрока и
+ * проверяет каждый ход через то же ядро, что и клиент, — счёт клиента
+ * не принимается на веру никогда.
+ */
+
+/** Минимальный интервал между ходами: человек физически не жмёт чаще. */
+const MIN_MOVE_GAP = 0.1;
+
+export interface DuelPlayer {
+  id: string;
+  name: string;
+  send(message: DuelServerMessage): void;
+}
+
+interface PlayerState {
+  player: DuelPlayer;
+  board: Board;
+  score: number;
+  lastMoveAt: number;
+  /** Записанная попытка вместо живого игрока. */
+  ghost: boolean;
+}
+
+export type MoveOutcome =
+  | { ok: true; score: number; points: number }
+  | { ok: false; reason: string };
+
+export class Duel {
+  readonly id = randomUUID();
+  readonly seed: number;
+  readonly startedAt: number;
+  private readonly players = new Map<string, PlayerState>();
+  private finished = false;
+
+  constructor(
+    seed: number,
+    a: DuelPlayer,
+    b: DuelPlayer,
+    options: { ghostB?: boolean; now?: number } = {},
+  ) {
+    this.seed = seed;
+    this.startedAt = options.now ?? Date.now();
+    for (const [player, ghost] of [
+      [a, false],
+      [b, options.ghostB ?? false],
+    ] as const) {
+      this.players.set(player.id, {
+        player,
+        board: createBoard(seedRng(seed), DEFAULT_CONFIG),
+        score: 0,
+        lastMoveAt: -Infinity,
+        ghost,
+      });
+    }
+  }
+
+  get playerIds(): string[] {
+    return [...this.players.keys()];
+  }
+
+  isOver(now = Date.now()): boolean {
+    return this.finished || this.elapsed(now) > DUEL_SECONDS;
+  }
+
+  elapsed(now = Date.now()): number {
+    return (now - this.startedAt) / 1000;
+  }
+
+  private opponentOf(playerId: string): PlayerState | undefined {
+    for (const [id, state] of this.players) {
+      if (id !== playerId) return state;
+    }
+    return undefined;
+  }
+
+  /** Рассылает обоим стартовое сообщение с сидом. */
+  announce(): void {
+    for (const [id, state] of this.players) {
+      const opponent = this.opponentOf(id);
+      if (state.ghost || !opponent) continue;
+      state.player.send({
+        type: 'matched',
+        seed: this.seed,
+        duration: DUEL_SECONDS,
+        opponent: opponent.player.name,
+        ghost: opponent.ghost,
+      });
+    }
+  }
+
+  /**
+   * Применяет ход игрока: проверяет темп и легальность, начисляет очки
+   * и сообщает сопернику новый счёт.
+   */
+  applyMove(playerId: string, path: Cell[], t: number, now = Date.now()): MoveOutcome {
+    const state = this.players.get(playerId);
+    if (!state) return { ok: false, reason: 'not-in-duel' };
+    if (this.isOver(now)) return { ok: false, reason: 'duel-over' };
+    // Время берём серверное: присланному t доверять нельзя, он лишь
+    // помогает отсеять всплески частоты.
+    const elapsed = this.elapsed(now);
+    if (elapsed < state.lastMoveAt + MIN_MOVE_GAP) return { ok: false, reason: 'too-fast' };
+
+    const phase = phaseColorAt(this.seed, elapsed, DEFAULT_CONFIG);
+    const result = applyMove(state.board, path, DEFAULT_CONFIG, phase);
+    if (typeof result === 'string') return { ok: false, reason: result };
+
+    state.board = result.board;
+    state.score += result.points;
+    state.lastMoveAt = elapsed;
+
+    const opponent = this.opponentOf(playerId);
+    if (opponent && !opponent.ghost) {
+      opponent.player.send({ type: 'opponent', score: state.score });
+    }
+    return { ok: true, score: state.score, points: result.points };
+  }
+
+  scoreOf(playerId: string): number {
+    return this.players.get(playerId)?.score ?? 0;
+  }
+
+  nameOf(playerId: string): string {
+    return this.players.get(playerId)?.player.name ?? '';
+  }
+
+  /** Досрочно проставляет счёт «призраку» — он играет по записи. */
+  setGhostScore(playerId: string, score: number): void {
+    const state = this.players.get(playerId);
+    if (state?.ghost) state.score = score;
+  }
+
+  /**
+   * Завершает матч и рассылает результаты. Повторный вызов безопасен.
+   * forfeitedBy — техническое поражение (игрок ушёл): исход не зависит
+   * от счёта, иначе уход при равном счёте давал бы ничью.
+   */
+  finish(forfeitedBy?: string): void {
+    if (this.finished) return;
+    this.finished = true;
+    for (const [id, state] of this.players) {
+      const opponent = this.opponentOf(id);
+      if (state.ghost || !opponent) continue;
+      const mine = state.score;
+      const theirs = opponent.score;
+      const outcome =
+        forfeitedBy !== undefined
+          ? forfeitedBy === id
+            ? 'loss'
+            : 'win'
+          : mine > theirs
+            ? 'win'
+            : mine < theirs
+              ? 'loss'
+              : 'draw';
+      state.player.send({ type: 'finished', score: mine, opponentScore: theirs, outcome });
+    }
+  }
+
+  /** Игрок вышел: матч засчитывается сопернику. */
+  abandon(playerId: string): void {
+    if (this.finished) return;
+    if (!this.players.has(playerId) || !this.opponentOf(playerId)) return;
+    this.finish(playerId);
+  }
+}

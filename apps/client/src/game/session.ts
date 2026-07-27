@@ -13,7 +13,7 @@ import {
   type PhaseState,
 } from '@doton/core';
 
-export type Mode = 'sprint' | 'free';
+export type Mode = 'sprint' | 'free' | 'duel';
 
 export const SPRINT_SECONDS = 180;
 
@@ -35,11 +35,19 @@ export class Session {
     seed: number,
     mode: Mode,
     readonly cfg: GameConfig = DEFAULT_CONFIG,
+    /** Длительность матча для режима дуэли. */
+    duration?: number,
   ) {
     this.seed = seed;
     this.mode = mode;
     this.board = createBoard(seedRng(seed), cfg);
-    this.timeLeft = mode === 'sprint' ? SPRINT_SECONDS : Infinity;
+    this.timeLeft =
+      mode === 'sprint' ? SPRINT_SECONDS : mode === 'duel' ? (duration ?? 90) : Infinity;
+  }
+
+  /** Партия идёт на время. */
+  get timed(): boolean {
+    return this.mode === 'sprint' || this.mode === 'duel';
   }
 
   phase(): PhaseState {
@@ -60,7 +68,7 @@ export class Session {
   tick(dtSeconds: number): boolean {
     if (this.over) return false;
     this.elapsed += dtSeconds;
-    if (this.mode !== 'sprint') return false;
+    if (!this.timed) return false;
     this.timeLeft = Math.max(0, this.timeLeft - dtSeconds);
     if (this.timeLeft === 0) {
       this.over = true;

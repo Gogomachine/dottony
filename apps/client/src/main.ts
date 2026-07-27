@@ -1,8 +1,10 @@
 import { DEFAULT_CONFIG, type Cell } from '@doton/core';
 import type { LeaderboardResponse, MoveLog } from '@doton/protocol';
+import type { DuelServerMessage } from '@doton/protocol';
 import {
   apiAvailable,
   ensureAuth,
+  getDuelRecord,
   getDaily,
   getLeaderboard,
   isTelegram,
@@ -13,6 +15,7 @@ import {
   submitDaily,
   ApiError,
 } from './api';
+import { DuelConnection, inviteLink, makeRoomCode, roomFromLocation } from './duel';
 import { ChainInput } from './game/input';
 import { Renderer } from './game/renderer';
 import { Session, SPRINT_SECONDS, type Mode } from './game/session';
@@ -39,6 +42,11 @@ const restartBtn = el<HTMLButtonElement>('restart');
 const phaseEl = el<HTMLDivElement>('phase');
 const phaseTextEl = el<HTMLSpanElement>('phase-text');
 const mascotEl = el<HTMLSpanElement>('mascot');
+const versusEl = el<HTMLDivElement>('versus');
+const vsNameEl = el<HTMLSpanElement>('vs-name');
+const vsScoreEl = el<HTMLSpanElement>('vs-score');
+const vsGapEl = el<HTMLSpanElement>('vs-gap');
+const duelRecordEl = el<HTMLSpanElement>('duel-record');
 const overMascotEl = el<HTMLDivElement>('over-mascot');
 const boardWrap = canvas.parentElement as HTMLElement;
 
@@ -64,17 +72,30 @@ function winkMascot(): void {
 let themeName = loadThemeName();
 let theme: Theme = applyTheme(themeName);
 let mode: Mode = 'sprint';
-let session = newSession();
-const renderer = new Renderer(canvas, DEFAULT_CONFIG, theme);
 
 /** Активный забег ежедневного вызова: дата и лог ходов для сервера. */
 let dailyRun: { date: string; moves: MoveLog[] } | null = null;
 let dailyStarting = false;
 
+/**
+ * Идёт ли сейчас дуэль и сколько она длится (сервер сообщает при старте).
+ * Объявлено до первой сессии: newSession() читает длительность.
+ */
+let inDuel = false;
+let duelDuration = 90;
+
+let session = newSession();
+const renderer = new Renderer(canvas, DEFAULT_CONFIG, theme);
+
 const DAILY_PLAYED_KEY = 'doton-daily-played';
 
 function newSession(seed?: number): Session {
-  return new Session(seed ?? Math.floor(Math.random() * 0xffffffff), mode, DEFAULT_CONFIG);
+  return new Session(
+    seed ?? Math.floor(Math.random() * 0xffffffff),
+    mode,
+    DEFAULT_CONFIG,
+    duelDuration,
+  );
 }
 
 function startGame(seed?: number): void {
@@ -87,12 +108,13 @@ function startGame(seed?: number): void {
 
 function updateHud(): void {
   scoreEl.textContent = String(session.score);
-  if (session.mode === 'sprint') {
+  if (session.timed) {
     const total = Math.ceil(session.timeLeft);
     const minutes = Math.floor(total / 60);
     const seconds = total % 60;
     timeEl.textContent = `${minutes}:${String(seconds).padStart(2, '0')}`;
-    timeFill.style.width = `${(session.timeLeft / SPRINT_SECONDS) * 100}%`;
+    const full = session.mode === 'duel' ? duelDuration : SPRINT_SECONDS;
+    timeFill.style.width = `${(session.timeLeft / full) * 100}%`;
   } else {
     timeEl.textContent = '∞';
     timeFill.style.width = '100%';
@@ -264,6 +286,128 @@ function showOverModal(options: { title: string; score?: number; note?: string }
   overlay.hidden = false;
 }
 
+// ---------- Дуэль ----------
+
+const duel = new DuelConnection(handleDuelMessage);
+
+function showVersus(name: string, opponentScore: number): void {
+  versusEl.hidden = false;
+  vsNameEl.textContent = name;
+  vsScoreEl.textContent = String(opponentScore);
+  const gap = session.score - opponentScore;
+  vsGapEl.textContent = gap === 0 ? 'вровень' : gap > 0 ? `+${gap}` : String(gap);
+  vsGapEl.className = `vs-gap mono ${gap > 0 ? 'ahead' : gap < 0 ? 'behind' : ''}`;
+}
+
+let opponentName = 'Соперник';
+let opponentScore = 0;
+
+function handleDuelMessage(message: DuelServerMessage): void {
+  switch (message.type) {
+    case 'searching':
+      showOverModal({
+        title: 'Дуэль',
+        note: message.room
+          ? `Комната ${message.room}: ждём друга…`
+          : 'Ищем соперника…',
+      });
+      break;
+
+    case 'matched': {
+      inDuel = true;
+      duelDuration = message.duration;
+      opponentName = message.opponent;
+      opponentScore = 0;
+      mode = 'duel';
+      dailyRun = null;
+      setActiveModeButton('duel');
+      startGame(message.seed);
+      showVersus(opponentName, 0);
+      break;
+    }
+
+    case 'accepted':
+      // Счёт ведёт сервер — синхронизируем свой, чтобы не разошлись.
+      session.score = message.score;
+      updateHud();
+      showVersus(opponentName, opponentScore);
+      break;
+
+    case 'rejected':
+      // Ход не принят сервером: расхождение состояний, честнее прервать матч.
+      showOverModal({ title: 'Дуэль', note: 'Ход не принят сервером. Матч прерван.' });
+      endDuel();
+      break;
+
+    case 'opponent':
+      opponentScore = message.score;
+      showVersus(opponentName, opponentScore);
+      break;
+
+    case 'finished': {
+      const title =
+        message.outcome === 'win'
+          ? 'Победа!'
+          : message.outcome === 'loss'
+            ? 'Поражение'
+            : 'Ничья';
+      showOverModal({
+        title,
+        score: message.score,
+        note: `${opponentName}: ${message.opponentScore}`,
+      });
+      endDuel();
+      void refreshDuelRecord();
+      break;
+    }
+
+    case 'error':
+      showOverModal({
+        title: 'Дуэль',
+        note:
+          message.error === 'unauthorized'
+            ? 'Нужен вход. Сыграй «Вызов дня» — он создаст профиль.'
+            : 'Связь с сервером потеряна.',
+      });
+      endDuel();
+      break;
+  }
+}
+
+function endDuel(): void {
+  inDuel = false;
+  versusEl.hidden = true;
+  duel.close();
+}
+
+async function startDuel(room?: string): Promise<void> {
+  if (!apiAvailable) {
+    showOverModal({ title: 'Дуэль', note: 'Дуэли доступны только с сервером.' });
+    return;
+  }
+  showOverModal({
+    title: 'Дуэль',
+    note: 'Подключаюсь — бесплатный сервер просыпается до минуты…',
+  });
+  try {
+    await ensureAuth(guestName);
+  } catch {
+    showOverModal({ title: 'Дуэль', note: 'Не удалось войти. Попробуй ещё раз.' });
+    return;
+  }
+  duel.connect(room);
+}
+
+async function refreshDuelRecord(): Promise<void> {
+  if (!apiAvailable) return;
+  try {
+    const record = await getDuelRecord();
+    duelRecordEl.textContent = record.played > 0 ? `дуэли: ${record.won}/${record.played}` : '';
+  } catch {
+    // Статистика необязательна — молча пропускаем.
+  }
+}
+
 // ---------- Ходы ----------
 
 function showFloatingPoints(points: number, phased: boolean, at: { x: number; y: number }): void {
@@ -290,6 +434,7 @@ const input = new ChainInput(
     if (dailyRun) {
       dailyRun.moves.push({ path: path.map((cell) => ({ ...cell })), t: Number(elapsed.toFixed(3)) });
     }
+    if (inDuel) duel.move(path, elapsed);
     renderer.animateMove(oldGrid, result);
     showFloatingPoints(result.points, result.phased, at);
     if (result.charged || result.exploded.length > 0) winkMascot();
@@ -312,6 +457,7 @@ const modeButtons = {
   sprint: el<HTMLButtonElement>('mode-sprint'),
   free: el<HTMLButtonElement>('mode-free'),
   daily: el<HTMLButtonElement>('mode-daily'),
+  duel: el<HTMLButtonElement>('mode-duel'),
 };
 
 function setActiveModeButton(active: keyof typeof modeButtons): void {
@@ -321,6 +467,7 @@ function setActiveModeButton(active: keyof typeof modeButtons): void {
 }
 
 function setMode(next: Mode): void {
+  if (inDuel) endDuel();
   mode = next;
   dailyRun = null;
   setActiveModeButton(next);
@@ -330,6 +477,18 @@ function setMode(next: Mode): void {
 modeButtons.sprint.addEventListener('click', () => setMode('sprint'));
 modeButtons.free.addEventListener('click', () => setMode('free'));
 modeButtons.daily.addEventListener('click', () => void startDaily());
+modeButtons.duel.addEventListener('click', () => void startDuel());
+
+el<HTMLButtonElement>('invite').addEventListener('click', () => {
+  const room = makeRoomCode();
+  const link = inviteLink(room);
+  void navigator.clipboard?.writeText(link).catch(() => {});
+  showOverModal({
+    title: 'Позвать друга',
+    note: `Ссылка скопирована: ${link}\nОткройте её вдвоём — матч начнётся сам.`,
+  });
+  void startDuel(room);
+});
 el<HTMLButtonElement>('new-board').addEventListener('click', () => {
   dailyRun = null;
   setActiveModeButton(mode);
@@ -358,11 +517,14 @@ function frame(now: number): void {
   if (session.tick(dt)) {
     if (dailyRun) {
       void finishDaily(dailyRun, session.score);
+    } else if (inDuel) {
+      // Итог объявляет сервер — ждём его сообщения, чтобы счёт сошёлся.
+      showOverModal({ title: 'Дуэль', note: 'Время вышло, считаем результат…' });
     } else {
       showOverModal({ title: 'Время вышло', score: session.score });
     }
   }
-  if (session.mode === 'sprint' && !session.over) updateHud();
+  if (session.timed && !session.over) updateHud();
   updatePhaseBanner();
 
   renderer.draw(dt, session.board.grid, input.chain, input.pointer, session.phase().active);
@@ -375,6 +537,16 @@ requestAnimationFrame(frame);
 if (isTelegram()) {
   document.documentElement.classList.add('in-telegram');
 }
+
+// Ссылка-приглашение сразу ведёт в комнату друга.
+const invitedRoom = roomFromLocation();
+if (invitedRoom) void startDuel(invitedRoom);
+void refreshDuelRecord();
+
+// Уход со страницы во время матча — техническое поражение, а не зависший матч.
+addEventListener('beforeunload', () => {
+  if (inDuel) duel.close();
+});
 
 // Read-only доступ к состоянию для e2e-тестов и отладки в консоли.
 declare global {

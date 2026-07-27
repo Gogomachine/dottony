@@ -68,3 +68,61 @@ export interface SubmitDailyResponse {
 export interface ApiError {
   error: string;
 }
+
+// ---------- Дуэли (WebSocket) ----------
+
+/** Длительность дуэли, сек. */
+export const DUEL_SECONDS = 90;
+
+export const DuelJoinSchema = z.object({
+  type: z.literal('join'),
+  /** Код приватной комнаты; без него — открытый подбор соперника. */
+  room: z.string().trim().min(4).max(16).optional(),
+});
+
+export const DuelMoveSchema = z.object({
+  type: z.literal('move'),
+  path: z.array(CellSchema).min(3).max(64),
+  /** Секунда матча, на которой сделан ход. */
+  t: z.number().min(0).max(DUEL_SECONDS + 5),
+});
+
+export const DuelLeaveSchema = z.object({ type: z.literal('leave') });
+
+export const DuelClientMessageSchema = z.discriminatedUnion('type', [
+  DuelJoinSchema,
+  DuelMoveSchema,
+  DuelLeaveSchema,
+]);
+
+export type DuelClientMessage = z.infer<typeof DuelClientMessageSchema>;
+
+export interface DuelOpponent {
+  name: string;
+  score: number;
+}
+
+/** Сообщения сервера. Поле board приходит только своё — чужое не раскрываем. */
+export type DuelServerMessage =
+  | { type: 'searching'; room?: string }
+  | {
+      type: 'matched';
+      seed: number;
+      /** Сколько секунд осталось до конца матча на момент старта. */
+      duration: number;
+      opponent: string;
+      /** Матч против записанной попытки: соперник офлайн. */
+      ghost: boolean;
+    }
+  /** Ход принят: сервер подтверждает начисленные очки. */
+  | { type: 'accepted'; score: number; points: number }
+  /** Ход отклонён — клиент рассинхронизировался, поле стоит перечитать. */
+  | { type: 'rejected'; reason: string }
+  | { type: 'opponent'; score: number }
+  | {
+      type: 'finished';
+      score: number;
+      opponentScore: number;
+      outcome: 'win' | 'loss' | 'draw';
+    }
+  | { type: 'error'; error: string };

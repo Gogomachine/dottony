@@ -157,6 +157,40 @@
       vertical-align: -1px;
     }
 
+    .versus {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      border-radius: 10px;
+      background: var(--control);
+      border: 1px solid var(--control-border);
+    }
+    .versus[hidden] { display: none; }
+    .vs-name {
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .vs-score { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; }
+    .vs-gap {
+      font-size: 13px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      min-width: 54px;
+      text-align: right;
+    }
+    .vs-gap.ahead { color: #2f9e68; }
+    .vs-gap.behind { color: #d9483b; }
+
+    #duel-record { font-size: 12px; color: var(--muted); }
+
     .board-wrap { position: relative; }
     canvas {
       display: block;
@@ -274,6 +308,12 @@
       </div>
     </div>
 
+    <div id="versus" class="versus" hidden>
+      <span class="vs-name" id="vs-name">Соперник</span>
+      <span class="vs-score mono" id="vs-score">0</span>
+      <span class="vs-gap mono" id="vs-gap"></span>
+    </div>
+
     <div id="phase" class="phase"><span id="phase-text">&nbsp;</span></div>
 
     <div class="board-wrap">
@@ -287,6 +327,12 @@
       <span class="spacer"></span>
       <button id="new-board">Новая плата</button>
       <span id="seed" class="mono"></span>
+    </div>
+
+    <div class="controls">
+      <button id="mode-duel">⚡ Дуэль</button>
+      <button id="invite">Позвать друга</button>
+      <span id="duel-record" class="mono"></span>
     </div>
 
   </div>
