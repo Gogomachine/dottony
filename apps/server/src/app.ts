@@ -17,7 +17,9 @@ import { Store } from './db.js';
 import { verifyTelegramInitData } from './telegram.js';
 
 export interface AppOptions {
-  dbPath: string;
+  /** Строка подключения libSQL: ':memory:', 'file:doton.db' или 'libsql://…'. */
+  databaseUrl: string;
+  databaseAuthToken?: string;
   jwtSecret: string;
   /** Секрет сида дня: без него завтрашнее поле можно вычислить заранее. */
   dailySecret: string;
@@ -32,12 +34,18 @@ interface TokenPayload {
 
 const LEADERBOARD_SIZE = 50;
 
-export function buildApp(options: AppOptions): FastifyInstance {
+/** Собирает приложение и готовит схему БД. */
+export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
-  const store = new Store(options.dbPath);
+  const store = new Store(
+    options.databaseAuthToken
+      ? { url: options.databaseUrl, authToken: options.databaseAuthToken }
+      : { url: options.databaseUrl },
+  );
+  await store.migrate();
 
-  void app.register(cors, { origin: true });
-  void app.register(jwt, { secret: options.jwtSecret });
+  await app.register(cors, { origin: true });
+  await app.register(jwt, { secret: options.jwtSecret });
 
   app.addHook('onClose', () => store.close());
 
@@ -53,14 +61,14 @@ export function buildApp(options: AppOptions): FastifyInstance {
 
   // ---------- Авторизация ----------
 
-  app.post('/api/auth/guest', (request, reply) => {
+  app.post('/api/auth/guest', async (request, reply) => {
     const parsed = GuestAuthRequestSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
-    const user = store.createUser(randomUUID(), parsed.data.name);
+    const user = await store.createUser(randomUUID(), parsed.data.name);
     return issueToken(user.id, user.name);
   });
 
-  app.post('/api/auth/telegram', (request, reply) => {
+  app.post('/api/auth/telegram', async (request, reply) => {
     if (!options.telegramBotToken) {
       return reply.code(503).send({ error: 'telegram-auth-disabled' });
     }
@@ -70,13 +78,13 @@ export function buildApp(options: AppOptions): FastifyInstance {
     const tgUser = verifyTelegramInitData(parsed.data.initData, options.telegramBotToken);
     if (!tgUser) return reply.code(401).send({ error: 'bad-init-data' });
 
-    const existing = store.userByTelegramId(tgUser.id);
+    const existing = await store.userByTelegramId(tgUser.id);
     if (existing) {
       // Имя в Telegram могло смениться — держим свежее.
-      if (existing.name !== tgUser.name) store.renameUser(existing.id, tgUser.name);
+      if (existing.name !== tgUser.name) await store.renameUser(existing.id, tgUser.name);
       return issueToken(existing.id, tgUser.name);
     }
-    const user = store.createUser(randomUUID(), tgUser.name, tgUser.id);
+    const user = await store.createUser(randomUUID(), tgUser.name, tgUser.id);
     return issueToken(user.id, user.name);
   });
 
@@ -94,15 +102,17 @@ export function buildApp(options: AppOptions): FastifyInstance {
 
     const { date, moves } = parsed.data;
     if (date !== todayUtc()) return reply.code(400).send({ error: 'not-today' });
-    if (store.hasRun(user.sub, date)) return reply.code(409).send({ error: 'already-played' });
+    if (await store.hasRun(user.sub, date)) {
+      return reply.code(409).send({ error: 'already-played' });
+    }
 
     const replay = replayDaily(dailySeed(date, options.dailySecret), moves);
     if (typeof replay === 'string') return reply.code(400).send({ error: replay });
 
-    store.insertRun(user.sub, date, replay.score, JSON.stringify(moves));
+    await store.insertRun(user.sub, date, replay.score, JSON.stringify(moves));
     const response: SubmitDailyResponse = {
       score: replay.score,
-      rank: store.rank(date, replay.score),
+      rank: await store.rank(date, replay.score),
     };
     return response;
   });
@@ -118,15 +128,16 @@ export function buildApp(options: AppOptions): FastifyInstance {
     let me: LeaderboardResponse['me'] = null;
     try {
       const user = await requireUser(request);
-      const run = store.runOf(user.sub, date);
+      const run = await store.runOf(user.sub, date);
       if (run) {
-        me = { rank: store.rank(date, run.score), name: run.name, score: run.score };
+        me = { rank: await store.rank(date, run.score), name: run.name, score: run.score };
       }
     } catch {
       // нет или битый токен — гость смотрит таблицу анонимно
     }
 
-    const entries = store.top(date, LEADERBOARD_SIZE).map((run, index) => ({
+    const runs = await store.top(date, LEADERBOARD_SIZE);
+    const entries = runs.map((run, index) => ({
       rank: index + 1,
       name: run.name,
       score: run.score,

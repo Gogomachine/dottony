@@ -1,8 +1,14 @@
-# Деплой сервера Doton на Render (https://render.com), режим Blueprint:
+# Деплой сервера Zaapo! на Render (https://render.com), режим Blueprint:
 # New → Blueprint → выбрать этот репозиторий.
+#
+# Диск не подключаем: на бесплатном плане Render его нет, а файловая
+# система там эфемерна. Поэтому база по умолчанию живёт в файле и
+# обнуляется при перезапуске. Чтобы таблицы дня сохранялись, заведите
+# бесплатную базу Turso и добавьте в настройках сервиса переменные
+# DATABASE_URL (libsql://…) и DATABASE_AUTH_TOKEN — код тот же.
 services:
   - type: web
-    name: doton-server
+    name: zaapo-server
     runtime: node
     plan: free
     buildCommand: corepack enable && pnpm install --frozen-lockfile
@@ -15,10 +21,5 @@ services:
         generateValue: true
       - key: DAILY_SECRET
         generateValue: true
-      - key: DATABASE_PATH
-        value: /var/data/doton.sqlite
-      # TELEGRAM_BOT_TOKEN добавить вручную, когда появится бот.
-    disk:
-      name: doton-data
-      mountPath: /var/data
-      sizeGB: 1
+      # DATABASE_URL / DATABASE_AUTH_TOKEN — из Turso, добавить вручную.
+      # TELEGRAM_BOT_TOKEN — добавить, когда появится бот.

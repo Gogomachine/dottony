@@ -137,9 +137,9 @@ describe('verifyTelegramInitData', () => {
 describe('API', () => {
   let app: FastifyInstance;
 
-  beforeEach(() => {
-    app = buildApp({
-      dbPath: ':memory:',
+  beforeEach(async () => {
+    app = await buildApp({
+      databaseUrl: ':memory:',
       jwtSecret: 'test-jwt',
       dailySecret: DAILY_SECRET,
       telegramBotToken: BOT_TOKEN,

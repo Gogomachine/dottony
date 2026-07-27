@@ -14,7 +14,7 @@
 | `packages/core` | Правила игры: поле, цепочки, фазы, перегрузка, детерминированный RNG. Чистые функции без зависимостей, общие для клиента и сервера. |
 | `packages/protocol` | Контракт клиент ↔ сервер: zod-схемы запросов и типы ответов. |
 | `apps/client` | Клиент: Vite + TypeScript, Canvas-рендер, темы «Чертёж»/«Графит», Telegram Mini App. |
-| `apps/server` | Сервер: Fastify + SQLite. Ежедневный вызов, проверка реплеев через ядро, таблицы дня, вход через Telegram / гостём. |
+| `apps/server` | Сервер: Fastify + libSQL. Ежедневный вызов, проверка реплеев через ядро, таблицы дня, вход через Telegram / гостём. |
 
 ## Команды
 
@@ -36,9 +36,14 @@ pnpm build                      # сборка
   (`.github/workflows/deploy.yml`). Адрес API задаётся переменной
   репозитория `DOTON_API_URL` (Settings → Secrets and variables →
   Actions → Variables); без неё клиент работает в оффлайн-режиме.
-- **Сервер** — `apps/server/render.yaml` для Render (free-план с диском
-  под SQLite). Секреты `JWT_SECRET`/`DAILY_SECRET` генерируются сами,
-  `TELEGRAM_BOT_TOKEN` добавляется вручную после создания бота.
+- **Сервер** — `render.yaml` для Render (Blueprint, free-план). Секреты
+  `JWT_SECRET`/`DAILY_SECRET` генерируются сами.
+- **База.** По умолчанию libSQL пишет в файл `doton.db` рядом с приложением;
+  на бесплатных хостингах без постоянного диска он исчезает при
+  перезапуске. Чтобы результаты жили, заведите бесплатную базу
+  [Turso](https://turso.tech) и задайте `DATABASE_URL` (`libsql://…`) и
+  `DATABASE_AUTH_TOKEN` — код и SQL те же.
+- `TELEGRAM_BOT_TOKEN` добавляется вручную после создания бота.
 
 ## Статус
 
