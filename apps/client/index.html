@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
-  <title>Doton — Цепь</title>
+  <title>Zaapo! — соедини точки</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20100%20100'%3E%3Cpolygon%20points='54.7,4.9%2024.4,50.4%2043.9,50.4%2034.8,94.7%2075.2,44.5%2062.1,44.5'%20fill='%23F2A93F'%20stroke='%238A4A15'%20stroke-width='6'%20stroke-linejoin='round'/%3E%3C/svg%3E" />
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     :root {
@@ -61,7 +62,15 @@
       font-weight: 800;
       letter-spacing: 0.06em;
     }
-    #volt { flex-shrink: 0; }
+    #mascot { flex-shrink: 0; }
+    #mascot svg { display: block; }
+    #mascot.bounce { animation: mascotBounce 0.7s ease-out; }
+    @keyframes mascotBounce {
+      0% { transform: scale(1) rotate(0deg); }
+      30% { transform: scale(1.35) rotate(-10deg); }
+      60% { transform: scale(1.15) rotate(7deg); }
+      100% { transform: scale(1) rotate(0deg); }
+    }
     header .spacer { flex: 1; }
 
     button {
@@ -248,11 +257,8 @@
 <body>
   <div class="app">
     <header>
-      <svg id="volt" width="26" height="30" viewBox="0 0 100 120" aria-hidden="true">
-        <polygon points="56,6 24,64 45,64 36,114 79,48 55,48 72,6"
-          fill="#FFD166" stroke="#232B33" stroke-width="6" stroke-linejoin="round" />
-      </svg>
-      <span class="logo">DOTON</span>
+      <span id="mascot"></span>
+      <span class="logo">ZAAPO!</span>
       <span class="spacer"></span>
       <button id="theme-toggle" title="Сменить тему">◐</button>
     </header>
@@ -287,6 +293,7 @@
 
   <div id="game-over" class="overlay" hidden>
     <div class="modal">
+      <div id="over-mascot"></div>
       <h2 id="over-title">Время вышло</h2>
       <span id="final-score" class="mono">0</span>
       <p id="over-note" hidden></p>

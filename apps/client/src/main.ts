@@ -16,6 +16,7 @@ import {
 import { ChainInput } from './game/input';
 import { Renderer } from './game/renderer';
 import { Session, SPRINT_SECONDS, type Mode } from './game/session';
+import { mascotSvg } from './mascot';
 import { applyTheme, loadThemeName, THEMES, type Theme } from './theme';
 
 function el<T extends HTMLElement>(id: string): T {
@@ -37,7 +38,26 @@ const dailyBoardEl = el<HTMLOListElement>('daily-board');
 const restartBtn = el<HTMLButtonElement>('restart');
 const phaseEl = el<HTMLDivElement>('phase');
 const phaseTextEl = el<HTMLSpanElement>('phase-text');
+const mascotEl = el<HTMLSpanElement>('mascot');
+const overMascotEl = el<HTMLDivElement>('over-mascot');
 const boardWrap = canvas.parentElement as HTMLElement;
+
+// ---------- Заппо ----------
+
+mascotEl.innerHTML = mascotSvg({ size: 38 });
+let winkTimer = 0;
+
+/** Заппо подмигивает и подпрыгивает — реакция на яркий момент. */
+function winkMascot(): void {
+  mascotEl.innerHTML = mascotSvg({ size: 38, wink: true });
+  mascotEl.classList.remove('bounce');
+  void mascotEl.offsetWidth; // перезапуск CSS-анимации
+  mascotEl.classList.add('bounce');
+  clearTimeout(winkTimer);
+  winkTimer = window.setTimeout(() => {
+    mascotEl.innerHTML = mascotSvg({ size: 38 });
+  }, 900);
+}
 
 // ---------- Состояние ----------
 
@@ -217,6 +237,8 @@ function renderBoard(board: LeaderboardResponse): void {
 }
 
 function showOverModal(options: { title: string; score?: number; note?: string }): void {
+  // В модалке финиша Заппо подмигивает за вызов дня, в остальных — просто рад.
+  overMascotEl.innerHTML = mascotSvg({ size: 84, wink: options.title.startsWith('Вызов') });
   overTitleEl.textContent = options.title;
   finalScoreEl.hidden = options.score === undefined;
   if (options.score !== undefined) finalScoreEl.textContent = String(options.score);
@@ -255,6 +277,7 @@ const input = new ChainInput(
     }
     renderer.animateMove(oldGrid, result);
     showFloatingPoints(result.points, result.phased, at);
+    if (result.charged || result.exploded.length > 0) winkMascot();
     updateHud();
   },
   () => {
