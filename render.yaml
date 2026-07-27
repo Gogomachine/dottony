@@ -11,9 +11,18 @@ services:
     name: zaapo-server
     runtime: node
     plan: free
-    # --prod=false: сборка требует devDependencies (esbuild), а NODE_ENV
-    # ниже иначе заставил бы pnpm поставить только runtime-зависимости.
-    buildCommand: corepack enable && pnpm install --frozen-lockfile --prod=false && pnpm --filter @doton/server build
+    # Простой `corepack enable` падает: он ставит шимы в /usr/bin, а тот
+    # на сборщике Render только для чтения. Ставим их в домашний каталог
+    # и добавляем в PATH.
+    # --prod=false: сборке нужны devDependencies (esbuild), иначе NODE_ENV
+    # ниже заставил бы pnpm поставить только runtime-зависимости.
+    buildCommand: >-
+      export COREPACK_ENABLE_DOWNLOAD_PROMPT=0 &&
+      mkdir -p "$HOME/.corepack-bin" &&
+      corepack enable --install-directory "$HOME/.corepack-bin" &&
+      export PATH="$HOME/.corepack-bin:$PATH" &&
+      pnpm install --frozen-lockfile --prod=false &&
+      pnpm --filter @doton/server build
     # Запускаем собранный бандл чистым node: в рантайме не нужны ни pnpm,
     # ни TypeScript.
     startCommand: node apps/server/dist/index.js
