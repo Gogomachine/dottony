@@ -142,10 +142,21 @@ function playedDate(): string | null {
 async function startDaily(): Promise<void> {
   if (dailyStarting) return;
   dailyStarting = true;
+  // Бесплатный сервер после простоя просыпается до минуты — показываем,
+  // что игра не зависла, а ждёт ответа.
+  const waking = apiAvailable
+    ? window.setTimeout(() => {
+        showOverModal({
+          title: 'Вызов дня',
+          note: 'Бужу сервер — это занимает до минуты после простоя…',
+        });
+      }, 1200)
+    : 0;
   try {
     const info = apiAvailable
       ? await getDaily()
       : { date: localToday(), seed: localDailySeed(localToday()) };
+    clearTimeout(waking);
 
     if (playedDate() === info.date) {
       // Одна попытка в день: вместо игры показываем таблицу.
@@ -171,8 +182,12 @@ async function startDaily(): Promise<void> {
     dailyRun = { date: info.date, moves: [] };
     startGame(info.seed);
   } catch {
-    alert('Не получилось начать вызов дня — проверь связь и попробуй ещё раз.');
+    showOverModal({
+      title: 'Вызов дня',
+      note: 'Сервер не ответил. Попробуй ещё раз через минуту.',
+    });
   } finally {
+    clearTimeout(waking);
     dailyStarting = false;
   }
 }

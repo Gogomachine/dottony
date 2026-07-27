@@ -28,12 +28,28 @@ function token(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
 
+/**
+ * Бесплатный инстанс сервера засыпает после простоя и просыпается
+ * до минуты, поэтому таймаут щедрый.
+ */
+const REQUEST_TIMEOUT_MS = 70_000;
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   const auth = token();
   if (auth) headers.Authorization = `Bearer ${auth}`;
 
-  const response = await fetch(`${BASE}${path}`, { ...init, headers });
+  let response: Response;
+  try {
+    response = await fetch(`${BASE}${path}`, {
+      ...init,
+      headers,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch {
+    throw new ApiError('network', 0);
+  }
+
   const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   if (!response.ok) {
     throw new ApiError(String(body.error ?? 'unknown'), response.status);
