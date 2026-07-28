@@ -253,12 +253,8 @@ export class Renderer {
         const scaleX = anim.scale * (1 + squash * 0.5);
         const scaleY = anim.scale * (1 - squash * 0.5);
 
-        // Пока цепочка ведётся, посторонние точки уходят на второй план:
-        // так видно, что уже собрано, и куда цепочку можно продолжить.
-        const dimmed =
-          chain.length > 0 && !active && content.color !== firstContent?.color;
-        ctx.globalAlpha = dimmed ? FEEL.dimAlpha : 1;
-
+        // Точки других цветов намеренно не приглушаем: подсвечивать все
+        // подходящие точки — значит искать цепочку за игрока.
         if (phaseColor !== null && content.color === phaseColor) {
           ctx.globalAlpha = 0.25;
           ctx.fillStyle = theme.dots[content.color]!;
@@ -276,7 +272,6 @@ export class Renderer {
         if (content.charged) {
           this.drawBolt(center.x, y, radius * anim.scale);
         }
-        ctx.globalAlpha = 1;
       }
     }
 
