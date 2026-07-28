@@ -47,6 +47,9 @@ const vsNameEl = el<HTMLSpanElement>('vs-name');
 const vsScoreEl = el<HTMLSpanElement>('vs-score');
 const vsGapEl = el<HTMLSpanElement>('vs-gap');
 const duelRecordEl = el<HTMLSpanElement>('duel-record');
+const roomBoxEl = el<HTMLDivElement>('room-box');
+const roomCodeEl = el<HTMLSpanElement>('room-code');
+const copyLinkBtn = el<HTMLButtonElement>('copy-link');
 const overMascotEl = el<HTMLDivElement>('over-mascot');
 const boardWrap = canvas.parentElement as HTMLElement;
 
@@ -273,16 +276,36 @@ function renderBoard(board: LeaderboardResponse): void {
   }
 }
 
-function showOverModal(options: { title: string; score?: number; note?: string }): void {
+function showOverModal(options: {
+  title: string;
+  score?: number;
+  note?: string;
+  /** Показать код комнаты и кнопку копирования ссылки. */
+  room?: string;
+  /** Идёт ожидание соперника: кнопка станет «Отменить». */
+  waiting?: boolean;
+}): void {
   // В модалке финиша Заппо подмигивает за вызов дня, в остальных — просто рад.
   overMascotEl.innerHTML = mascotSvg({ size: 84, wink: options.title.startsWith('Вызов') });
   overTitleEl.textContent = options.title;
+  roomBoxEl.hidden = options.room === undefined;
+  if (options.room !== undefined) {
+    roomCodeEl.textContent = options.room;
+    currentRoom = options.room;
+    copyLinkBtn.textContent = 'Скопировать ссылку';
+  }
   finalScoreEl.hidden = options.score === undefined;
   if (options.score !== undefined) finalScoreEl.textContent = String(options.score);
   overNoteEl.hidden = options.note === undefined;
   overNoteEl.textContent = options.note ?? '';
   dailyBoardEl.hidden = true;
-  restartBtn.textContent = dailyRun || options.title.startsWith('Вызов') ? 'Закрыть' : 'Ещё раз';
+  // Пока ждём соперника, единственное осмысленное действие — отменить поиск.
+  waitingForOpponent = options.waiting ?? false;
+  restartBtn.textContent = waitingForOpponent
+    ? 'Отменить'
+    : dailyRun || options.title.startsWith('Вызов')
+      ? 'Закрыть'
+      : 'Ещё раз';
   overlay.hidden = false;
 }
 
@@ -301,16 +324,24 @@ function showVersus(name: string, opponentScore: number): void {
 
 let opponentName = 'Соперник';
 let opponentScore = 0;
+/** Код комнаты, показанный в модалке, — для кнопки копирования ссылки. */
+let currentRoom = '';
+/** Открыта модалка ожидания соперника. */
+let waitingForOpponent = false;
 
 function handleDuelMessage(message: DuelServerMessage): void {
   switch (message.type) {
     case 'searching':
-      showOverModal({
-        title: 'Дуэль',
-        note: message.room
-          ? `Комната ${message.room}: ждём друга…`
-          : 'Ищем соперника…',
-      });
+      showOverModal(
+        message.room
+          ? {
+              title: 'Ждём друга',
+              note: 'Продиктуй другу код или пришли ссылку. Он вводит код кнопкой «Ввести код» — и матч начнётся сам.',
+              room: message.room,
+              waiting: true,
+            }
+          : { title: 'Дуэль', note: 'Ищем соперника…', waiting: true },
+      );
       break;
 
     case 'matched': {
@@ -386,8 +417,10 @@ async function startDuel(room?: string): Promise<void> {
     return;
   }
   showOverModal({
-    title: 'Дуэль',
+    title: room ? 'Ждём друга' : 'Дуэль',
     note: 'Подключаюсь — бесплатный сервер просыпается до минуты…',
+    waiting: true,
+    ...(room ? { room } : {}),
   });
   try {
     await ensureAuth(guestName);
@@ -480,14 +513,32 @@ modeButtons.daily.addEventListener('click', () => void startDaily());
 modeButtons.duel.addEventListener('click', () => void startDuel());
 
 el<HTMLButtonElement>('invite').addEventListener('click', () => {
-  const room = makeRoomCode();
-  const link = inviteLink(room);
-  void navigator.clipboard?.writeText(link).catch(() => {});
-  showOverModal({
-    title: 'Позвать друга',
-    note: `Ссылка скопирована: ${link}\nОткройте её вдвоём — матч начнётся сам.`,
-  });
+  // Код придумываем сразу, чтобы показать его ещё до ответа сервера.
+  void startDuel(makeRoomCode());
+});
+
+el<HTMLButtonElement>('join-code').addEventListener('click', () => {
+  const answer = prompt('Код комнаты от друга:');
+  if (!answer) return;
+  const room = answer.trim().toUpperCase();
+  if (room.length < 4) {
+    showOverModal({ title: 'Дуэль', note: 'Код слишком короткий — проверь и введи ещё раз.' });
+    return;
+  }
   void startDuel(room);
+});
+
+copyLinkBtn.addEventListener('click', () => {
+  const link = inviteLink(currentRoom);
+  navigator.clipboard
+    ?.writeText(link)
+    .then(() => {
+      copyLinkBtn.textContent = 'Ссылка скопирована ✓';
+    })
+    .catch(() => {
+      // Буфер обмена может быть недоступен — показываем ссылку, чтобы скопировать вручную.
+      overNoteEl.textContent = link;
+    });
 });
 el<HTMLButtonElement>('new-board').addEventListener('click', () => {
   dailyRun = null;
@@ -495,6 +546,12 @@ el<HTMLButtonElement>('new-board').addEventListener('click', () => {
   startGame();
 });
 restartBtn.addEventListener('click', () => {
+  if (waitingForOpponent) {
+    // Отменяем поиск и возвращаемся в обычный спринт.
+    endDuel();
+    setMode('sprint');
+    return;
+  }
   if (dailyRun) {
     // Попытка дня закончена — возвращаемся в обычный спринт.
     dailyRun = null;
