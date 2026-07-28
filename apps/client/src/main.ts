@@ -16,6 +16,7 @@ import {
   ApiError,
 } from './api';
 import { DuelConnection, inviteLink, makeRoomCode, roomFromLocation } from './duel';
+import { FEEL } from './game/feel';
 import { ChainInput } from './game/input';
 import { Renderer } from './game/renderer';
 import { Session, SPRINT_SECONDS, type Mode } from './game/session';
@@ -488,8 +489,11 @@ const input = new ChainInput(
     if (result.charged || result.exploded.length > 0) winkMascot();
     updateHud();
   },
-  () => {
-    if (navigator.vibrate) navigator.vibrate(4);
+  (length: number) => {
+    // Чем длиннее цепочка, тем ощутимее отклик — рука чувствует прогресс.
+    if (!navigator.vibrate) return;
+    const ms = Math.min(FEEL.hapticBase + length * FEEL.hapticPerDot, FEEL.hapticMax);
+    navigator.vibrate(Math.round(ms));
   },
 );
 
@@ -623,7 +627,7 @@ addEventListener('beforeunload', () => {
 // Read-only доступ к состоянию для e2e-тестов и отладки в консоли.
 declare global {
   interface Window {
-    __doton?: { session: () => Session };
+    __doton?: { session: () => Session; chain: () => Cell[] };
   }
 }
-window.__doton = { session: () => session };
+window.__doton = { session: () => session, chain: () => input.chain };

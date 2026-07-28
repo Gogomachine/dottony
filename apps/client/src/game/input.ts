@@ -1,8 +1,14 @@
 import { areNeighbors, cellAt, type Board, type Cell, type GameConfig } from '@doton/core';
+import { FEEL } from './feel';
 import type { Renderer } from './renderer';
 
 function sameCell(a: Cell, b: Cell): boolean {
   return a.r === b.r && a.c === b.c;
+}
+
+interface Point {
+  x: number;
+  y: number;
 }
 
 /**
@@ -12,8 +18,9 @@ function sameCell(a: Cell, b: Cell): boolean {
  */
 export class ChainInput {
   chain: Cell[] = [];
-  pointer: { x: number; y: number } | null = null;
+  pointer: Point | null = null;
   private dragging = false;
+  private touch = false;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -29,7 +36,7 @@ export class ChainInput {
     canvas.addEventListener('pointercancel', this.onUp);
   }
 
-  private toLocal(e: PointerEvent): { x: number; y: number } {
+  private toLocal(e: PointerEvent): Point {
     const rect = this.canvas.getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }
@@ -37,21 +44,59 @@ export class ChainInput {
   private readonly onDown = (e: PointerEvent): void => {
     this.canvas.setPointerCapture(e.pointerId);
     this.dragging = true;
+    this.touch = e.pointerType !== 'mouse';
     this.chain = [];
-    this.pointer = this.toLocal(e);
-    const cell = this.renderer.hitTest(this.pointer.x, this.pointer.y);
+    const point = this.toLocal(e);
+    this.pointer = point;
+    const cell = this.renderer.hitTest(point.x, point.y, this.touch);
     if (cell) {
       this.chain.push(cell);
+      this.renderer.pulse(cell);
       this.onExtend(1);
     }
   };
 
   private readonly onMove = (e: PointerEvent): void => {
     if (!this.dragging) return;
-    this.pointer = this.toLocal(e);
-    const cell = this.renderer.hitTest(this.pointer.x, this.pointer.y);
-    if (!cell || this.chain.length === 0) return;
+    const from = this.pointer;
+    const to = this.toLocal(e);
+    this.pointer = to;
+    if (this.chain.length === 0) {
+      // Цепочка ещё не начата: разрешаем подхватить точку по ходу движения.
+      const cell = this.renderer.hitTest(to.x, to.y, this.touch);
+      if (cell) {
+        this.chain.push(cell);
+        this.renderer.pulse(cell);
+        this.onExtend(1);
+      }
+      return;
+    }
 
+    // Палец между событиями успевает пройти несколько клеток — идём по отрезку,
+    // иначе на быстром движении точки пропускаются и цепочка рвётся.
+    for (const point of this.trace(from, to)) {
+      const cell = this.renderer.hitTest(point.x, point.y, this.touch);
+      if (cell) this.tryExtend(cell);
+    }
+  };
+
+  /** Точки вдоль отрезка с шагом в долю клетки, включая конец. */
+  private *trace(from: Point | null, to: Point): Iterable<Point> {
+    if (!from) {
+      yield to;
+      return;
+    }
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const distance = Math.hypot(dx, dy);
+    const step = this.renderer.cellSize * FEEL.traceStep;
+    const steps = Math.min(Math.ceil(distance / step), 24);
+    for (let i = 1; i <= steps; i++) {
+      yield { x: from.x + (dx * i) / steps, y: from.y + (dy * i) / steps };
+    }
+  }
+
+  private tryExtend(cell: Cell): void {
     const last = this.chain[this.chain.length - 1]!;
     if (sameCell(cell, last)) return;
 
@@ -65,13 +110,12 @@ export class ChainInput {
     const board = this.getBoard();
     if (!areNeighbors(last, cell)) return;
     if (cellAt(board.grid, cell)?.color !== cellAt(board.grid, this.chain[0]!)?.color) return;
+    if (this.chain.some((taken) => sameCell(taken, cell))) return;
 
-    const visited = this.chain.some((taken) => sameCell(taken, cell));
-    if (!visited) {
-      this.chain.push(cell);
-      this.onExtend(this.chain.length);
-    }
-  };
+    this.chain.push(cell);
+    this.renderer.pulse(cell);
+    this.onExtend(this.chain.length);
+  }
 
   private readonly onUp = (): void => {
     if (!this.dragging) return;

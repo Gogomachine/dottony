@@ -1,10 +1,18 @@
 import type { Cell, Color, GameConfig, Grid, MoveResult } from '@doton/core';
 import type { Theme } from '../theme';
+import { FEEL } from './feel';
 
 interface DotAnim {
   /** Смещение по вертикали в пикселях (отрицательное — точка ещё падает). */
   offset: number;
   velocity: number;
+  /** Задержка старта падения, сек — точки сыплются волной по столбцам. */
+  delay: number;
+  /** Масштаб и его скорость: пружина даёт «щелчок» при захвате. */
+  scale: number;
+  scaleVelocity: number;
+  /** Сплющивание после приземления, 0…1. */
+  squash: number;
 }
 
 interface Ghost {
@@ -20,11 +28,15 @@ interface Shockwave {
   age: number;
 }
 
-const GHOST_LIFE = 0.4;
+/** Волна вдоль собранной цепочки — подтверждение хода. */
+interface ChainWave {
+  points: { x: number; y: number }[];
+  color: string;
+  age: number;
+}
+
+const GHOST_LIFE = FEEL.ghostLife;
 const SHOCK_LIFE = 0.5;
-/** Ускорение падения в клетках/с² — подбиралось на глаз. */
-const GRAVITY_CELLS = 34;
-const BOUNCE = 0.16;
 /** Контур молнии заряда, в долях радиуса точки. */
 const BOLT = [
   [0.18, -0.55],
@@ -35,6 +47,10 @@ const BOLT = [
   [0.06, -0.14],
 ] as const;
 
+function newAnim(): DotAnim {
+  return { offset: 0, velocity: 0, delay: 0, scale: 1, scaleVelocity: 0, squash: 0 };
+}
+
 /**
  * Canvas-рендер поля: точки, заряды, линия цепочки, падение.
  * Свечение — только как ответ на действие (стайлгайд «Цепи»).
@@ -44,6 +60,7 @@ export class Renderer {
   private anims: DotAnim[][] = [];
   private ghosts: Ghost[] = [];
   private shocks: Shockwave[] = [];
+  private waves: ChainWave[] = [];
   private cell = 0;
   private pad = 0;
 
@@ -59,6 +76,10 @@ export class Renderer {
 
   setTheme(theme: Theme): void {
     this.theme = theme;
+  }
+
+  get cellSize(): number {
+    return this.cell;
   }
 
   resize(): void {
@@ -79,22 +100,32 @@ export class Renderer {
     };
   }
 
-  /** Ближайшая клетка к точке (в CSS-пикселях канваса) или null вне радиуса захвата. */
-  hitTest(x: number, y: number): Cell | null {
+  /**
+   * Ближайшая клетка к точке (в CSS-пикселях канваса) или null вне радиуса
+   * захвата. У пальца радиус щедрее: он и толще, и не видит курсора.
+   */
+  hitTest(x: number, y: number, touch = false): Cell | null {
     const c = Math.floor((x - this.pad) / this.cell);
     const r = Math.floor((y - this.pad) / this.cell);
     if (r < 0 || r >= this.cfg.rows || c < 0 || c >= this.cfg.cols) return null;
     const center = this.center({ r, c });
-    const radius = this.cell * 0.42;
+    const radius = this.cell * (touch ? FEEL.hitRadiusTouch : FEEL.hitRadiusMouse);
     return Math.hypot(x - center.x, y - center.y) <= radius ? { r, c } : null;
+  }
+
+  /** Толкает пружину масштаба — точка «щёлкает» в момент захвата. */
+  pulse(cell: Cell): void {
+    const anim = this.anims[cell.r]?.[cell.c];
+    if (anim) anim.scaleVelocity += 9;
   }
 
   resetAnims(): void {
     this.anims = Array.from({ length: this.cfg.rows }, () =>
-      Array.from({ length: this.cfg.cols }, () => ({ offset: 0, velocity: 0 })),
+      Array.from({ length: this.cfg.cols }, newAnim),
     );
     this.ghosts = [];
     this.shocks = [];
+    this.waves = [];
   }
 
   /** Ставит анимации падения и призраков по результату хода (grid уже новый). */
@@ -113,6 +144,15 @@ export class Renderer {
       rows.add(cell.r);
     }
 
+    // Волна вдоль собранной цепочки — видимое подтверждение хода.
+    if (result.removed.length > 0) {
+      this.waves.push({
+        points: result.removed.map((cell) => this.center(cell)),
+        color: this.theme.dots[result.color]!,
+        age: 0,
+      });
+    }
+
     // Ударная волна из каждой заряженной точки цепочки.
     for (const cell of result.removed) {
       if (oldGrid[cell.r]![cell.c]!.charged) {
@@ -129,16 +169,21 @@ export class Renderer {
       for (let r = 0; r < this.cfg.rows; r++) {
         if (!removedRows.has(r)) survivorRows.push(r);
       }
+      // Небольшой сдвиг по столбцам: поле оживает волной, а не рушится стеной.
+      const delay = c * FEEL.columnStagger;
       for (let r = 0; r < missing; r++) {
         // Новые точки въезжают стопкой из-за верхнего края.
-        this.anims[r]![c] = { offset: -(missing + 0.6) * this.cell, velocity: 0 };
+        const anim = this.anims[r]![c]!;
+        anim.offset = -(missing + 0.6) * this.cell;
+        anim.velocity = 0;
+        anim.delay = delay;
       }
       survivorRows.forEach((oldRow, i) => {
         const newRow = missing + i;
-        this.anims[newRow]![c] = {
-          offset: -(newRow - oldRow) * this.cell,
-          velocity: 0,
-        };
+        const anim = this.anims[newRow]![c]!;
+        anim.offset = -(newRow - oldRow) * this.cell;
+        anim.velocity = 0;
+        anim.delay = delay;
       });
     }
   }
@@ -154,7 +199,8 @@ export class Renderer {
     const ctx = this.ctx;
     const theme = this.theme;
 
-    this.step(dt);
+    const inChain = new Set(chain.map((cell) => `${cell.r},${cell.c}`));
+    this.step(dt, inChain);
 
     ctx.clearRect(0, 0, size, size);
 
@@ -177,10 +223,10 @@ export class Renderer {
     const firstContent = first ? grid[first.r]?.[first.c] : undefined;
     if (firstContent !== undefined) {
       ctx.strokeStyle = theme.dots[firstContent.color]!;
-      ctx.globalAlpha = 0.55;
-      ctx.lineWidth = this.cell * 0.18;
-      ctx.lineCap = 'square';
-      ctx.lineJoin = 'miter';
+      ctx.globalAlpha = FEEL.chainAlpha;
+      ctx.lineWidth = this.cell * FEEL.chainWidth;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
       ctx.beginPath();
       chain.forEach((cell, i) => {
         const p = this.center(cell);
@@ -193,7 +239,6 @@ export class Renderer {
     }
 
     // Содержимое клеток.
-    const inChain = new Set(chain.map((cell) => `${cell.r},${cell.c}`));
     const radius = this.cell * 0.34;
     for (let r = 0; r < this.cfg.rows; r++) {
       for (let c = 0; c < this.cfg.cols; c++) {
@@ -201,34 +246,56 @@ export class Renderer {
         const anim = this.anims[r]![c]!;
         const center = this.center({ r, c });
         const y = center.y + anim.offset;
-
         const active = inChain.has(`${r},${c}`);
-        // Точка цвета фазы — с ореолом: сейчас за неё ×2.
+
+        // Squash & stretch: приземляясь, точка приминается и распрямляется.
+        const squash = anim.squash;
+        const scaleX = anim.scale * (1 + squash * 0.5);
+        const scaleY = anim.scale * (1 - squash * 0.5);
+
+        // Пока цепочка ведётся, посторонние точки уходят на второй план:
+        // так видно, что уже собрано, и куда цепочку можно продолжить.
+        const dimmed =
+          chain.length > 0 && !active && content.color !== firstContent?.color;
+        ctx.globalAlpha = dimmed ? FEEL.dimAlpha : 1;
+
         if (phaseColor !== null && content.color === phaseColor) {
           ctx.globalAlpha = 0.25;
           ctx.fillStyle = theme.dots[content.color]!;
           ctx.beginPath();
-          ctx.arc(center.x, y, radius * 1.45, 0, Math.PI * 2);
+          ctx.ellipse(center.x, y, radius * 1.45 * scaleX, radius * 1.45 * scaleY, 0, 0, Math.PI * 2);
           ctx.fill();
           ctx.globalAlpha = 1;
         }
 
         ctx.fillStyle = theme.dots[content.color]!;
         ctx.beginPath();
-        ctx.arc(center.x, y, active ? radius * 1.14 : radius, 0, Math.PI * 2);
+        ctx.ellipse(center.x, y, radius * scaleX, radius * scaleY, 0, 0, Math.PI * 2);
         ctx.fill();
 
-        if (active) {
-          ctx.strokeStyle = theme.chainOutline;
-          ctx.lineWidth = 3;
-          ctx.stroke();
-        }
-
         if (content.charged) {
-          this.drawBolt(center.x, y, radius);
+          this.drawBolt(center.x, y, radius * anim.scale);
         }
+        ctx.globalAlpha = 1;
       }
     }
+
+    // Волна вдоль собранной цепочки.
+    for (const wave of this.waves) {
+      const t = wave.age / FEEL.waveLife;
+      ctx.globalAlpha = 0.7 * (1 - t);
+      ctx.strokeStyle = wave.color;
+      ctx.lineWidth = this.cell * 0.2 * (1 - t);
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      wave.points.forEach((point, i) => {
+        if (i === 0) ctx.moveTo(point.x, point.y);
+        else ctx.lineTo(point.x, point.y);
+      });
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
 
     // Призраки снятых клеток.
     for (const ghost of this.ghosts) {
@@ -267,28 +334,52 @@ export class Renderer {
     ctx.fill();
   }
 
-  private step(dt: number): void {
-    const gravity = GRAVITY_CELLS * this.cell;
-    for (const row of this.anims) {
-      for (const anim of row) {
-        if (anim.offset === 0 && anim.velocity === 0) continue;
-        anim.velocity += gravity * dt;
-        anim.offset += anim.velocity * dt;
-        if (anim.offset >= 0) {
-          if (anim.velocity > this.cell * 2.4) {
-            // Лёгкий отскок при жёстком приземлении.
-            anim.offset = 0;
-            anim.velocity = -anim.velocity * BOUNCE;
+  private step(dt: number, inChain: Set<string>): void {
+    const gravity = FEEL.gravity * this.cell;
+
+    for (let r = 0; r < this.cfg.rows; r++) {
+      for (let c = 0; c < this.cfg.cols; c++) {
+        const anim = this.anims[r]![c]!;
+
+        // Падение.
+        if (anim.offset !== 0 || anim.velocity !== 0) {
+          if (anim.delay > 0) {
+            anim.delay -= dt;
           } else {
-            anim.offset = 0;
-            anim.velocity = 0;
+            anim.velocity += gravity * dt;
+            anim.offset += anim.velocity * dt;
+            if (anim.offset >= 0) {
+              const landing = anim.velocity;
+              anim.offset = 0;
+              if (landing > this.cell * 6) {
+                anim.velocity = -landing * FEEL.bounce;
+                // Чем жёстче приземление, тем заметнее приминание.
+                anim.squash = Math.min(FEEL.squashAmount, landing / (this.cell * 60));
+              } else {
+                anim.velocity = 0;
+              }
+            }
           }
+        }
+
+        // Пружина масштаба: цель — увеличенный размер, пока точка в цепочке.
+        const target = inChain.has(`${r},${c}`) ? FEEL.activeScale : 1;
+        const force = (target - anim.scale) * FEEL.scaleStiffness - anim.scaleVelocity * FEEL.scaleDamping;
+        anim.scaleVelocity += force * dt;
+        anim.scale += anim.scaleVelocity * dt;
+
+        // Восстановление после сплющивания.
+        if (anim.squash > 0) {
+          anim.squash = Math.max(0, anim.squash - FEEL.squashRecovery * dt);
         }
       }
     }
+
     for (const ghost of this.ghosts) ghost.age += dt;
     this.ghosts = this.ghosts.filter((ghost) => ghost.age < GHOST_LIFE);
     for (const shock of this.shocks) shock.age += dt;
     this.shocks = this.shocks.filter((shock) => shock.age < SHOCK_LIFE);
+    for (const wave of this.waves) wave.age += dt;
+    this.waves = this.waves.filter((wave) => wave.age < FEEL.waveLife);
   }
 }
