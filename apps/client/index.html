@@ -111,6 +111,23 @@
       font-variant-numeric: tabular-nums;
       line-height: 1.1;
     }
+    .score-row { display: flex; align-items: baseline; gap: 10px; }
+    #streak {
+      font-size: 20px;
+      font-weight: 800;
+      color: #fff;
+      background: var(--accent);
+      border-radius: 8px;
+      padding: 2px 9px;
+      animation: streakPop 0.35s ease-out;
+    }
+    #streak[hidden] { display: none; }
+    @keyframes streakPop {
+      0% { transform: scale(0.6); opacity: 0; }
+      60% { transform: scale(1.18); opacity: 1; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+
     .timer-block { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
     #time {
       font-size: 17px;
@@ -325,7 +342,10 @@
     <div class="hud">
       <div class="score-block">
         <span class="score-label">Вольты</span>
-        <span id="score" class="mono">0</span>
+        <span class="score-row">
+          <span id="score" class="mono">0</span>
+          <span id="streak" class="mono" hidden></span>
+        </span>
       </div>
       <div class="timer-block">
         <span id="time" class="mono">3:00</span>

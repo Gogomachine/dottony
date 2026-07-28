@@ -42,6 +42,7 @@ const restartBtn = el<HTMLButtonElement>('restart');
 const phaseEl = el<HTMLDivElement>('phase');
 const phaseTextEl = el<HTMLSpanElement>('phase-text');
 const mascotEl = el<HTMLSpanElement>('mascot');
+const streakEl = el<HTMLSpanElement>('streak');
 const versusEl = el<HTMLDivElement>('versus');
 const vsNameEl = el<HTMLSpanElement>('vs-name');
 const vsScoreEl = el<HTMLSpanElement>('vs-score');
@@ -104,9 +105,22 @@ function newSession(seed?: number): Session {
 function startGame(seed?: number): void {
   session = newSession(seed);
   renderer.resetAnims();
+  updateStreak(0);
   overlay.hidden = true;
   seedEl.textContent = `#${session.seed.toString(16)}`;
   updateHud();
+}
+
+/** Показывает текущую серию зарядов: следующий заряд даст такой множитель. */
+function updateStreak(streak: number): void {
+  const active = streak > 0;
+  streakEl.hidden = !active;
+  if (!active) return;
+  streakEl.textContent = `×${streak + 1}`;
+  // Перезапуск анимации, чтобы каждый новый заряд «выстреливал».
+  streakEl.style.animation = 'none';
+  void streakEl.offsetWidth;
+  streakEl.style.animation = '';
 }
 
 function updateHud(): void {
@@ -443,10 +457,10 @@ async function refreshDuelRecord(): Promise<void> {
 
 // ---------- Ходы ----------
 
-function showFloatingPoints(points: number, phased: boolean, at: { x: number; y: number }): void {
+function showFloatingPoints(points: number, multiplier: number, at: { x: number; y: number }): void {
   const label = document.createElement('span');
   label.className = 'float-label';
-  label.textContent = phased ? `+${points} В ×${session.cfg.phaseMultiplier}` : `+${points} В`;
+  label.textContent = multiplier > 1 ? `+${points} В ×${multiplier}` : `+${points} В`;
   label.style.left = `${at.x}px`;
   label.style.top = `${at.y}px`;
   boardWrap.appendChild(label);
@@ -469,7 +483,8 @@ const input = new ChainInput(
     }
     if (inDuel) duel.move(path, elapsed);
     renderer.animateMove(oldGrid, result);
-    showFloatingPoints(result.points, result.phased, at);
+    showFloatingPoints(result.points, result.multiplier, at);
+    updateStreak(result.streak);
     if (result.charged || result.exploded.length > 0) winkMascot();
     updateHud();
   },

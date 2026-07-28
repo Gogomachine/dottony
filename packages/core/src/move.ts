@@ -77,9 +77,11 @@ export function applyMove(
 
   // Взрывы перегрузки: 3×3 вокруг каждой заряженной точки цепочки.
   const exploded: Cell[] = [];
+  let surges = 0;
   if (cfg.features.surge) {
     for (const cell of validated) {
       if (!cellAt(board.grid, cell)!.charged) continue;
+      surges++;
       for (const near of neighborhood(cell, cfg)) {
         if (!removedSet.has(cellKey(near))) {
           removedSet.add(cellKey(near));
@@ -89,10 +91,18 @@ export function applyMove(
     }
   }
 
+  /**
+   * Серия зарядов: каждый собранный подряд заряд поднимает множитель
+   * на единицу (первый — ×2, второй — ×3…). Ход без заряда её обрывает,
+   * поэтому выгодно планировать цепочки так, чтобы заряды шли один за другим.
+   */
+  const streak = surges > 0 ? board.surgeStreak + surges : 0;
+  const surgeMultiplier = streak > 0 ? streak + 1 : 1;
+
   const phased = cfg.features.phases && phaseColor !== null && phaseColor === color;
+  const multiplier = (phased ? cfg.phaseMultiplier : 1) * surgeMultiplier;
   const points =
-    chainPoints(validated.length, cfg) * (phased ? cfg.phaseMultiplier : 1) +
-    exploded.length * cfg.surgeDotValue;
+    (chainPoints(validated.length, cfg) + exploded.length * cfg.surgeDotValue) * multiplier;
 
   const allRemoved = [...validated, ...exploded];
   const collapsed = collapse(board, allRemoved, cfg);
@@ -106,12 +116,20 @@ export function applyMove(
   }
 
   return {
-    board: { grid: collapsed.grid, rng: collapsed.rng, moveCount: board.moveCount + 1 },
+    board: {
+      grid: collapsed.grid,
+      rng: collapsed.rng,
+      moveCount: board.moveCount + 1,
+      surgeStreak: streak,
+    },
     removed: validated,
     exploded,
     charged,
     points,
     color,
     phased,
+    surges,
+    multiplier,
+    streak,
   };
 }

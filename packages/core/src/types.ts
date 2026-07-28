@@ -26,6 +26,11 @@ export interface Board {
   rng: RngState;
   /** Номер следующего хода (с нуля). */
   moveCount: number;
+  /**
+   * Сколько зарядов собрано подряд: каждый следующий поднимает множитель
+   * очков (1 заряд — ×2, 2 — ×3, …). Цепочка без заряда обнуляет серию.
+   */
+  surgeStreak: number;
 }
 
 export interface FeatureFlags {
@@ -82,6 +87,12 @@ export interface MoveResult {
   color: Color;
   /** Сработал множитель фазы. */
   phased: boolean;
+  /** Сколько зарядов сработало в этом ходу. */
+  surges: number;
+  /** Итоговый множитель хода: фаза × серия зарядов. */
+  multiplier: number;
+  /** Серия зарядов после хода (0 — оборвалась). */
+  streak: number;
 }
 
 export type MoveError =

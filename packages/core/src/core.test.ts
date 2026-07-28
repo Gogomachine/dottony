@@ -26,7 +26,7 @@ function boardFrom(rows: string[], charged: Cell[] = []): Board {
   for (const { r, c } of charged) {
     grid[r]![c]!.charged = true;
   }
-  return { grid, rng: seedRng(1), moveCount: 0 };
+  return { grid, rng: seedRng(1), moveCount: 0, surgeStreak: 0 };
 }
 
 function mustApply(
@@ -233,7 +233,80 @@ describe('перегрузка', () => {
     const result = mustApply(board, path, cfg);
     // Соседи (4,1) вне цепочки: (3,1), (3,2), (4,2), (5,0), (5,2).
     expect(result.exploded).toHaveLength(5);
-    expect(result.points).toBe(chainPoints(4, cfg) + 5 * cfg.surgeDotValue);
+    // Заряд не только взрывает, но и удваивает очки хода.
+    expect(result.points).toBe((chainPoints(4, cfg) + 5 * cfg.surgeDotValue) * 2);
+  });
+
+  it('первый заряд удваивает очки хода', () => {
+    const board = boardFrom(ROWS, [{ r: 4, c: 1 }]);
+    const path: Cell[] = [
+      { r: 3, c: 0 },
+      { r: 4, c: 0 },
+      { r: 4, c: 1 },
+      { r: 5, c: 1 },
+    ];
+    const result = mustApply(board, path, cfg);
+    const base = chainPoints(4, cfg) + result.exploded.length * cfg.surgeDotValue;
+    expect(result.surges).toBe(1);
+    expect(result.multiplier).toBe(2);
+    expect(result.points).toBe(base * 2);
+    expect(result.board.surgeStreak).toBe(1);
+  });
+
+  it('серия зарядов растит множитель: ×2, ×3, ×4', () => {
+    // Второй заряд подряд идёт с полем, где серия уже равна 1.
+    const board = { ...boardFrom(ROWS, [{ r: 4, c: 1 }]), surgeStreak: 1 };
+    const path: Cell[] = [
+      { r: 3, c: 0 },
+      { r: 4, c: 0 },
+      { r: 4, c: 1 },
+      { r: 5, c: 1 },
+    ];
+    const second = mustApply(board, path, cfg);
+    expect(second.multiplier).toBe(3);
+    expect(second.streak).toBe(2);
+
+    const third = mustApply({ ...board, surgeStreak: 2 }, path, cfg);
+    expect(third.multiplier).toBe(4);
+  });
+
+  it('два заряда в одной цепочке дают сразу ×3', () => {
+    const board = boardFrom(ROWS, [{ r: 3, c: 0 }, { r: 4, c: 1 }]);
+    const path: Cell[] = [
+      { r: 3, c: 0 },
+      { r: 4, c: 0 },
+      { r: 4, c: 1 },
+      { r: 5, c: 1 },
+    ];
+    const result = mustApply(board, path, cfg);
+    expect(result.surges).toBe(2);
+    expect(result.multiplier).toBe(3);
+  });
+
+  it('цепочка без заряда обрывает серию', () => {
+    const board = { ...boardFrom(ROWS), surgeStreak: 3 };
+    const result = mustApply(
+      board,
+      [{ r: 0, c: 0 }, { r: 0, c: 1 }, { r: 1, c: 0 }],
+      cfg,
+    );
+    expect(result.multiplier).toBe(1);
+    expect(result.streak).toBe(0);
+    expect(result.points).toBe(30);
+  });
+
+  it('множители фазы и серии перемножаются', () => {
+    const board = boardFrom(ROWS, [{ r: 4, c: 1 }]);
+    const path: Cell[] = [
+      { r: 3, c: 0 },
+      { r: 4, c: 0 },
+      { r: 4, c: 1 },
+      { r: 5, c: 1 },
+    ];
+    // Цвет цепочки — 1; фаза того же цвета даёт ×2, заряд ещё ×2.
+    const result = mustApply(board, path, cfg, 1);
+    expect(result.phased).toBe(true);
+    expect(result.multiplier).toBe(cfg.phaseMultiplier * 2);
   });
 
   it('выключается флагом: заряд в цепочке не взрывается', () => {

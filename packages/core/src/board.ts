@@ -18,7 +18,7 @@ export function createBoard(seed: RngState, cfg: GameConfig): Board {
     }
     grid.push(row);
   }
-  return { grid, rng, moveCount: 0 };
+  return { grid, rng, moveCount: 0, surgeStreak: 0 };
 }
 
 export function cellAt(grid: Grid, cell: Cell): DotCell | undefined {
