@@ -14,7 +14,8 @@ interface Point {
 /**
  * Сбор цепочки пальцем/мышью. Правила расширения — локальные и быстрые,
  * итоговый ход всё равно проверяет ядро.
- * Возврат на предыдущую точку укорачивает цепочку (undo жестом).
+ * Отката нет: уже взятая точка из цепочки не выходит, так что за
+ * направление игрок отвечает сразу.
  */
 export class ChainInput {
   chain: Cell[] = [];
@@ -99,13 +100,6 @@ export class ChainInput {
   private tryExtend(cell: Cell): void {
     const last = this.chain[this.chain.length - 1]!;
     if (sameCell(cell, last)) return;
-
-    // Undo: вернулись на предпоследнюю точку.
-    const prev = this.chain[this.chain.length - 2];
-    if (prev && sameCell(cell, prev)) {
-      this.chain.pop();
-      return;
-    }
 
     const board = this.getBoard();
     if (!areNeighbors(last, cell)) return;
