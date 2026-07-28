@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
 import websocket from '@fastify/websocket';
@@ -17,6 +17,7 @@ import {
 } from '@doton/protocol';
 import { dailySeed, replayDaily, todayUtc } from './daily.js';
 import { Store } from './db.js';
+import { DEFAULT_GHOST_SCORE, makeSyntheticGhost } from './ghost.js';
 import { Matchmaker } from './matchmaker.js';
 import { verifyTelegramInitData } from './telegram.js';
 
@@ -29,6 +30,10 @@ export interface AppOptions {
   dailySecret: string;
   /** Токен бота — включает вход через Telegram. */
   telegramBotToken?: string;
+  /** Матчи против записей, когда живого соперника нет (по умолчанию включены). */
+  duelGhosts?: boolean;
+  /** Сколько ждать живого соперника до призрака, мс. */
+  ghostAfterMs?: number;
 }
 
 interface TokenPayload {
@@ -54,10 +59,34 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
 
   const matchmaker = new Matchmaker({
     onFinish: (result) => {
+      // Призрака в базу не пишем: он не игрок, и его «результат» уже там есть.
+      const players = result.players.filter((player) => !player.ghost);
+      if (players.length === 0) return;
       void store
-        .saveDuel(result.duelId, result.seed, result.players)
+        .saveDuel(result.duelId, result.seed, players)
         .catch((error: unknown) => app.log.error(error, 'failed to save duel'));
     },
+    findGhost: async (playerId) => {
+      if (options.duelGhosts === false) return undefined;
+      const average = await store.averageDuelScore(playerId);
+      const target = average ?? DEFAULT_GHOST_SCORE;
+      const recorded = await store.pickGhostRun(playerId, target);
+      if (recorded) {
+        try {
+          return {
+            name: recorded.name,
+            seed: recorded.seed,
+            score: recorded.score,
+            log: JSON.parse(recorded.log) as { t: number; points: number }[],
+          };
+        } catch {
+          // Битая запись — лучше синтетический соперник, чем пустое ожидание.
+        }
+      }
+      // Записей ещё нет: соперника отыгрывает Заппо примерно в силу игрока.
+      return makeSyntheticGhost(randomInt(0, 0xffffffff), Math.round(target));
+    },
+    ...(options.ghostAfterMs === undefined ? {} : { ghostAfterMs: options.ghostAfterMs }),
   });
 
   app.addHook('onClose', () => {

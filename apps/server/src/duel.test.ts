@@ -11,7 +11,8 @@ import {
 } from '@doton/core';
 import { DUEL_SECONDS, type DuelServerMessage } from '@doton/protocol';
 import { Duel, type DuelPlayer } from './duel.js';
-import { Matchmaker } from './matchmaker.js';
+import { ghostSchedule, makeSyntheticGhost, type Ghost } from './ghost.js';
+import { Matchmaker, type MatchResult } from './matchmaker.js';
 
 /** Любая цепочка из трёх по правилам игры (8 направлений). */
 function findAnyChain(board: Board): Cell[] {
@@ -282,5 +283,143 @@ describe('Matchmaker', () => {
     maker.join(a);
     maker.join(a);
     expect(maker.stats).toEqual({ waiting: 1, duels: 0 });
+  });
+});
+
+describe('призраки', () => {
+  const ghost: Ghost = {
+    name: 'Ада',
+    seed: 777,
+    score: 300,
+    log: [
+      { t: 1, points: 100 },
+      { t: 2, points: 200 },
+    ],
+  };
+
+  /** Матчмейкер с ручным управлением временем: таймеры срабатывают по команде. */
+  function makeWithGhost(findGhost: () => Promise<Ghost | undefined>) {
+    const timers: { fn: () => void; ms: number }[] = [];
+    const onFinish = vi.fn();
+    const maker = new Matchmaker({
+      onFinish,
+      findGhost,
+      ghostAfterMs: 100,
+      setTimer: (fn, ms) => {
+        timers.push({ fn, ms });
+        return timers.length;
+      },
+      clearTimer: () => {},
+    });
+    return {
+      maker,
+      onFinish,
+      /** Срабатывает таймерами, чей срок не больше указанного. */
+      fire: (upToMs: number) => {
+        const due = timers.filter((timer) => timer.ms <= upToMs);
+        due.forEach((timer) => {
+          timers.splice(timers.indexOf(timer), 1);
+          timer.fn();
+        });
+      },
+      pending: () => timers.length,
+    };
+  }
+
+  it('после ожидания подставляет призрака на его же поле', async () => {
+    const { maker, fire } = makeWithGhost(async () => ghost);
+    const player = recorder('p', 'Игрок');
+    maker.join(player);
+    expect(player.last('matched')).toBeUndefined();
+
+    fire(100);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const matched = player.last('matched') as { seed: number; opponent: string; ghost: boolean };
+    expect(matched).toMatchObject({ seed: ghost.seed, opponent: 'Ада', ghost: true });
+    expect(maker.stats).toEqual({ waiting: 0, duels: 1 });
+  });
+
+  it('призрак набирает очки по записанному темпу', async () => {
+    const { maker, fire } = makeWithGhost(async () => ghost);
+    const player = recorder('p');
+    maker.join(player);
+    fire(100);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    fire(1000);
+    expect(player.last('opponent')).toEqual({ type: 'opponent', score: 100 });
+    fire(2000);
+    expect(player.last('opponent')).toEqual({ type: 'opponent', score: 300 });
+  });
+
+  it('живой соперник отменяет призрака', async () => {
+    const findGhost = vi.fn(async () => ghost);
+    const { maker, fire } = makeWithGhost(findGhost);
+    const a = recorder('a', 'Ада');
+    const b = recorder('b', 'Боб');
+
+    maker.join(a);
+    maker.join(b);
+    fire(100);
+    await Promise.resolve();
+
+    expect(a.last('matched')).toMatchObject({ opponent: 'Боб', ghost: false });
+    expect(maker.stats).toEqual({ waiting: 0, duels: 1 });
+  });
+
+  it('в приватную комнату призрак не приходит', async () => {
+    const findGhost = vi.fn(async () => ghost);
+    const { maker, fire } = makeWithGhost(findGhost);
+    maker.join(recorder('a'), 'КОД123');
+    fire(100);
+    await Promise.resolve();
+    expect(findGhost).not.toHaveBeenCalled();
+  });
+
+  it('без подходящей записи игрок продолжает ждать', async () => {
+    const { maker, fire } = makeWithGhost(async () => undefined);
+    const player = recorder('p');
+    maker.join(player);
+    fire(100);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(player.last('matched')).toBeUndefined();
+    expect(maker.stats).toEqual({ waiting: 1, duels: 0 });
+  });
+
+  it('матч с призраком доигрывается и сохраняется без него', async () => {
+    const { maker, fire, onFinish } = makeWithGhost(async () => ghost);
+    const player = recorder('p', 'Игрок');
+    maker.join(player);
+    fire(100);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    fire((DUEL_SECONDS + 1) * 1000);
+    expect(player.last('finished')).toBeDefined();
+    const result = onFinish.mock.calls[0]![0] as MatchResult;
+    // Призрак помечен, чтобы приложение не записало его как игрока.
+    expect(result.players.filter((p) => p.ghost)).toHaveLength(1);
+    expect(result.players.filter((p) => !p.ghost).map((p) => p.name)).toEqual(['Игрок']);
+  });
+
+  it('синтетический призрак укладывается в матч и набирает примерно заданное', () => {
+    const synthetic = makeSyntheticGhost(1234, 800);
+    expect(synthetic.log.length).toBeGreaterThan(3);
+    expect(Math.max(...synthetic.log.map((point) => point.t))).toBeLessThanOrEqual(DUEL_SECONDS);
+    // Раскладка по ходам не обязана попасть точно, но должна быть в разумных пределах.
+    expect(synthetic.score).toBeGreaterThanOrEqual(800);
+    expect(synthetic.score).toBeLessThan(800 + 200);
+  });
+
+  it('темп записи ложится в расписание начислений', () => {
+    const schedule = ghostSchedule(ghost);
+    expect(schedule).toEqual([
+      { delayMs: 1000, points: 100 },
+      { delayMs: 2000, points: 200 },
+    ]);
   });
 });

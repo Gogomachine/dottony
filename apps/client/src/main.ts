@@ -355,14 +355,19 @@ function handleDuelMessage(message: DuelServerMessage): void {
               room: message.room,
               waiting: true,
             }
-          : { title: 'Дуэль', note: 'Ищем соперника…', waiting: true },
+          : {
+              title: 'Дуэль',
+              note: 'Ищем соперника… Если никого нет рядом, сыграешь против записи чужого матча.',
+              waiting: true,
+            },
       );
       break;
 
     case 'matched': {
       inDuel = true;
       duelDuration = message.duration;
-      opponentName = message.opponent;
+      // Честно помечаем запись: игрок должен знать, что соперник не живой.
+      opponentName = message.ghost ? `${message.opponent} · запись` : message.opponent;
       opponentScore = 0;
       mode = 'duel';
       dailyRun = null;

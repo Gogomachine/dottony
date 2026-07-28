@@ -26,6 +26,12 @@ export interface DuelPlayer {
   send(message: DuelServerMessage): void;
 }
 
+/** Момент набора очков: из таких точек складывается темп записи. */
+export interface ScorePoint {
+  t: number;
+  points: number;
+}
+
 interface PlayerState {
   player: DuelPlayer;
   board: Board;
@@ -33,6 +39,8 @@ interface PlayerState {
   lastMoveAt: number;
   /** Записанная попытка вместо живого игрока. */
   ghost: boolean;
+  /** Темп набора очков — из него потом получается призрак. */
+  log: ScorePoint[];
 }
 
 export type MoveOutcome =
@@ -64,6 +72,7 @@ export class Duel {
         score: 0,
         lastMoveAt: -Infinity,
         ghost,
+        log: [],
       });
     }
   }
@@ -122,6 +131,8 @@ export class Duel {
     state.board = result.board;
     state.score += result.points;
     state.lastMoveAt = elapsed;
+    // Записываем темп: позже этот матч может стать призраком для другого игрока.
+    state.log.push({ t: Number(elapsed.toFixed(2)), points: result.points });
 
     const opponent = this.opponentOf(playerId);
     if (opponent && !opponent.ghost) {
@@ -136,6 +147,26 @@ export class Duel {
 
   nameOf(playerId: string): string {
     return this.players.get(playerId)?.player.name ?? '';
+  }
+
+  isGhost(playerId: string): boolean {
+    return this.players.get(playerId)?.ghost ?? false;
+  }
+
+  /** Темп набора очков игрока — материал для будущего призрака. */
+  logOf(playerId: string): ScorePoint[] {
+    return this.players.get(playerId)?.log ?? [];
+  }
+
+  /** Начисляет призраку очередную порцию очков и показывает их сопернику. */
+  advanceGhost(playerId: string, points: number): void {
+    const state = this.players.get(playerId);
+    if (!state?.ghost || this.finished) return;
+    state.score += points;
+    const opponent = this.opponentOf(playerId);
+    if (opponent && !opponent.ghost) {
+      opponent.player.send({ type: 'opponent', score: state.score });
+    }
   }
 
   /** Досрочно проставляет счёт «призраку» — он играет по записи. */

@@ -62,6 +62,7 @@ export class Store {
            duel_id TEXT NOT NULL REFERENCES duels(id),
            user_id TEXT NOT NULL,
            score INTEGER NOT NULL,
+           log TEXT NOT NULL DEFAULT '[]',
            PRIMARY KEY (duel_id, user_id)
          )`,
         `CREATE INDEX IF NOT EXISTS idx_duel_players_user
@@ -71,22 +72,64 @@ export class Store {
     );
   }
 
-  /** Сохраняет завершённый матч: сама дуэль и результат каждого игрока. */
+  /**
+   * Сохраняет завершённый матч: саму дуэль, результат каждого игрока и темп
+   * его игры. Темп нужен, чтобы матч потом мог стать призраком.
+   */
   async saveDuel(
     id: string,
     seed: number,
-    players: { id: string; score: number }[],
+    players: { id: string; score: number; log?: unknown }[],
   ): Promise<void> {
     await this.client.batch(
       [
         { sql: 'INSERT INTO duels (id, seed) VALUES (?, ?)', args: [id, seed] },
         ...players.map((player) => ({
-          sql: 'INSERT INTO duel_players (duel_id, user_id, score) VALUES (?, ?, ?)',
-          args: [id, player.id, player.score],
+          sql: 'INSERT INTO duel_players (duel_id, user_id, score, log) VALUES (?, ?, ?, ?)',
+          args: [id, player.id, player.score, JSON.stringify(player.log ?? [])],
         })),
       ],
       'write',
     );
+  }
+
+  /**
+   * Случайная запись для призрака, по возможности близкая по силе к
+   * указанному счёту. Свои же записи исключаем: играть против себя странно.
+   */
+  async pickGhostRun(
+    excludeUserId: string,
+    targetScore: number,
+  ): Promise<{ name: string; seed: number; score: number; log: string } | undefined> {
+    const result = await this.client.execute({
+      sql: `SELECT u.name, d.seed, p.score, p.log
+            FROM duel_players p
+            JOIN duels d ON d.id = p.duel_id
+            JOIN users u ON u.id = p.user_id
+            WHERE p.user_id <> ? AND p.log <> '[]' AND p.score > 0
+            ORDER BY ABS(p.score - ?) ASC, RANDOM()
+            LIMIT 5`,
+      args: [excludeUserId, targetScore],
+    });
+    if (result.rows.length === 0) return undefined;
+    // Из ближайших по силе берём случайную — иначе соперник всегда один и тот же.
+    const row = result.rows[Math.floor(Math.random() * result.rows.length)]!;
+    return {
+      name: String(row.name),
+      seed: Number(row.seed),
+      score: Number(row.score),
+      log: String(row.log),
+    };
+  }
+
+  /** Средний счёт игрока в дуэлях — ориентир для подбора призрака. */
+  async averageDuelScore(userId: string): Promise<number | undefined> {
+    const result = await this.client.execute({
+      sql: 'SELECT AVG(score) AS avg FROM duel_players WHERE user_id = ?',
+      args: [userId],
+    });
+    const value = result.rows[0]?.avg;
+    return value === null || value === undefined ? undefined : Number(value);
   }
 
   /** Сводка дуэлей игрока: сыграно и выиграно. */
