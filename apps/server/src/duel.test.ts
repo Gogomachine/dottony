@@ -286,6 +286,112 @@ describe('Matchmaker', () => {
   });
 });
 
+describe('обрыв связи', () => {
+  function make() {
+    const timers: (() => void)[] = [];
+    const onFinish = vi.fn();
+    const maker = new Matchmaker({
+      onFinish,
+      setTimer: (fn) => {
+        timers.push(fn);
+        return timers.length;
+      },
+      clearTimer: () => {},
+    });
+    return { maker, onFinish, fireTimers: () => timers.splice(0).forEach((fn) => fn()) };
+  }
+
+  it('не завершает матч: на телефоне соединение рвётся от сворачивания', () => {
+    const { maker, onFinish } = make();
+    const a = recorder('a', 'Ада');
+    const b = recorder('b', 'Боб');
+    maker.join(a);
+    maker.join(b);
+
+    maker.disconnect('a');
+    expect(a.last('finished')).toBeUndefined();
+    expect(b.last('finished')).toBeUndefined();
+    expect(maker.stats.duels).toBe(1);
+    expect(onFinish).not.toHaveBeenCalled();
+  });
+
+  it('возвращает игрока в его матч со счётом, полем и остатком времени', () => {
+    const { maker } = make();
+    const a = recorder('a', 'Ада');
+    const b = recorder('b', 'Боб');
+    maker.join(a);
+    maker.join(b);
+
+    const seed = (a.last('matched') as { seed: number }).seed;
+    const board = createBoard(seedRng(seed), DEFAULT_CONFIG);
+    maker.move('a', findAnyChain(board), 1);
+    maker.disconnect('a');
+
+    // Игрок вернулся: новое соединение, тот же идентификатор.
+    const reconnected = recorder('a', 'Ада');
+    maker.join(reconnected);
+
+    const resumed = reconnected.last('resumed') as {
+      seed: number;
+      score: number;
+      opponent: string;
+      remaining: number;
+      grid: unknown[][];
+    };
+    expect(resumed).toMatchObject({ seed, score: 30, opponent: 'Боб' });
+    expect(resumed.grid).toHaveLength(DEFAULT_CONFIG.rows);
+    expect(resumed.remaining).toBeGreaterThan(0);
+    expect(resumed.remaining).toBeLessThanOrEqual(DUEL_SECONDS);
+    expect(maker.stats).toEqual({ waiting: 0, duels: 1 });
+  });
+
+  it('после возвращения ходы снова принимаются и видны сопернику', () => {
+    const { maker } = make();
+    const a = recorder('a');
+    const b = recorder('b');
+    maker.join(a);
+    maker.join(b);
+    const seed = (a.last('matched') as { seed: number }).seed;
+
+    maker.disconnect('a');
+    const reconnected = recorder('a');
+    maker.join(reconnected);
+
+    const board = createBoard(seedRng(seed), DEFAULT_CONFIG);
+    expect(maker.move('a', findAnyChain(board), 1).ok).toBe(true);
+    expect(b.last('opponent')).toEqual({ type: 'opponent', score: 30 });
+  });
+
+  it('не вернулся до сирены — результат по набранным очкам, а не техническое поражение', () => {
+    const { maker, fireTimers } = make();
+    const a = recorder('a');
+    const b = recorder('b');
+    maker.join(a);
+    maker.join(b);
+    const seed = (a.last('matched') as { seed: number }).seed;
+    const board = createBoard(seedRng(seed), DEFAULT_CONFIG);
+    maker.move('a', findAnyChain(board), 1);
+
+    maker.disconnect('a');
+    fireTimers();
+
+    // У «a» очки есть, у «b» нет — значит побеждает «a», хоть он и отключился.
+    expect(b.last('finished')).toMatchObject({ outcome: 'loss', opponentScore: 30 });
+  });
+
+  it('осознанный выход по-прежнему засчитывает поражение', () => {
+    const { maker } = make();
+    const a = recorder('a');
+    const b = recorder('b');
+    maker.join(a);
+    maker.join(b);
+
+    maker.leave('a');
+    expect(a.last('finished')).toMatchObject({ outcome: 'loss' });
+    expect(b.last('finished')).toMatchObject({ outcome: 'win' });
+  });
+});
+
 describe('призраки', () => {
   const ghost: Ghost = {
     name: 'Ада',

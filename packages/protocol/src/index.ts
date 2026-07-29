@@ -102,9 +102,34 @@ export interface DuelOpponent {
   score: number;
 }
 
+/** Точка поля в снимке состояния: цвет и признак заряда. */
+export interface DuelDot {
+  color: number;
+  charged: boolean;
+}
+
+/**
+ * Снимок матча для возвращения игрока после обрыва связи.
+ * Сервер — источник истины, поэтому шлём и поле, и счёт, и остаток времени.
+ */
+export interface DuelSnapshot {
+  seed: number;
+  grid: DuelDot[][];
+  score: number;
+  opponentScore: number;
+  opponent: string;
+  ghost: boolean;
+  /** Сколько секунд матча осталось. */
+  remaining: number;
+  /** Серия зарядов, чтобы множитель не сбросился. */
+  streak: number;
+}
+
 /** Сообщения сервера. Поле board приходит только своё — чужое не раскрываем. */
 export type DuelServerMessage =
   | { type: 'searching'; room?: string }
+  /** Игрок вернулся в незаконченный матч. */
+  | ({ type: 'resumed' } & DuelSnapshot)
   | {
       type: 'matched';
       seed: number;

@@ -8,7 +8,7 @@ import {
   type Board,
   type Cell,
 } from '@doton/core';
-import { DUEL_SECONDS, type DuelServerMessage } from '@doton/protocol';
+import { DUEL_SECONDS, type DuelServerMessage, type DuelSnapshot } from '@doton/protocol';
 
 /**
  * Дуэль — гонка на одинаковом поле: обоим игрокам выдаётся один сид,
@@ -147,6 +147,33 @@ export class Duel {
 
   nameOf(playerId: string): string {
     return this.players.get(playerId)?.player.name ?? '';
+  }
+
+  /** Подменяет канал связи — игрок вернулся с новым соединением. */
+  reattach(playerId: string, player: DuelPlayer): boolean {
+    const state = this.players.get(playerId);
+    if (!state || state.ghost || this.finished) return false;
+    state.player = player;
+    return true;
+  }
+
+  /** Полное состояние матча для вернувшегося игрока. */
+  snapshot(playerId: string, now = Date.now()): DuelSnapshot | undefined {
+    const state = this.players.get(playerId);
+    const opponent = this.opponentOf(playerId);
+    if (!state || !opponent) return undefined;
+    return {
+      seed: this.seed,
+      grid: state.board.grid.map((row) =>
+        row.map((dot) => ({ color: dot.color, charged: dot.charged })),
+      ),
+      score: state.score,
+      opponentScore: opponent.score,
+      opponent: opponent.player.name,
+      ghost: opponent.ghost,
+      remaining: Math.max(0, DUEL_SECONDS - this.elapsed(now)),
+      streak: state.board.surgeStreak,
+    };
   }
 
   isGhost(playerId: string): boolean {

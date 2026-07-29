@@ -258,7 +258,8 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       }
     });
 
-    socket.on('close', () => matchmaker.leave(player.id));
+    // Закрытие сокета — не сдача: браузер рвёт соединение при сворачивании.
+    socket.on('close', () => matchmaker.disconnect(player.id));
   });
 
   // ghosts в ответе позволяет с одного взгляда понять, доехал ли деплой

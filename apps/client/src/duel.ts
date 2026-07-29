@@ -14,16 +14,36 @@ export type DuelHandler = (message: DuelServerMessage) => void;
 
 export class DuelConnection {
   private socket: WebSocket | null = null;
+  private room: string | undefined;
+  /** Матч идёт: обрыв связи нужно чинить переподключением, а не сдачей. */
+  private active = false;
+  private retries = 0;
+  private retryTimer = 0;
 
-  constructor(private readonly onMessage: DuelHandler) {}
+  constructor(
+    private readonly onMessage: DuelHandler,
+    /** Сообщает интерфейсу, что связь пропала и идёт восстановление. */
+    private readonly onConnectionState?: (state: 'lost' | 'restored') => void,
+  ) {}
 
   get connected(): boolean {
     return this.socket?.readyState === WebSocket.OPEN;
   }
 
+  /** Помечает, что матч начался: с этого момента обрывы восстанавливаем. */
+  markActive(): void {
+    this.active = true;
+  }
+
   /** Открывает соединение и встаёт в очередь. room — код приватной комнаты. */
   connect(room?: string): void {
-    this.close();
+    this.room = room;
+    this.retries = 0;
+    this.close({ keepActive: false });
+    this.open();
+  }
+
+  private open(): void {
     const token = authToken();
     if (!token) {
       this.onMessage({ type: 'error', error: 'unauthorized' });
@@ -37,7 +57,10 @@ export class DuelConnection {
     this.socket = socket;
 
     socket.addEventListener('open', () => {
-      this.send(room ? { type: 'join', room } : { type: 'join' });
+      if (this.retries > 0) this.onConnectionState?.('restored');
+      this.retries = 0;
+      // Сервер сам поймёт, вернулись мы в идущий матч или встаём в очередь.
+      this.send(this.room ? { type: 'join', room: this.room } : { type: 'join' });
     });
     socket.addEventListener('message', (event) => {
       try {
@@ -46,12 +69,22 @@ export class DuelConnection {
         this.onMessage({ type: 'error', error: 'bad-message' });
       }
     });
-    socket.addEventListener('error', () => {
-      this.onMessage({ type: 'error', error: 'network' });
-    });
     socket.addEventListener('close', () => {
-      if (this.socket === socket) this.socket = null;
+      if (this.socket !== socket) return;
+      this.socket = null;
+      // Матч на сервере продолжается — пробуем вернуться в него.
+      if (this.active) this.scheduleReconnect();
     });
+  }
+
+  /** Повторные попытки с нарастающей паузой: сеть после сворачивания оживает не сразу. */
+  private scheduleReconnect(): void {
+    if (this.retries === 0) this.onConnectionState?.('lost');
+    if (this.retries >= 8) return;
+    const delay = Math.min(300 * 2 ** this.retries, 4000);
+    this.retries++;
+    clearTimeout(this.retryTimer);
+    this.retryTimer = window.setTimeout(() => this.open(), delay);
   }
 
   move(path: Cell[], t: number): void {
@@ -62,8 +95,14 @@ export class DuelConnection {
     if (this.connected) this.socket!.send(JSON.stringify(message));
   }
 
-  /** Закрывает матч: сервер засчитает уход как поражение. */
-  close(): void {
+  /**
+   * Осознанный выход: сервер засчитает поражение. Обрыв связи сюда
+   * не относится — он лечится переподключением.
+   */
+  close(options: { keepActive?: boolean } = {}): void {
+    if (!options.keepActive) this.active = false;
+    clearTimeout(this.retryTimer);
+    this.retries = 0;
     if (!this.socket) return;
     if (this.connected) this.send({ type: 'leave' });
     this.socket.close();

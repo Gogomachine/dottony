@@ -326,7 +326,18 @@ function showOverModal(options: {
 
 // ---------- Дуэль ----------
 
-const duel = new DuelConnection(handleDuelMessage);
+const duel = new DuelConnection(handleDuelMessage, (state) => {
+  // Матч на сервере продолжается — важно показать, что игра не сломалась.
+  connectionLost = state === 'lost';
+  if (connectionLost) {
+    showOverModal({ title: 'Связь пропала', note: 'Возвращаю в матч… Время идёт.' });
+  } else if (inDuel) {
+    overlay.hidden = true;
+  }
+});
+
+/** Связь с сервером потеряна: ходы не отправить, ввод блокируем. */
+let connectionLost = false;
 
 function showVersus(name: string, opponentScore: number): void {
   versusEl.hidden = false;
@@ -373,6 +384,8 @@ function handleDuelMessage(message: DuelServerMessage): void {
 
     case 'matched': {
       clearTimeout(searchHint);
+      connectionLost = false;
+      duel.markActive();
       inDuel = true;
       duelDuration = message.duration;
       // Честно помечаем запись: игрок должен знать, что соперник не живой.
@@ -383,6 +396,27 @@ function handleDuelMessage(message: DuelServerMessage): void {
       setActiveModeButton('duel');
       startGame(message.seed);
       showVersus(opponentName, 0);
+      break;
+    }
+
+    case 'resumed': {
+      // Сервер — источник истины: восстанавливаем его состояние целиком,
+      // включая ходы, которые не дошли из-за обрыва.
+      clearTimeout(searchHint);
+      connectionLost = false;
+      duel.markActive();
+      inDuel = true;
+      duelDuration = Math.max(1, Math.round(message.remaining));
+      opponentName = message.ghost ? `${message.opponent} · запись` : message.opponent;
+      opponentScore = message.opponentScore;
+      mode = 'duel';
+      setActiveModeButton('duel');
+      startGame(message.seed);
+      session.restore(message.grid, message.score, message.streak);
+      session.syncRemaining(message.remaining);
+      updateStreak(message.streak);
+      updateHud();
+      showVersus(opponentName, opponentScore);
       break;
     }
 

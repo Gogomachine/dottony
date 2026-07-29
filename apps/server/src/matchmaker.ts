@@ -61,8 +61,21 @@ export class Matchmaker {
     this.ghostAfterMs = options.ghostAfterMs ?? DEFAULT_GHOST_AFTER_MS;
   }
 
-  /** Ставит игрока в очередь или сразу сводит с ожидающим соперником. */
+  /**
+   * Ставит игрока в очередь или сразу сводит с ожидающим соперником.
+   * Если матч этого игрока ещё идёт (связь оборвалась и восстановилась),
+   * возвращает его в матч, а не начинает новый.
+   */
   join(player: DuelPlayer, room?: string): void {
+    const running = this.byPlayer.get(player.id);
+    if (running && !running.isOver()) {
+      if (running.reattach(player.id, player)) {
+        const snapshot = running.snapshot(player.id);
+        if (snapshot) player.send({ type: 'resumed', ...snapshot });
+        return;
+      }
+    }
+
     // Повторный join из другой вкладки не должен плодить сущности.
     this.leave(player.id, { silent: true });
 
@@ -159,7 +172,10 @@ export class Matchmaker {
     return outcome;
   }
 
-  /** Уход игрока: из очереди — молча, из матча — с поражением. */
+  /**
+   * Осознанный выход игрока (кнопка «Отменить», сдача): из очереди — молча,
+   * из матча — с поражением.
+   */
   leave(playerId: string, options: { silent?: boolean } = {}): void {
     const index = this.waiting.findIndex((entry) => entry.player.id === playerId);
     if (index !== -1) this.waiting.splice(index, 1);
@@ -169,6 +185,18 @@ export class Matchmaker {
     if (!duel) return;
     if (!options.silent) duel.abandon(playerId);
     this.settle(duel);
+  }
+
+  /**
+   * Обрыв связи. В отличие от осознанного выхода матч не закрываем: на
+   * телефоне соединение рвётся от одного сворачивания браузера, и терять
+   * из-за этого партию нечестно. Время идёт, игрок может вернуться —
+   * а если не вернётся, матч доиграет таймер по набранным очкам.
+   */
+  disconnect(playerId: string): void {
+    const index = this.waiting.findIndex((entry) => entry.player.id === playerId);
+    if (index !== -1) this.waiting.splice(index, 1);
+    this.cancelGhostWait(playerId);
   }
 
   private settle(duel: Duel): void {

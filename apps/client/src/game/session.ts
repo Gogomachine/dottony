@@ -11,6 +11,7 @@ import {
   type MoveError,
   type MoveResult,
   type PhaseState,
+  type Color,
 } from '@doton/core';
 
 export type Mode = 'sprint' | 'free' | 'duel';
@@ -30,6 +31,13 @@ export class Session {
   /** Секунды с начала партии — ритм фаз «нагрузки сети». */
   elapsed = 0;
   over = false;
+  /**
+   * Момент старта по стенным часам. Время партии считаем от него, а не
+   * накоплением кадров: в свёрнутой вкладке кадры не идут, и таймер бы
+   * «замерзал», расходясь с серверным.
+   */
+  private readonly startedAt = Date.now();
+  private readonly duration: number;
 
   constructor(
     seed: number,
@@ -41,8 +49,9 @@ export class Session {
     this.seed = seed;
     this.mode = mode;
     this.board = createBoard(seedRng(seed), cfg);
-    this.timeLeft =
+    this.duration =
       mode === 'sprint' ? SPRINT_SECONDS : mode === 'duel' ? (duration ?? 90) : Infinity;
+    this.timeLeft = this.duration;
   }
 
   /** Партия идёт на время. */
@@ -64,16 +73,43 @@ export class Session {
     return result;
   }
 
-  /** Тик времени; возвращает true в момент окончания партии. */
-  tick(dtSeconds: number): boolean {
+  /**
+   * Пересчитывает время партии; возвращает true в момент её окончания.
+   * Опирается на часы, а не на прошедшие кадры, — поэтому свёрнутая
+   * вкладка или заблокированный экран не останавливают партию.
+   */
+  tick(_dtSeconds: number, now = Date.now()): boolean {
     if (this.over) return false;
-    this.elapsed += dtSeconds;
+    this.elapsed = (now - this.startedAt) / 1000;
     if (!this.timed) return false;
-    this.timeLeft = Math.max(0, this.timeLeft - dtSeconds);
+    this.timeLeft = Math.max(0, this.duration - this.elapsed);
     if (this.timeLeft === 0) {
       this.over = true;
       return true;
     }
     return false;
+  }
+
+  /**
+   * Принимает состояние матча от сервера после переподключения. Сервер —
+   * источник истины, поэтому его поле и счёт замещают локальные: ходы,
+   * не дошедшие из-за обрыва, не засчитаны и там.
+   */
+  restore(grid: { color: number; charged: boolean }[][], score: number, streak: number): void {
+    this.board = {
+      ...this.board,
+      grid: grid.map((row) =>
+        row.map((dot) => ({ color: dot.color as Color, charged: dot.charged })),
+      ),
+      surgeStreak: streak,
+    };
+    this.score = score;
+  }
+
+  /** Синхронизирует остаток времени с сервером после переподключения. */
+  syncRemaining(remaining: number): void {
+    this.timeLeft = Math.max(0, remaining);
+    this.elapsed = this.duration - this.timeLeft;
+    if (this.timeLeft === 0) this.over = true;
   }
 }
