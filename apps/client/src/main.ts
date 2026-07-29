@@ -43,7 +43,7 @@ const overTitleEl = el<HTMLHeadingElement>('over-title');
 const overNoteEl = el<HTMLParagraphElement>('over-note');
 const finalScoreEl = el<HTMLSpanElement>('final-score');
 const dailyBoardEl = el<HTMLOListElement>('daily-board');
-const restartBtn = el<HTMLButtonElement>('restart');
+const modalBtn = el<HTMLButtonElement>('modal-action');
 const phaseEl = el<HTMLDivElement>('phase');
 const phaseTextEl = el<HTMLSpanElement>('phase-text');
 const mascotEl = el<HTMLSpanElement>('mascot');
@@ -351,11 +351,11 @@ function showOverModal(options: {
   // Пока ждём соперника, единственное осмысленное действие — отменить поиск.
   waitingForOpponent = options.waiting ?? false;
   viewingOnly = options.viewing ?? false;
-  restartBtn.textContent = waitingForOpponent
+  modalBtn.textContent = waitingForOpponent
     ? 'Отменить'
     : viewingOnly || dailyRun || options.title.startsWith('Вызов')
       ? 'Закрыть'
-      : 'Ещё раз';
+      : 'Понятно';
   overlay.hidden = false;
 }
 
@@ -805,7 +805,7 @@ el<HTMLButtonElement>('new-board').addEventListener('click', () => {
   setActiveModeButton(mode);
   startGame();
 });
-restartBtn.addEventListener('click', () => {
+modalBtn.addEventListener('click', () => {
   if (viewingOnly) {
     // Смотрели таблицу — партия под окном не тронута.
     viewingOnly = false;
@@ -823,9 +823,11 @@ restartBtn.addEventListener('click', () => {
     dailyRun = null;
     setActiveModeButton('sprint');
     startGame();
-  } else {
-    startGame();
+    return;
   }
+  // Итог просто закрывается: новую партию игрок начинает сам — кнопкой
+  // «Новая плата» или выбором режима.
+  overlay.hidden = true;
 });
 
 new ResizeObserver(() => renderer.resize()).observe(canvas);
