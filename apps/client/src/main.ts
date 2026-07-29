@@ -472,6 +472,9 @@ function endDuel(): void {
   clearTimeout(searchHint);
   inDuel = false;
   versusEl.hidden = true;
+  // Партия окончена вместе с матчем: иначе локальный таймер досчитает до
+  // нуля и перепишет объявленный сервером результат на «Время вышло».
+  session.over = true;
   duel.close();
 }
 
