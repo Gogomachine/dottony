@@ -340,6 +340,7 @@
       text-align: left;
       font-size: 14px;
     }
+    .board-list[hidden] { display: none; }
     .board-list li {
       display: grid;
       grid-template-columns: 30px 1fr auto;
@@ -436,6 +437,8 @@
       border-radius: 9px;
       background: color-mix(in srgb, var(--ink) 3%, transparent);
     }
+    /* Собственный display перебивает атрибут hidden — гасим явно. */
+    .history[hidden] { display: none; }
     .history li.playable { cursor: pointer; }
     .history li.playable:active { transform: translateY(1px); }
     .history .mark { width: 6px; height: 24px; border-radius: 99px; background: var(--muted); }
@@ -452,6 +455,38 @@
 
     .cab-actions { display: flex; gap: 8px; }
     .cab-actions button { flex: 1; }
+
+    .cab-tabs { display: flex; gap: 6px; }
+    .tab { flex: 1; font-size: 12px; padding: 6px 10px; }
+    .tab.active { border-color: var(--accent); color: var(--accent); }
+
+    .code-box {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      margin-bottom: 10px;
+      border-radius: 12px;
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+      border: 1px solid var(--control-border);
+    }
+    .code-left { display: flex; flex-direction: column; flex: 1; }
+    .code-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .code-value { font-size: 22px; font-weight: 800; letter-spacing: 0.14em; color: var(--accent); }
+
+    .history .act {
+      font-size: 12px;
+      font-weight: 700;
+      padding: 4px 9px;
+      border-radius: 8px;
+    }
+    .history .vs { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
     .replay-bar {
       position: fixed;
@@ -559,8 +594,25 @@
         <div class="stat"><span id="cab-daily" class="stat-value mono"></span><span class="stat-label">вызов дня</span></div>
       </div>
 
-      <h3 class="cab-sub">Последние матчи</h3>
+      <div class="cab-tabs">
+        <button id="tab-history" class="tab active">Матчи</button>
+        <button id="tab-friends" class="tab">Друзья</button>
+      </div>
+
       <ol id="cab-history" class="history"></ol>
+
+      <div id="cab-friends" hidden>
+        <div class="code-box">
+          <div class="code-left">
+            <span class="code-label">Твой код</span>
+            <span id="cab-code" class="code-value mono">······</span>
+          </div>
+          <button id="cab-add-friend">Добавить</button>
+        </div>
+        <ol id="friend-list" class="history"></ol>
+        <h3 id="recent-title" class="cab-sub" hidden>Недавние соперники</h3>
+        <ol id="recent-list" class="history"></ol>
+      </div>
 
       <div class="cab-actions">
         <button id="cab-rating-board">Таблица рейтинга</button>
@@ -587,6 +639,7 @@
         <button id="copy-link">Скопировать ссылку</button>
       </div>
       <ol id="daily-board" class="board-list" hidden></ol>
+      <button id="add-opponent" hidden></button>
       <button id="modal-action">Понятно</button>
     </div>
   </div>

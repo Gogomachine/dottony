@@ -1,5 +1,5 @@
-import type { DuelHistoryEntry, MeResponse } from '@doton/protocol';
-import { getHistory, getMe, rename } from './api';
+import type { DuelHistoryEntry, FriendsResponse, MeResponse } from '@doton/protocol';
+import { addFriend, getFriends, getHistory, getMe, removeFriend, rename } from './api';
 import { mascotSvg } from './mascot';
 
 /**
@@ -34,6 +34,8 @@ export interface CabinetHandlers {
   onRatingBoard(): void;
   /** Имя поменялось — снаружи его показывают ещё в паре мест. */
   onRenamed(name: string): void;
+  /** Позвать друга в матч: снаружи это открывает приватную комнату. */
+  onInvite(): void;
 }
 
 export class Cabinet {
@@ -42,9 +44,17 @@ export class Cabinet {
   private readonly loginEl = el<HTMLSpanElement>('cab-login');
   private readonly leagueEl = el<HTMLDivElement>('cab-league');
   private readonly historyEl = el<HTMLOListElement>('cab-history');
+  private readonly friendsEl = el<HTMLDivElement>('cab-friends');
+  private readonly friendListEl = el<HTMLOListElement>('friend-list');
+  private readonly recentListEl = el<HTMLOListElement>('recent-list');
+  private readonly historyTab = el<HTMLButtonElement>('tab-history');
+  private readonly friendsTab = el<HTMLButtonElement>('tab-friends');
 
   constructor(private readonly handlers: CabinetHandlers) {
     el<HTMLDivElement>('cab-mascot').innerHTML = mascotSvg({ size: 46 });
+    this.historyTab.addEventListener('click', () => this.openTab('history'));
+    this.friendsTab.addEventListener('click', () => this.openTab('friends'));
+    el<HTMLButtonElement>('cab-add-friend').addEventListener('click', () => void this.addByCode());
     el<HTMLButtonElement>('cab-close').addEventListener('click', () => this.hide());
     el<HTMLButtonElement>('cab-rating-board').addEventListener('click', () => {
       this.hide();
@@ -66,8 +76,9 @@ export class Cabinet {
   }
 
   /** Открывает кабинет и подтягивает свежие данные. */
-  async show(): Promise<void> {
+  async show(tab: 'history' | 'friends' = 'history'): Promise<void> {
     this.overlay.hidden = false;
+    this.openTab(tab);
     this.historyEl.innerHTML = '<li class="empty">Загружаю…</li>';
     try {
       const [me, history] = await Promise.all([getMe(), getHistory()]);
@@ -75,6 +86,35 @@ export class Cabinet {
       this.renderHistory(history.entries);
     } catch {
       this.historyEl.innerHTML = '<li class="empty">Профиль недоступен — сервер не ответил.</li>';
+    }
+    await this.loadFriends();
+  }
+
+  private openTab(tab: 'history' | 'friends'): void {
+    const friends = tab === 'friends';
+    this.historyEl.hidden = friends;
+    this.friendsEl.hidden = !friends;
+    this.historyTab.classList.toggle('active', !friends);
+    this.friendsTab.classList.toggle('active', friends);
+  }
+
+  private async loadFriends(): Promise<void> {
+    try {
+      this.renderFriends(await getFriends());
+    } catch {
+      this.friendListEl.innerHTML = '<li class="empty">Список друзей недоступен.</li>';
+    }
+  }
+
+  private async addByCode(): Promise<void> {
+    const answer = prompt('Код друга:');
+    if (!answer) return;
+    try {
+      await addFriend(answer.trim().toUpperCase());
+      await this.loadFriends();
+    } catch {
+      this.friendListEl.innerHTML =
+        '<li class="empty">Такого кода нет — проверь и попробуй ещё раз.</li>';
     }
   }
 
@@ -128,6 +168,63 @@ export class Cabinet {
     } else {
       (barEl!.firstElementChild as HTMLElement).style.width = '100%';
       noteEl!.textContent = 'высшая лига';
+    }
+  }
+
+  private renderFriends(data: FriendsResponse): void {
+    el<HTMLSpanElement>('cab-code').textContent = data.code;
+
+    this.friendListEl.innerHTML = '';
+    if (data.friends.length === 0) {
+      this.friendListEl.innerHTML =
+        '<li class="empty">Друзей пока нет. Дай свой код или добавь по чужому.</li>';
+    }
+    for (const friend of data.friends) {
+      const item = document.createElement('li');
+      item.innerHTML =
+        '<span class="mark"></span>' +
+        '<span class="who"><b></b><span class="when"></span></span>' +
+        '<span class="vs"></span><button class="act">Позвать</button>';
+      const who = item.children[1] as HTMLElement;
+      (who.children[0] as HTMLElement).textContent = friend.name;
+      (who.children[1] as HTMLElement).textContent = friend.provisional
+        ? 'калибровка'
+        : `${friend.league} · ${friend.rating}`;
+      // Личный счёт важнее общего рейтинга: с друзьями меряются им.
+      (item.children[2] as HTMLElement).textContent =
+        friend.record.played > 0
+          ? `${friend.record.won}:${friend.record.played - friend.record.won}`
+          : '';
+
+      const invite = item.children[3] as HTMLButtonElement;
+      invite.addEventListener('click', () => {
+        this.hide();
+        this.handlers.onInvite();
+      });
+      // Удалить друга — долгим нажатием на строку, чтобы не плодить кнопки.
+      item.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+        if (!confirm(`Удалить ${friend.name} из друзей?`)) return;
+        void removeFriend(friend.code).then(() => this.loadFriends());
+      });
+      this.friendListEl.appendChild(item);
+    }
+
+    el<HTMLHeadingElement>('recent-title').hidden = data.recent.length === 0;
+    this.recentListEl.innerHTML = '';
+    for (const opponent of data.recent) {
+      const item = document.createElement('li');
+      item.innerHTML =
+        '<span class="mark"></span>' +
+        '<span class="who"><b></b><span class="when"></span></span>' +
+        '<span class="vs"></span><button class="act">+ в друзья</button>';
+      const who = item.children[1] as HTMLElement;
+      (who.children[0] as HTMLElement).textContent = opponent.name;
+      (who.children[1] as HTMLElement).textContent = shortDate(opponent.playedAt);
+      (item.children[3] as HTMLButtonElement).addEventListener('click', () => {
+        void addFriend(opponent.code).then(() => this.loadFriends());
+      });
+      this.recentListEl.appendChild(item);
     }
   }
 

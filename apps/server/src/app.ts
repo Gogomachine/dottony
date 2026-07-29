@@ -4,7 +4,9 @@ import jwt from '@fastify/jwt';
 import websocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import {
+  AddFriendRequestSchema,
   DuelClientMessageSchema,
+  FriendCodeSchema,
   GuestAuthRequestSchema,
   RenameRequestSchema,
   SubmitDailyRequestSchema,
@@ -15,6 +17,7 @@ import {
   type DuelServerMessage,
   type DuelHistoryEntry,
   type DuelHistoryResponse,
+  type FriendsResponse,
   type LeaderboardResponse,
   type MeResponse,
   type MoveLog,
@@ -34,7 +37,7 @@ import { dailySeed, replayDaily, todayUtc } from './daily.js';
 import { Store } from './db.js';
 import { DEFAULT_GHOST_SCORE, makeSyntheticGhost } from './ghost.js';
 import { Matchmaker, type MatchResult } from './matchmaker.js';
-import type { DuelOutcome } from './duel.js';
+import type { DuelOutcome, DuelPlayer } from './duel.js';
 import { verifyTelegramInitData } from './telegram.js';
 
 export interface AppOptions {
@@ -62,6 +65,7 @@ interface TokenPayload {
 const LEADERBOARD_SIZE = 50;
 const RATING_BOARD_SIZE = 50;
 const HISTORY_SIZE = 20;
+const RECENT_OPPONENTS = 8;
 
 /** Сколько дней игрок не играл рейтинговых матчей. */
 function idleDays(ratedAt: string | null): number {
@@ -357,6 +361,58 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     };
   });
 
+  // ---------- Друзья ----------
+
+  /** Список друзей с личным счётом и те, с кем недавно играли. */
+  app.get('/api/me/friends', async (request): Promise<FriendsResponse> => {
+    const user = await requireUser(request);
+    const [code, friends, versus, recent] = await Promise.all([
+      store.friendCodeOf(user.sub),
+      store.friendsOf(user.sub),
+      store.headToHead(user.sub),
+      store.recentOpponents(user.sub, RECENT_OPPONENTS),
+    ]);
+    return {
+      code: code ?? '',
+      friends: friends
+        .filter((friend): friend is typeof friend & { code: string } => friend.code !== null)
+        .map((friend) => ({
+          code: friend.code,
+          name: friend.name,
+          rating: friend.rating,
+          league: leagueOf(friend.rating).name,
+          record: versus.get(friend.id) ?? { played: 0, won: 0 },
+          provisional: friend.ratedGames < PLACEMENT_GAMES,
+        })),
+      recent,
+    };
+  });
+
+  app.post('/api/friends', async (request, reply) => {
+    const user = await requireUser(request);
+    const parsed = AddFriendRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'bad-code' });
+
+    const friend = await store.userByFriendCode(parsed.data.code);
+    if (!friend) return reply.code(404).send({ error: 'no-such-code' });
+    if (friend.id === user.sub) return reply.code(400).send({ error: 'self' });
+
+    // Повторное добавление не ошибка: кнопка могла нажаться дважды.
+    await store.addFriend(user.sub, friend.id);
+    return { name: friend.name, code: parsed.data.code };
+  });
+
+  app.delete('/api/friends/:code', async (request, reply) => {
+    const user = await requireUser(request);
+    const parsed = FriendCodeSchema.safeParse((request.params as { code: string }).code);
+    if (!parsed.success) return reply.code(400).send({ error: 'bad-code' });
+
+    const friend = await store.userByFriendCode(parsed.data);
+    if (!friend) return reply.code(404).send({ error: 'no-such-code' });
+    await store.removeFriend(user.sub, friend.id);
+    return { ok: true };
+  });
+
   app.get('/api/me/history', async (request): Promise<DuelHistoryResponse> => {
     const user = await requireUser(request);
     const rows = await store.duelHistory(user.sub, HISTORY_SIZE);
@@ -440,13 +496,22 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       return;
     }
 
-    const player = {
+    const player: DuelPlayer = {
       id: user.sub,
       name: user.name,
       send: (message: DuelServerMessage) => {
         if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
       },
     };
+
+    // Код друга нужен сопернику на экране результата. Читаем один раз при
+    // подключении: к моменту подбора он уже на месте.
+    void store
+      .friendCodeOf(user.sub)
+      .then((code) => {
+        if (code) player.code = code;
+      })
+      .catch((error: unknown) => app.log.error(error, 'friend code lookup failed'));
 
     socket.on('message', (raw: Buffer | string) => {
       let parsed: unknown;

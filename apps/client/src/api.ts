@@ -3,6 +3,7 @@ import type {
   DailyInfo,
   LeaderboardResponse,
   DuelHistoryResponse,
+  FriendsResponse,
   MeResponse,
   MoveLog,
   RatingLeaderboardResponse,
@@ -142,6 +143,21 @@ export function getRatingBoard(): Promise<RatingLeaderboardResponse> {
 
 export function getHistory(): Promise<DuelHistoryResponse> {
   return request<DuelHistoryResponse>('/api/me/history');
+}
+
+export function getFriends(): Promise<FriendsResponse> {
+  return request<FriendsResponse>('/api/me/friends');
+}
+
+export function addFriend(code: string): Promise<{ name: string; code: string }> {
+  return request<{ name: string; code: string }>('/api/friends', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  });
+}
+
+export function removeFriend(code: string): Promise<void> {
+  return request(`/api/friends/${encodeURIComponent(code)}`, { method: 'DELETE' });
 }
 
 export function getReplay(duelId: string): Promise<ReplayResponse> {

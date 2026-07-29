@@ -246,6 +246,8 @@ describe('привязка способов входа', () => {
     await expect(store.pickGhostRun('u1', 500)).resolves.toBeUndefined();
     // И на сводку дуэлей строка призрака не влияет.
     await expect(store.duelRecord('u1')).resolves.toEqual({ played: 1, won: 0 });
+    // В друзья призрака не предлагаем: за записью нет живого человека.
+    await expect(store.recentOpponents('u1', 10)).resolves.toEqual([]);
   });
 
   it('чужой кошелёк не переносится: аккаунты не сливаем', async () => {
@@ -483,6 +485,116 @@ describe('API', () => {
     const board = await app.inject({ method: 'GET', url: '/api/daily/leaderboard' });
     const { entries } = board.json() as { entries: { name: string; rank: number }[] };
     expect(entries.map((entry) => entry.name)).toEqual(['Сильный', 'Слабый']);
+  });
+
+  it('друг добавляется по коду — сразу с обеих сторон', async () => {
+    const ada = await guestToken('Ада');
+    const bob = await guestToken('Боб');
+
+    const bobFriends = await app.inject({
+      method: 'GET',
+      url: '/api/me/friends',
+      headers: { authorization: `Bearer ${bob}` },
+    });
+    const bobCode = (bobFriends.json() as { code: string }).code;
+    expect(bobCode).toMatch(/^[A-Z0-9]{6}$/);
+
+    // Код вводят руками — регистр и пробелы не должны мешать.
+    const added = await app.inject({
+      method: 'POST',
+      url: '/api/friends',
+      headers: { authorization: `Bearer ${ada}` },
+      payload: { code: ` ${bobCode.toLowerCase()} ` },
+    });
+    expect(added.statusCode).toBe(200);
+
+    for (const [token, expected] of [
+      [ada, 'Боб'],
+      [bob, 'Ада'],
+    ] as const) {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/me/friends',
+        headers: { authorization: `Bearer ${token}` },
+      });
+      const { friends } = response.json() as { friends: { name: string; record: unknown }[] };
+      // Дружба взаимная: подтверждать нечего.
+      expect(friends.map((friend) => friend.name)).toEqual([expected]);
+      expect(friends[0]!.record).toEqual({ played: 0, won: 0 });
+    }
+  });
+
+  it('несуществующий код и добавление себя отклоняются', async () => {
+    const ada = await guestToken('Ада');
+    const mine = await app.inject({
+      method: 'GET',
+      url: '/api/me/friends',
+      headers: { authorization: `Bearer ${ada}` },
+    });
+    const myCode = (mine.json() as { code: string }).code;
+
+    const missing = await app.inject({
+      method: 'POST',
+      url: '/api/friends',
+      headers: { authorization: `Bearer ${ada}` },
+      payload: { code: 'ZZZZZZ' },
+    });
+    expect(missing.statusCode).toBe(404);
+
+    const self = await app.inject({
+      method: 'POST',
+      url: '/api/friends',
+      headers: { authorization: `Bearer ${ada}` },
+      payload: { code: myCode },
+    });
+    expect(self.statusCode).toBe(400);
+    expect(self.json()).toEqual({ error: 'self' });
+  });
+
+  it('повторное добавление и удаление друга безопасны', async () => {
+    const ada = await guestToken('Ада');
+    const bob = await guestToken('Боб');
+    const bobCode = (
+      (
+        await app.inject({
+          method: 'GET',
+          url: '/api/me/friends',
+          headers: { authorization: `Bearer ${bob}` },
+        })
+      ).json() as { code: string }
+    ).code;
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/friends',
+      headers: { authorization: `Bearer ${ada}` },
+      payload: { code: bobCode },
+    });
+    // Кнопку могли нажать дважды — это не ошибка и не даёт дубля.
+    const again = await app.inject({
+      method: 'POST',
+      url: '/api/friends',
+      headers: { authorization: `Bearer ${ada}` },
+      payload: { code: bobCode },
+    });
+    expect(again.statusCode).toBe(200);
+
+    const removed = await app.inject({
+      method: 'DELETE',
+      url: `/api/friends/${bobCode}`,
+      headers: { authorization: `Bearer ${ada}` },
+    });
+    expect(removed.statusCode).toBe(200);
+
+    // Удаление тоже взаимное: односторонней дружбы у нас нет.
+    for (const token of [ada, bob]) {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/me/friends',
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect((response.json() as { friends: unknown[] }).friends).toEqual([]);
+    }
   });
 
   it('новичок стоит на стартовом рейтинге и вне таблицы', async () => {
@@ -779,6 +891,47 @@ describe('рейтинг за дуэль', () => {
     expect((history.json() as { entries: { opponent: string }[] }).entries[0]!.opponent).toBe(
       'Старое',
     );
+  });
+
+  it('соперник попадает в «недавние», а после добавления — в друзья со счётом', async () => {
+    const tokens: [string, string] = [await guest('Проигравший'), await guest('Победитель')];
+    const { winner } = await playDuel(tokens);
+    // Код соперника приходит вместе с матчем — по нему и добавляем.
+    expect(winner!.type).toBe('finished');
+
+    const before = await app.inject({
+      method: 'GET',
+      url: '/api/me/friends',
+      headers: { authorization: `Bearer ${tokens[1]}` },
+    });
+    const { recent } = before.json() as { recent: { name: string; code: string }[] };
+    expect(recent.map((entry) => entry.name)).toEqual(['Проигравший']);
+
+    const added = await app.inject({
+      method: 'POST',
+      url: '/api/friends',
+      headers: { authorization: `Bearer ${tokens[1]}` },
+      payload: { code: recent[0]!.code },
+    });
+    expect(added.statusCode).toBe(200);
+
+    const after = await app.inject({
+      method: 'GET',
+      url: '/api/me/friends',
+      headers: { authorization: `Bearer ${tokens[1]}` },
+    });
+    const list = after.json() as {
+      friends: { name: string; record: { played: number; won: number }; provisional: boolean }[];
+      recent: unknown[];
+    };
+    expect(list.friends[0]).toMatchObject({
+      name: 'Проигравший',
+      // Личный счёт: одна встреча, победа за мной.
+      record: { played: 1, won: 1 },
+      provisional: true,
+    });
+    // Уже друг — в «недавних» его больше не предлагаем.
+    expect(list.recent).toEqual([]);
   });
 
   it('матч в комнате с другом рейтинг не трогает', async () => {

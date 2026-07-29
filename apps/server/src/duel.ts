@@ -28,6 +28,8 @@ const MIN_MOVE_GAP = 0.1;
 export interface DuelPlayer {
   id: string;
   name: string;
+  /** Код друга: сопернику его показывают после матча. */
+  code?: string;
   send(message: DuelServerMessage): void;
 }
 
@@ -126,6 +128,9 @@ export class Duel {
         duration: DUEL_SECONDS,
         opponent: opponent.player.name,
         ghost: opponent.ghost,
+        ...(opponent.ghost || !opponent.player.code
+          ? {}
+          : { opponentCode: opponent.player.code }),
       });
     }
   }
@@ -195,6 +200,7 @@ export class Duel {
       opponentScore: opponent.score,
       opponent: opponent.player.name,
       ghost: opponent.ghost,
+      ...(opponent.ghost || !opponent.player.code ? {} : { opponentCode: opponent.player.code }),
       remaining: Math.max(0, DUEL_SECONDS - this.elapsed(now)),
       streak: state.board.surgeStreak,
     };

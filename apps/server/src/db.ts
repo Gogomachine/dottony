@@ -1,5 +1,15 @@
+import { randomInt } from 'node:crypto';
 import { createClient, type Client } from '@libsql/client';
 import { newRating, PLACEMENT_GAMES, type Rating } from '@doton/core';
+
+/** Без похожих друг на друга символов: код диктуют вслух. */
+const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+export function makeFriendCode(): string {
+  let code = '';
+  for (let i = 0; i < 6; i++) code += CODE_ALPHABET[randomInt(0, CODE_ALPHABET.length)];
+  return code;
+}
 
 /**
  * Хранилище на libSQL (диалект SQLite). Один и тот же код работает с
@@ -28,6 +38,20 @@ export interface RunRow {
   date: string;
   score: number;
   name: string;
+}
+
+export interface FriendRow {
+  id: string;
+  name: string;
+  code: string | null;
+  rating: number;
+  ratedGames: number;
+}
+
+export interface RecentOpponentRow {
+  name: string;
+  code: string;
+  playedAt: string;
 }
 
 /** Строка истории матчей. Соперника может не быть: он ушёл или был призраком. */
@@ -108,6 +132,15 @@ export class Store {
            PRIMARY KEY (kind, external_id)
          )`,
         `CREATE INDEX IF NOT EXISTS idx_identities_user ON identities (user_id)`,
+        // Дружба взаимная: обе строки пишутся разом. Заявок и подтверждений
+        // нет — на нашем масштабе это лишний экран, а добавить можно только
+        // того, чей код тебе дали, или того, с кем ты только что играл.
+        `CREATE TABLE IF NOT EXISTS friends (
+           user_id TEXT NOT NULL REFERENCES users(id),
+           friend_id TEXT NOT NULL REFERENCES users(id),
+           created_at TEXT NOT NULL DEFAULT (datetime('now')),
+           PRIMARY KEY (user_id, friend_id)
+         )`,
       ],
       'write',
     );
@@ -134,6 +167,13 @@ export class Store {
     // их нет: там писался только темп набора очков.
     await this.addColumnIfMissing('duel_players', 'moves', 'TEXT');
 
+    // Код друга: короткий, его диктуют вслух и шлют ссылкой.
+    await this.addColumnIfMissing('users', 'friend_code', 'TEXT');
+    await this.client.execute(
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_users_friend_code ON users (friend_code)',
+    );
+    await this.backfillFriendCodes();
+
     // Старые аккаунты знали только Telegram — переносим их в общий вид.
     // INSERT OR IGNORE делает перенос повторяемым.
     await this.client.execute(
@@ -144,6 +184,34 @@ export class Store {
       `INSERT OR IGNORE INTO identities (kind, external_id, user_id)
        SELECT 'guest', id, id FROM users WHERE tg_id IS NULL`,
     );
+  }
+
+  /** Выдаёт код тем, кто завёлся до появления кодов. */
+  private async backfillFriendCodes(): Promise<void> {
+    const rows = await this.client.execute('SELECT id FROM users WHERE friend_code IS NULL');
+    for (const row of rows.rows) {
+      await this.assignFriendCode(String(row.id));
+    }
+  }
+
+  /**
+   * Ставит игроку свободный код. Коллизия маловероятна, но в уникальный
+   * индекс она бы упёрлась молча — поэтому пробуем несколько раз.
+   */
+  private async assignFriendCode(userId: string): Promise<string> {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const code = makeFriendCode();
+      try {
+        await this.client.execute({
+          sql: 'UPDATE users SET friend_code = ? WHERE id = ?',
+          args: [code, userId],
+        });
+        return code;
+      } catch {
+        // Код занят — берём следующий.
+      }
+    }
+    throw new Error('cannot assign friend code');
   }
 
   /** Идемпотентно добавляет колонку — безопасно на любой существующей базе. */
@@ -395,6 +463,141 @@ export class Store {
   }
 
   /** Заводит игрока вместе с первым способом входа. */
+  /** Код друга: выдаётся при создании аккаунта, дальше не меняется. */
+  async friendCodeOf(userId: string): Promise<string | null> {
+    const result = await this.client.execute({
+      sql: 'SELECT friend_code FROM users WHERE id = ?',
+      args: [userId],
+    });
+    const code = result.rows[0]?.friend_code;
+    return code === null || code === undefined ? null : String(code);
+  }
+
+  async userByFriendCode(code: string): Promise<UserRow | undefined> {
+    const result = await this.client.execute({
+      sql: 'SELECT id, name FROM users WHERE friend_code = ?',
+      args: [code],
+    });
+    const row = result.rows[0];
+    return row ? { id: String(row.id), name: String(row.name) } : undefined;
+  }
+
+  /** Дружба взаимная: одна кнопка добавляет обе стороны. */
+  async addFriend(userId: string, friendId: string): Promise<void> {
+    await this.client.batch(
+      [
+        {
+          sql: 'INSERT OR IGNORE INTO friends (user_id, friend_id) VALUES (?, ?)',
+          args: [userId, friendId],
+        },
+        {
+          sql: 'INSERT OR IGNORE INTO friends (user_id, friend_id) VALUES (?, ?)',
+          args: [friendId, userId],
+        },
+      ],
+      'write',
+    );
+  }
+
+  async removeFriend(userId: string, friendId: string): Promise<void> {
+    await this.client.batch(
+      [
+        {
+          sql: 'DELETE FROM friends WHERE user_id = ? AND friend_id = ?',
+          args: [userId, friendId],
+        },
+        {
+          sql: 'DELETE FROM friends WHERE user_id = ? AND friend_id = ?',
+          args: [friendId, userId],
+        },
+      ],
+      'write',
+    );
+  }
+
+  async areFriends(userId: string, friendId: string): Promise<boolean> {
+    const result = await this.client.execute({
+      sql: 'SELECT 1 FROM friends WHERE user_id = ? AND friend_id = ?',
+      args: [userId, friendId],
+    });
+    return result.rows.length > 0;
+  }
+
+  /** Друзья по убыванию рейтинга — это и есть таблица среди своих. */
+  async friendsOf(userId: string): Promise<FriendRow[]> {
+    const result = await this.client.execute({
+      sql: `SELECT u.id, u.name, u.friend_code, u.rating, u.rated_games
+            FROM friends f JOIN users u ON u.id = f.friend_id
+            WHERE f.user_id = ?
+            ORDER BY u.rating DESC, u.name ASC`,
+      args: [userId],
+    });
+    return result.rows.map((row) => ({
+      id: String(row.id),
+      name: String(row.name),
+      code: row.friend_code === null ? null : String(row.friend_code),
+      rating: Number(row.rating),
+      ratedGames: Number(row.rated_games),
+    }));
+  }
+
+  /**
+   * Личный счёт со всеми, с кем игрок встречался. Одним запросом: иначе на
+   * каждого друга уходил бы отдельный поход в базу.
+   */
+  async headToHead(userId: string): Promise<Map<string, { played: number; won: number }>> {
+    const result = await this.client.execute({
+      sql: `SELECT theirs.user_id AS opponent_id,
+                   COUNT(*) AS played,
+                   SUM(CASE
+                         WHEN mine.outcome IS NOT NULL
+                           THEN (CASE WHEN mine.outcome = 'win' THEN 1 ELSE 0 END)
+                         WHEN mine.score > theirs.score THEN 1
+                         ELSE 0
+                       END) AS won
+            FROM duel_players mine
+            JOIN duel_players theirs
+              ON theirs.duel_id = mine.duel_id AND theirs.user_id <> mine.user_id
+            WHERE mine.user_id = ?
+            GROUP BY theirs.user_id`,
+      args: [userId],
+    });
+    return new Map(
+      result.rows.map((row) => [
+        String(row.opponent_id),
+        { played: Number(row.played), won: Number(row.won ?? 0) },
+      ]),
+    );
+  }
+
+  /**
+   * С кем игрок недавно играл, но ещё не дружит. Призраков не предлагаем:
+   * за записью нет живого человека.
+   */
+  async recentOpponents(userId: string, limit: number): Promise<RecentOpponentRow[]> {
+    const result = await this.client.execute({
+      sql: `SELECT u.id, u.name, u.friend_code, MAX(d.created_at) AS last_at
+            FROM duel_players mine
+            JOIN duels d ON d.id = mine.duel_id
+            JOIN duel_players theirs
+              ON theirs.duel_id = mine.duel_id AND theirs.user_id <> mine.user_id
+            JOIN users u ON u.id = theirs.user_id
+            WHERE mine.user_id = ?
+              AND theirs.ghost = 0
+              AND u.friend_code IS NOT NULL
+              AND theirs.user_id NOT IN (SELECT friend_id FROM friends WHERE user_id = ?)
+            GROUP BY u.id
+            ORDER BY last_at DESC
+            LIMIT ?`,
+      args: [userId, userId, limit],
+    });
+    return result.rows.map((row) => ({
+      name: String(row.name),
+      code: String(row.friend_code),
+      playedAt: String(row.last_at),
+    }));
+  }
+
   /** Сводка по вызову дня: сколько дней сыграно и лучший результат. */
   async dailyRecord(userId: string): Promise<{ played: number; best: number | null }> {
     const result = await this.client.execute({
@@ -411,7 +614,10 @@ export class Store {
   async createUser(id: string, name: string, identity: Identity): Promise<UserRow> {
     await this.client.batch(
       [
-        { sql: 'INSERT INTO users (id, name) VALUES (?, ?)', args: [id, name] },
+        {
+          sql: 'INSERT INTO users (id, name, friend_code) VALUES (?, ?, ?)',
+          args: [id, name, makeFriendCode()],
+        },
         {
           sql: 'INSERT INTO identities (kind, external_id, user_id) VALUES (?, ?, ?)',
           args: [identity.kind, identity.externalId, id],

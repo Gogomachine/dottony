@@ -29,6 +29,15 @@ export const GuestAuthRequestSchema = z.object({ name: NameSchema });
 
 export const RenameRequestSchema = z.object({ name: NameSchema });
 
+/** Код друга: шесть символов без похожих начертаний, регистр не важен. */
+export const FriendCodeSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(/^[A-Z0-9]{4,12}$/, 'bad-code');
+
+export const AddFriendRequestSchema = z.object({ code: FriendCodeSchema });
+
 export const TelegramAuthRequestSchema = z.object({
   initData: z.string().min(1).max(8192),
 });
@@ -38,6 +47,7 @@ export type MoveLog = z.infer<typeof MoveLogSchema>;
 export type SubmitDailyRequest = z.infer<typeof SubmitDailyRequestSchema>;
 export type GuestAuthRequest = z.infer<typeof GuestAuthRequestSchema>;
 export type RenameRequest = z.infer<typeof RenameRequestSchema>;
+export type AddFriendRequest = z.infer<typeof AddFriendRequestSchema>;
 export type TelegramAuthRequest = z.infer<typeof TelegramAuthRequestSchema>;
 
 export interface AuthResponse {
@@ -108,6 +118,31 @@ export interface ReplayResponse {
   moves: MoveLog[];
   score: number;
   opponent: string | null;
+}
+
+export interface FriendEntry {
+  code: string;
+  name: string;
+  rating: number;
+  league: string;
+  /** Личный счёт: сколько сыграно между собой и сколько из них выиграно. */
+  record: { played: number; won: number };
+  /** Рейтинг ещё калибруется — показывать его как звание рано. */
+  provisional: boolean;
+}
+
+/** Тот, с кем недавно играли, но ещё не в друзьях. */
+export interface RecentOpponent {
+  code: string;
+  name: string;
+  playedAt: string;
+}
+
+export interface FriendsResponse {
+  /** Свой код — его диктуют или шлют ссылкой. */
+  code: string;
+  friends: FriendEntry[];
+  recent: RecentOpponent[];
 }
 
 export interface MeResponse {
@@ -189,6 +224,8 @@ export interface DuelSnapshot {
   opponentScore: number;
   opponent: string;
   ghost: boolean;
+  /** Код соперника — по нему его можно добавить в друзья. */
+  opponentCode?: string;
   /** Сколько секунд матча осталось. */
   remaining: number;
   /** Серия зарядов, чтобы множитель не сбросился. */
@@ -208,6 +245,8 @@ export type DuelServerMessage =
       opponent: string;
       /** Матч против записанной попытки: соперник офлайн. */
       ghost: boolean;
+      /** Код соперника — по нему его можно добавить в друзья. */
+      opponentCode?: string;
     }
   /** Ход принят: сервер подтверждает начисленные очки. */
   | { type: 'accepted'; score: number; points: number }

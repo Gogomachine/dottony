@@ -2,6 +2,7 @@ import { DEFAULT_CONFIG, type Cell } from '@doton/core';
 import type { LeaderboardResponse, MoveLog, RatingLeaderboardResponse } from '@doton/protocol';
 import type { DuelServerMessage } from '@doton/protocol';
 import {
+  addFriend,
   apiAvailable,
   ensureAuth,
   getMe,
@@ -55,6 +56,7 @@ const vsGapEl = el<HTMLSpanElement>('vs-gap');
 const duelRecordEl = el<HTMLSpanElement>('duel-record');
 const rankChipEl = el<HTMLButtonElement>('rank-chip');
 const ratingLineEl = el<HTMLDivElement>('rating-line');
+const addOpponentBtn = el<HTMLButtonElement>('add-opponent');
 const replayBarEl = el<HTMLDivElement>('replay-bar');
 const replayTextEl = el<HTMLSpanElement>('replay-text');
 const roomBoxEl = el<HTMLDivElement>('room-box');
@@ -331,6 +333,8 @@ function showOverModal(options: {
   rating?: RatingChange;
   /** Просмотр таблицы поверх игры: кнопка просто закрывает окно. */
   viewing?: boolean;
+  /** Показать кнопку «добавить соперника в друзья». */
+  addFriend?: { name: string; code: string };
 }): void {
   // В модалке финиша Заппо подмигивает за вызов дня, в остальных — просто рад.
   overMascotEl.innerHTML = mascotSvg({ size: 84, wink: options.title.startsWith('Вызов') });
@@ -348,6 +352,12 @@ function showOverModal(options: {
   dailyBoardEl.hidden = true;
   ratingLineEl.hidden = true;
   if (options.rating) showRatingChange(options.rating);
+  // Добавить соперника проще всего сразу после матча — потом искать код.
+  addOpponentBtn.hidden = options.addFriend === undefined;
+  if (options.addFriend) {
+    addOpponentBtn.textContent = `+ ${options.addFriend.name} в друзья`;
+    pendingFriendCode = options.addFriend.code;
+  }
   // Пока ждём соперника, единственное осмысленное действие — отменить поиск.
   waitingForOpponent = options.waiting ?? false;
   viewingOnly = options.viewing ?? false;
@@ -385,6 +395,10 @@ function showVersus(name: string, opponentScore: number): void {
 
 let opponentName = 'Соперник';
 let opponentScore = 0;
+/** Код соперника по текущему матчу: по нему его добавляют в друзья. */
+let opponentCode: string | null = null;
+/** Код, который добавит кнопка на экране результата. */
+let pendingFriendCode = '';
 /** Таймер подсказки на экране ожидания. */
 let searchHint = 0;
 /** Код комнаты, показанный в модалке, — для кнопки копирования ссылки. */
@@ -428,6 +442,7 @@ function handleDuelMessage(message: DuelServerMessage): void {
       // Честно помечаем запись: игрок должен знать, что соперник не живой.
       opponentName = message.ghost ? `${message.opponent} · запись` : message.opponent;
       opponentScore = 0;
+      opponentCode = message.opponentCode ?? null;
       mode = 'duel';
       dailyRun = null;
       setActiveModeButton('duel');
@@ -446,6 +461,7 @@ function handleDuelMessage(message: DuelServerMessage): void {
       duelDuration = Math.max(1, Math.round(message.remaining));
       opponentName = message.ghost ? `${message.opponent} · запись` : message.opponent;
       opponentScore = message.opponentScore;
+      opponentCode = message.opponentCode ?? null;
       mode = 'duel';
       setActiveModeButton('duel');
       startGame(message.seed);
@@ -489,6 +505,7 @@ function handleDuelMessage(message: DuelServerMessage): void {
         score: message.score,
         note: `${opponentName}: ${message.opponentScore}`,
         ...(message.rating ? { rating: message.rating } : {}),
+        ...(opponentCode ? { addFriend: { name: opponentName, code: opponentCode } } : {}),
       });
       endDuel({ awaitRating: true });
       void refreshProfile();
@@ -779,6 +796,22 @@ const cabinet = new Cabinet({
   onReplay: (duelId) => void startReplay(duelId),
   onRatingBoard: () => void showRatingBoard(),
   onRenamed: () => void refreshProfile(),
+  onInvite: () => void startDuel(makeRoomCode()),
+});
+
+addOpponentBtn.addEventListener('click', () => {
+  const code = pendingFriendCode;
+  addOpponentBtn.disabled = true;
+  void addFriend(code)
+    .then(({ name }) => {
+      addOpponentBtn.textContent = `${name} в друзьях ✓`;
+    })
+    .catch(() => {
+      addOpponentBtn.textContent = 'Не удалось добавить';
+    })
+    .finally(() => {
+      addOpponentBtn.disabled = false;
+    });
 });
 
 // Чип лиги — вход в кабинет: рейтинг там же, но с историей и профилем.
