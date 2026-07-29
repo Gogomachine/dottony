@@ -135,6 +135,13 @@ export class Store {
         // Дружба взаимная: обе строки пишутся разом. Заявок и подтверждений
         // нет — на нашем масштабе это лишний экран, а добавить можно только
         // того, чей код тебе дали, или того, с кем ты только что играл.
+        // Одноразовый код привязки: игрок в браузере получает его, а
+        // подтверждает уже в Telegram — на другом устройстве.
+        `CREATE TABLE IF NOT EXISTS link_tokens (
+           token TEXT PRIMARY KEY,
+           user_id TEXT NOT NULL REFERENCES users(id),
+           created_at TEXT NOT NULL DEFAULT (datetime('now'))
+         )`,
         `CREATE TABLE IF NOT EXISTS friends (
            user_id TEXT NOT NULL REFERENCES users(id),
            friend_id TEXT NOT NULL REFERENCES users(id),
@@ -167,6 +174,9 @@ export class Store {
     // их нет: там писался только темп набора очков.
     await this.addColumnIfMissing('duel_players', 'moves', 'TEXT');
 
+    // Бот не может написать первым тому, кто его не запускал, — отмечаем,
+    // кому писать можно, чтобы не считать отказ доставки поломкой.
+    await this.addColumnIfMissing('identities', 'bot_started', 'INTEGER NOT NULL DEFAULT 0');
     // Код друга: короткий, его диктуют вслух и шлют ссылкой.
     await this.addColumnIfMissing('users', 'friend_code', 'TEXT');
     await this.client.execute(
@@ -663,6 +673,57 @@ export class Store {
       args: [identity.kind, identity.externalId, userId],
     });
     return 'linked';
+  }
+
+  /** Отмечает, что игрок нажал Start: теперь бот может ему писать. */
+  async markBotStarted(telegramId: string): Promise<void> {
+    await this.client.execute({
+      sql: "UPDATE identities SET bot_started = 1 WHERE kind = 'telegram' AND external_id = ?",
+      args: [telegramId],
+    });
+  }
+
+  /**
+   * Куда писать игроку в Telegram. null — либо Telegram не привязан, либо
+   * бот не запущен: во втором случае API всё равно откажет.
+   */
+  async botChatOf(userId: string): Promise<string | null> {
+    const result = await this.client.execute({
+      sql: `SELECT external_id FROM identities
+            WHERE user_id = ? AND kind = 'telegram' AND bot_started = 1`,
+      args: [userId],
+    });
+    const row = result.rows[0];
+    return row ? String(row.external_id) : null;
+  }
+
+  /** Выдаёт одноразовый код привязки. Старые коды того же игрока гасим. */
+  async createLinkToken(userId: string, token: string): Promise<void> {
+    await this.client.batch(
+      [
+        { sql: 'DELETE FROM link_tokens WHERE user_id = ?', args: [userId] },
+        {
+          sql: 'INSERT INTO link_tokens (token, user_id) VALUES (?, ?)',
+          args: [token, userId],
+        },
+      ],
+      'write',
+    );
+  }
+
+  /**
+   * Обменивает код на игрока и сразу его гасит: код одноразовый, а через
+   * десять минут перестаёт действовать сам.
+   */
+  async consumeLinkToken(token: string): Promise<string | null> {
+    const result = await this.client.execute({
+      sql: `SELECT user_id FROM link_tokens
+            WHERE token = ? AND created_at > datetime('now', '-10 minutes')`,
+      args: [token],
+    });
+    const row = result.rows[0];
+    await this.client.execute({ sql: 'DELETE FROM link_tokens WHERE token = ?', args: [token] });
+    return row ? String(row.user_id) : null;
   }
 
   /** Все способы входа игрока — для личного кабинета. */

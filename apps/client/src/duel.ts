@@ -1,6 +1,6 @@
 import type { Cell } from '@doton/core';
 import type { DuelClientMessage, DuelServerMessage } from '@doton/protocol';
-import { apiBase, authToken } from './api';
+import { apiBase, authToken, telegramStartParam } from './api';
 
 /**
  * Клиент дуэли поверх WebSocket.
@@ -125,9 +125,12 @@ export class DuelConnection {
   }
 }
 
-/** Код приватной комнаты из ссылки-приглашения. */
+/**
+ * Код приватной комнаты из приглашения. В Telegram он приезжает
+ * параметром startapp, в браузере — обычным ?room= в адресе.
+ */
 export function roomFromLocation(): string | null {
-  const room = new URLSearchParams(location.search).get('room');
+  const room = telegramStartParam() ?? new URLSearchParams(location.search).get('room');
   return room && room.length >= 4 ? room.slice(0, 16) : null;
 }
 
@@ -140,7 +143,13 @@ export function makeRoomCode(): string {
   return code;
 }
 
-export function inviteLink(room: string): string {
+/**
+ * Ссылка-приглашение. Если бот известен, зовём через t.me: такая ссылка
+ * открывает игру внутри Telegram, где у друга уже есть аккаунт. Иначе —
+ * обычный адрес страницы.
+ */
+export function inviteLink(room: string, miniApp?: string | null): string {
+  if (miniApp) return `${miniApp}${miniApp.includes('?') ? '&' : '?'}startapp=${room}`;
   const url = new URL(location.href);
   url.search = `?room=${room}`;
   return url.toString();

@@ -1,5 +1,14 @@
 import type { DuelHistoryEntry, FriendsResponse, MeResponse } from '@doton/protocol';
-import { addFriend, getFriends, getHistory, getMe, removeFriend, rename } from './api';
+import {
+  addFriend,
+  getFriends,
+  getHistory,
+  getMe,
+  openInTelegram,
+  removeFriend,
+  rename,
+  telegramLinkUrl,
+} from './api';
 import { mascotSvg } from './mascot';
 
 /**
@@ -34,8 +43,11 @@ export interface CabinetHandlers {
   onRatingBoard(): void;
   /** Имя поменялось — снаружи его показывают ещё в паре мест. */
   onRenamed(name: string): void;
-  /** Позвать друга в матч: снаружи это открывает приватную комнату. */
-  onInvite(): void;
+  /**
+   * Позвать друга в матч: снаружи это открывает приватную комнату.
+   * Код друга нужен, чтобы дослать приглашение сообщением в Telegram.
+   */
+  onInvite(friendCode: string): void;
 }
 
 export class Cabinet {
@@ -49,12 +61,14 @@ export class Cabinet {
   private readonly recentListEl = el<HTMLOListElement>('recent-list');
   private readonly historyTab = el<HTMLButtonElement>('tab-history');
   private readonly friendsTab = el<HTMLButtonElement>('tab-friends');
+  private miniApp: string | null = null;
 
   constructor(private readonly handlers: CabinetHandlers) {
     el<HTMLDivElement>('cab-mascot').innerHTML = mascotSvg({ size: 46 });
     this.historyTab.addEventListener('click', () => this.openTab('history'));
     this.friendsTab.addEventListener('click', () => this.openTab('friends'));
     el<HTMLButtonElement>('cab-add-friend').addEventListener('click', () => void this.addByCode());
+    el<HTMLButtonElement>('cab-link-tg').addEventListener('click', () => void this.linkTelegram());
     el<HTMLButtonElement>('cab-close').addEventListener('click', () => this.hide());
     el<HTMLButtonElement>('cab-rating-board').addEventListener('click', () => {
       this.hide();
@@ -132,10 +146,40 @@ export class Cabinet {
     }
   }
 
+  /** Ссылка на мини-приложение приезжает с сервера уже после открытия. */
+  setMiniApp(url: string | null): void {
+    this.miniApp = url;
+  }
+
+  /**
+   * Привязка Telegram к аккаунту, заведённому в браузере. Одноразовый код
+   * уезжает в бота ссылкой: initData в обычном браузере взять неоткуда, и
+   * без этого у человека завёлся бы второй профиль.
+   */
+  private async linkTelegram(): Promise<void> {
+    const button = el<HTMLButtonElement>('cab-link-tg');
+    button.disabled = true;
+    try {
+      const { url } = await telegramLinkUrl();
+      // Внутри Telegram переход просим сделать сам мессенджер.
+      if (!openInTelegram(url)) window.open(url, '_blank', 'noopener');
+      button.textContent = 'Подтверди в Telegram…';
+    } catch {
+      button.textContent = 'Пока недоступно';
+    } finally {
+      button.disabled = false;
+    }
+  }
+
   private renderProfile(me: MeResponse): void {
     this.nameEl.textContent = me.name;
     const logins = me.identities.map((identity) => LOGIN_NAMES[identity.kind] ?? identity.kind);
     this.loginEl.textContent = `вход: ${logins.join(', ')}`;
+    // Кнопку привязки показываем только тем, у кого Telegram ещё не привязан.
+    const hasTelegram = me.identities.some((identity) => identity.kind === 'telegram');
+    const linkBtn = el<HTMLButtonElement>('cab-link-tg');
+    linkBtn.hidden = hasTelegram || this.miniApp === null;
+    if (!linkBtn.hidden) linkBtn.textContent = 'Привязать Telegram';
 
     el<HTMLSpanElement>('cab-rating').textContent = String(me.rating);
     el<HTMLSpanElement>('cab-rank').textContent = me.rank === null ? '—' : `#${me.rank}`;
@@ -199,7 +243,7 @@ export class Cabinet {
       const invite = item.children[3] as HTMLButtonElement;
       invite.addEventListener('click', () => {
         this.hide();
-        this.handlers.onInvite();
+        this.handlers.onInvite(friend.code);
       });
       // Удалить друга — долгим нажатием на строку, чтобы не плодить кнопки.
       item.addEventListener('contextmenu', (event) => {

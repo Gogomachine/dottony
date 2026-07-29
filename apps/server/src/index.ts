@@ -22,6 +22,8 @@ if (!databaseUrl.startsWith('libsql://') && process.env.NODE_ENV === 'production
   console.warn(`DATABASE_URL not set — using ${databaseUrl}, data may be lost on restart`);
 }
 
+const publicUrl = process.env.PUBLIC_URL ?? process.env.RENDER_EXTERNAL_URL;
+
 // В проде логи — единственный способ увидеть, что пошло не так.
 const app = await buildApp({
   logger: process.env.NODE_ENV === 'production',
@@ -34,6 +36,10 @@ const app = await buildApp({
   ...(process.env.TELEGRAM_BOT_TOKEN
     ? { telegramBotToken: process.env.TELEGRAM_BOT_TOKEN }
     : {}),
+  ...(process.env.TELEGRAM_APP_NAME ? { telegramAppName: process.env.TELEGRAM_APP_NAME } : {}),
+  // Свой публичный адрес Render подставляет сам — по нему регистрируем
+  // вебхук бота. Локально переменной нет, и чужой вебхук не перебиваем.
+  ...(publicUrl ? { publicUrl } : {}),
 });
 
 try {

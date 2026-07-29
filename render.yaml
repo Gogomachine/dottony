@@ -35,4 +35,11 @@ services:
       - key: DAILY_SECRET
         generateValue: true
       # DATABASE_URL / DATABASE_AUTH_TOKEN — из Turso, добавить вручную.
-      # TELEGRAM_BOT_TOKEN — добавить, когда появится бот.
+      # Токен бота — секрет, поэтому значение задаётся в дашборде, а не тут:
+      # sync:false лишь объявляет переменную, чтобы Render о ней спросил.
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      # Короткое имя мини-приложения из BotFather (/newapp). Без него
+      # ссылки ведут в главное мини-приложение бота.
+      - key: TELEGRAM_APP_NAME
+        sync: false

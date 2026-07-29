@@ -1,8 +1,8 @@
-import { createHmac, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createClient } from '@libsql/client';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import {
   applyMove,
@@ -16,6 +16,7 @@ import {
 } from '@doton/core';
 import type { DuelServerMessage, MoveLog } from '@doton/protocol';
 import { buildApp } from './app.js';
+import { parseStart } from './bot.js';
 import { Store } from './db.js';
 import { dailySeed, replayDaily, todayUtc } from './daily.js';
 import { verifyTelegramInitData } from './telegram.js';
@@ -82,6 +83,33 @@ function signedInitData(user: object, authDate = Math.floor(Date.now() / 1000)):
   const hash = createHmac('sha256', secret).update(dataCheckString).digest('hex');
   params.set('hash', hash);
   return params.toString();
+}
+
+/**
+ * Подменённый Bot API: тесты не ходят в сеть, а мы видим, что именно
+ * бот отправил.
+ */
+interface TelegramCall {
+  method: string;
+  payload: Record<string, unknown>;
+}
+
+function stubTelegram(): TelegramCall[] {
+  const calls: TelegramCall[] = [];
+  vi.stubGlobal('fetch', async (url: string, init: { body: string }) => {
+    const method = String(url).split('/').pop() ?? '';
+    calls.push({ method, payload: JSON.parse(init.body) as Record<string, unknown> });
+    const result = method === 'getMe' ? { username: 'ZaapoBot' } : {};
+    return new Response(JSON.stringify({ ok: true, result }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  });
+  return calls;
+}
+
+/** Тот же секрет, что выводит Bot из ключа JWT. */
+function webhookSecret(jwtSecret: string): string {
+  return createHash('sha256').update(`${jwtSecret}:telegram-webhook`).digest('hex').slice(0, 32);
 }
 
 describe('dailySeed', () => {
@@ -199,6 +227,274 @@ describe('миграции', () => {
       { kind: 'telegram', linkedAt: expect.any(String) },
     ]);
     store.close();
+  });
+});
+
+describe('бот', () => {
+  const JWT = 'test-jwt';
+  let app: FastifyInstance;
+  let calls: TelegramCall[];
+
+  beforeEach(async () => {
+    calls = stubTelegram();
+    app = await buildApp({
+      databaseUrl: ':memory:',
+      jwtSecret: JWT,
+      dailySecret: DAILY_SECRET,
+      telegramBotToken: BOT_TOKEN,
+    });
+  });
+
+  afterEach(async () => {
+    await app.close();
+    vi.unstubAllGlobals();
+  });
+
+  /** Сообщение боту, как его прислал бы Telegram. */
+  function update(text: string, from = { id: 777, username: 'ada' }) {
+    return {
+      method: 'POST' as const,
+      url: '/telegram/webhook',
+      headers: { 'x-telegram-bot-api-secret-token': webhookSecret(JWT) },
+      payload: { message: { chat: { id: from.id }, from, text } },
+    };
+  }
+
+  async function guestToken(name: string): Promise<string> {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/auth/guest',
+      payload: { name },
+    });
+    return (response.json() as { token: string }).token;
+  }
+
+  /** Последнее отправленное ботом сообщение. */
+  function lastMessage(): string {
+    const sent = [...calls].reverse().find((call) => call.method === 'sendMessage');
+    return String(sent?.payload.text ?? '');
+  }
+
+  it('без секрета вебхук не отвечает', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/telegram/webhook',
+      payload: { message: { from: { id: 1 }, text: '/start' } },
+    });
+    expect(response.statusCode).toBe(401);
+
+    const wrong = await app.inject({
+      ...update('/start'),
+      headers: { 'x-telegram-bot-api-secret-token': 'нет' },
+    });
+    expect(wrong.statusCode).toBe(401);
+    expect(calls.some((call) => call.method === 'sendMessage')).toBe(false);
+  });
+
+  it('простой /start заводит игрока и разрешает боту писать', async () => {
+    const response = await app.inject(update('/start'));
+    expect(response.statusCode).toBe(200);
+    expect(lastMessage()).toContain('Zaapo');
+
+    // Тот же Telegram теперь входит в игру и находит этот же аккаунт.
+    const auth = await app.inject({
+      method: 'POST',
+      url: '/api/auth/telegram',
+      payload: { initData: signedInitData({ id: 777, username: 'ada' }) },
+    });
+    expect(auth.statusCode).toBe(200);
+  });
+
+  it('ссылка с кодом друга добавляет в друзья', async () => {
+    const bob = await guestToken('Боб');
+    const bobCode = (
+      (
+        await app.inject({
+          method: 'GET',
+          url: '/api/me/friends',
+          headers: { authorization: `Bearer ${bob}` },
+        })
+      ).json() as { code: string }
+    ).code;
+
+    await app.inject(update(`/start f_${bobCode}`));
+    expect(lastMessage()).toContain('Боб');
+
+    const friends = await app.inject({
+      method: 'GET',
+      url: '/api/me/friends',
+      headers: { authorization: `Bearer ${bob}` },
+    });
+    // Дружба взаимная: Боб видит пришедшего из Telegram.
+    expect((friends.json() as { friends: unknown[] }).friends).toHaveLength(1);
+  });
+
+  it('код привязки соединяет браузерный аккаунт с Telegram', async () => {
+    const token = await guestToken('Ада');
+    const link = await app.inject({
+      method: 'POST',
+      url: '/api/me/link/telegram',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const { url } = link.json() as { url: string };
+    expect(url).toContain('https://t.me/ZaapoBot?start=l_');
+    const payload = url.split('start=')[1]!;
+
+    await app.inject(update(`/start ${payload}`));
+    expect(lastMessage()).toContain('Готово');
+
+    // Аккаунт остался прежним, просто открывается теперь и из Telegram.
+    const auth = await app.inject({
+      method: 'POST',
+      url: '/api/auth/telegram',
+      payload: { initData: signedInitData({ id: 777, username: 'ada' }) },
+    });
+    const me = await app.inject({
+      method: 'GET',
+      url: '/api/me',
+      headers: { authorization: `Bearer ${(auth.json() as { token: string }).token}` },
+    });
+    // Имя осталось своим: вход через Telegram не затирает выбранное игроком.
+    expect(me.json()).toMatchObject({ name: 'Ада' });
+    expect((me.json() as { identities: { kind: string }[] }).identities.map((i) => i.kind)).toEqual([
+      'guest',
+      'telegram',
+    ]);
+  });
+
+  it('код привязки одноразовый', async () => {
+    const token = await guestToken('Ада');
+    const first = await app.inject({
+      method: 'POST',
+      url: '/api/me/link/telegram',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const payload = (first.json() as { url: string }).url.split('start=')[1]!;
+
+    await app.inject(update(`/start ${payload}`));
+    // Второй раз тем же кодом — уже другой Telegram, и он не должен пройти.
+    await app.inject(update(`/start ${payload}`, { id: 999, username: 'mallory' }));
+    expect(lastMessage()).toContain('не подошёл');
+  });
+
+  it('занятый Telegram не привязывается ко второму профилю', async () => {
+    // Ада уже вошла через Telegram.
+    await app.inject(update('/start'));
+    const other = await guestToken('Чужой');
+    const link = await app.inject({
+      method: 'POST',
+      url: '/api/me/link/telegram',
+      headers: { authorization: `Bearer ${other}` },
+    });
+    const payload = (link.json() as { url: string }).url.split('start=')[1]!;
+
+    await app.inject(update(`/start ${payload}`));
+    expect(lastMessage()).toContain('уже привязан к другому профилю');
+  });
+
+  it('друга зовут в комнату сообщением, но только если он нажимал Start', async () => {
+    const ada = await guestToken('Ада');
+    // Боб пришёл из Telegram, значит боту писать ему можно.
+    await app.inject(update('/start', { id: 777, username: 'bob' }));
+    const bobAuth = await app.inject({
+      method: 'POST',
+      url: '/api/auth/telegram',
+      payload: { initData: signedInitData({ id: 777, username: 'bob' }) },
+    });
+    const bobToken = (bobAuth.json() as { token: string }).token;
+    const bobCode = (
+      (
+        await app.inject({
+          method: 'GET',
+          url: '/api/me/friends',
+          headers: { authorization: `Bearer ${bobToken}` },
+        })
+      ).json() as { code: string }
+    ).code;
+
+    // Пока не друзья — звать нельзя, иначе это рассылка кому угодно.
+    const stranger = await app.inject({
+      method: 'POST',
+      url: `/api/friends/${bobCode}/invite`,
+      headers: { authorization: `Bearer ${ada}` },
+      payload: { room: 'КОД1234' },
+    });
+    expect(stranger.statusCode).toBe(403);
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/friends',
+      headers: { authorization: `Bearer ${ada}` },
+      payload: { code: bobCode },
+    });
+    const invite = await app.inject({
+      method: 'POST',
+      url: `/api/friends/${bobCode}/invite`,
+      headers: { authorization: `Bearer ${ada}` },
+      payload: { room: 'ROOM1234' },
+    });
+    expect(invite.statusCode).toBe(200);
+
+    const sent = [...calls].reverse().find((call) => call.method === 'sendMessage')!;
+    expect(sent.payload.chat_id).toBe('777');
+    expect(String(sent.payload.text)).toContain('Ада');
+    // Кнопка ведёт прямо в комнату внутри Telegram.
+    const markup = sent.payload.reply_markup as { inline_keyboard: { url: string }[][] };
+    expect(markup.inline_keyboard[0]![0]!.url).toBe('https://t.me/ZaapoBot?startapp=ROOM1234');
+  });
+
+  it('другу без Telegram сообщение не уходит — клиент предложит ссылку', async () => {
+    const ada = await guestToken('Ада');
+    const bob = await guestToken('Боб');
+    const bobCode = (
+      (
+        await app.inject({
+          method: 'GET',
+          url: '/api/me/friends',
+          headers: { authorization: `Bearer ${bob}` },
+        })
+      ).json() as { code: string }
+    ).code;
+    await app.inject({
+      method: 'POST',
+      url: '/api/friends',
+      headers: { authorization: `Bearer ${ada}` },
+      payload: { code: bobCode },
+    });
+
+    const invite = await app.inject({
+      method: 'POST',
+      url: `/api/friends/${bobCode}/invite`,
+      headers: { authorization: `Bearer ${ada}` },
+      payload: { room: 'ROOM1234' },
+    });
+    expect(invite.statusCode).toBe(409);
+    expect(invite.json()).toEqual({ error: 'no-telegram' });
+  });
+
+  it('health показывает, доехал ли токен бота', async () => {
+    const response = await app.inject({ method: 'GET', url: '/api/health' });
+    expect(response.json()).toMatchObject({ telegram: true, bot: 'ZaapoBot' });
+
+    const without = await buildApp({
+      databaseUrl: ':memory:',
+      jwtSecret: JWT,
+      dailySecret: DAILY_SECRET,
+    });
+    const off = await without.inject({ method: 'GET', url: '/api/health' });
+    expect(off.json()).toMatchObject({ telegram: false, bot: null });
+    await without.close();
+  });
+});
+
+describe('parseStart', () => {
+  it('различает команду старта и полезную нагрузку', () => {
+    expect(parseStart('/start')).toBe('');
+    expect(parseStart('/start f_ABC123')).toBe('f_ABC123');
+    expect(parseStart('  /start   l_deadbeef  ')).toBe('l_deadbeef');
+    expect(parseStart('/startle')).toBeNull();
+    expect(parseStart('привет')).toBeNull();
+    expect(parseStart(undefined)).toBeNull();
   });
 });
 

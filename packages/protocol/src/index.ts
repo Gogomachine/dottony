@@ -38,6 +38,11 @@ export const FriendCodeSchema = z
 
 export const AddFriendRequestSchema = z.object({ code: FriendCodeSchema });
 
+/** Приглашение друга в комнату: код комнаты тот же, что у приватной дуэли. */
+export const InviteRequestSchema = z.object({
+  room: z.string().trim().min(4).max(16),
+});
+
 export const TelegramAuthRequestSchema = z.object({
   initData: z.string().min(1).max(8192),
 });

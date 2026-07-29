@@ -8,6 +8,7 @@ import {
   DuelClientMessageSchema,
   FriendCodeSchema,
   GuestAuthRequestSchema,
+  InviteRequestSchema,
   RenameRequestSchema,
   SubmitDailyRequestSchema,
   TelegramAuthRequestSchema,
@@ -33,6 +34,7 @@ import {
   PLACEMENT_GAMES,
   type Rating,
 } from '@doton/core';
+import { Bot, makeLinkToken, parseStart, type BotUpdate } from './bot.js';
 import { dailySeed, replayDaily, todayUtc } from './daily.js';
 import { Store } from './db.js';
 import { DEFAULT_GHOST_SCORE, makeSyntheticGhost } from './ghost.js';
@@ -49,6 +51,10 @@ export interface AppOptions {
   dailySecret: string;
   /** Токен бота — включает вход через Telegram. */
   telegramBotToken?: string;
+  /** Короткое имя мини-приложения из BotFather, если оно задано. */
+  telegramAppName?: string;
+  /** Публичный адрес сервера: по нему регистрируется вебхук бота. */
+  publicUrl?: string;
   /** Матчи против записей, когда живого соперника нет (по умолчанию включены). */
   duelGhosts?: boolean;
   /** Сколько ждать живого соперника до призрака, мс. */
@@ -88,6 +94,13 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   await app.register(cors, { origin: true });
   await app.register(jwt, { secret: options.jwtSecret });
   await app.register(websocket);
+
+  const bot = options.telegramBotToken
+    ? new Bot(options.telegramBotToken, options.jwtSecret, {
+        ...(options.telegramAppName ? { appName: options.telegramAppName } : {}),
+        onError: (error) => app.log.error(error, 'telegram api failed'),
+      })
+    : null;
 
   /**
    * Пересчитывает рейтинги обоих игроков по итогу матча и сообщает им
@@ -234,9 +247,10 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
 
     const existing = await store.userByIdentity('telegram', tgUser.id);
     if (existing) {
-      // Имя в Telegram могло смениться — держим свежее.
-      if (existing.name !== tgUser.name) await store.renameUser(existing.id, tgUser.name);
-      return issueToken(existing.id, tgUser.name);
+      // Имя из Telegram берём только при создании аккаунта. Затирать им
+      // выбранное в кабинете нельзя: игрок переименовался осознанно, а
+      // Telegram у него мог быть привязан вообще позже.
+      return issueToken(existing.id, existing.name);
     }
 
     // Игрок уже играл гостем на этом устройстве: Telegram привязываем к тому
@@ -361,6 +375,102 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     };
   });
 
+  // ---------- Бот ----------
+
+  /**
+   * Обрабатывает `/start`, в том числе с полезной нагрузкой из ссылки:
+   * `f_КОД` добавляет в друзья, `l_токен` привязывает Telegram к аккаунту,
+   * заведённому в браузере на другом устройстве.
+   */
+  const handleStart = async (
+    telegramId: string,
+    name: string,
+    payload: string,
+  ): Promise<string> => {
+    const existing = await store.userByIdentity('telegram', telegramId);
+
+    // Привязку разбираем до создания аккаунта: иначе мы бы сначала завели
+    // этому Telegram новый профиль, а потом сами же отказали в привязке,
+    // сославшись на занятость — и так в самом частом случае.
+    if (payload.startsWith('l_')) {
+      const owner = await store.consumeLinkToken(payload.slice(2));
+      if (!owner) return 'Код привязки не подошёл — он живёт десять минут. Возьми новый в профиле.';
+      if (existing) {
+        await store.markBotStarted(telegramId);
+        return existing.id === owner
+          ? 'Этот аккаунт уже привязан.'
+          : 'Этот Telegram уже привязан к другому профилю. Отвяжи его там или входи под ним.';
+      }
+      await store.linkIdentity(owner, { kind: 'telegram', externalId: telegramId });
+      await store.markBotStarted(telegramId);
+      return 'Готово: теперь этот Telegram открывает твой профиль на любом устройстве.';
+    }
+
+    // Само нажатие Start — разрешение писать: до него бот молчит.
+    const user =
+      existing ??
+      (await store.createUser(randomUUID(), name, { kind: 'telegram', externalId: telegramId }));
+    await store.markBotStarted(telegramId);
+
+    if (payload.startsWith('f_')) {
+      const friend = await store.userByFriendCode(payload.slice(2).toUpperCase());
+      if (!friend) return 'Такого кода друга нет — проверь ссылку.';
+      if (friend.id === user.id) return 'Это твой собственный код.';
+      await store.addFriend(user.id, friend.id);
+      return `${friend.name} теперь у тебя в друзьях. Зови на дуэль!`;
+    }
+
+    return 'Это Zaapo! Соединяй точки, собирай заряды и вызывай друзей на дуэль.';
+  };
+
+  if (bot) {
+    app.post('/telegram/webhook', async (request, reply) => {
+      // Адрес вебхука знает только Telegram, но открытый эндпоинт всё
+      // равно нужно защитить: секрет приходит заголовком.
+      if (!bot.matchesSecret(request.headers['x-telegram-bot-api-secret-token'] as string)) {
+        return reply.code(401).send({ error: 'bad-secret' });
+      }
+
+      const update = request.body as BotUpdate;
+      const message = update.message;
+      const payload = parseStart(message?.text);
+      const telegramId = message?.from?.id;
+      if (payload === null || telegramId === undefined) return { ok: true };
+
+      const name = message?.from?.username || message?.from?.first_name || `tg${telegramId}`;
+      try {
+        const answer = await handleStart(String(telegramId), name, payload);
+        const link = bot.miniAppLink('');
+        await bot.sendMessage(
+          String(message?.chat?.id ?? telegramId),
+          answer,
+          link ? { text: '⚡ Играть', url: link } : undefined,
+        );
+      } catch (error) {
+        // Ошибку Telegram не увидит: повтор доставки только продублировал
+        // бы действие, а /start у нас идемпотентен.
+        app.log.error(error, 'telegram start failed');
+      }
+      return { ok: true };
+    });
+
+    // Имя бота нужно клиенту для ссылок-приглашений; вебхук ставим сами,
+    // чтобы после деплоя не оставалось ручных шагов.
+    void bot.resolveUsername().then(async (username) => {
+      app.log.info({ username }, 'telegram bot connected');
+      if (!options.publicUrl) return;
+      const url = new URL('/telegram/webhook', options.publicUrl).toString();
+      const ok = await bot.setWebhook(url);
+      app.log.info({ url, ok }, 'telegram webhook registered');
+    });
+  }
+
+  /** Что клиенту нужно знать о сервере: как построить ссылки в Telegram. */
+  app.get('/api/config', (): { bot: string | null; miniApp: string | null } => ({
+    bot: bot?.knownUsername ?? null,
+    miniApp: bot?.miniAppLink('') ?? null,
+  }));
+
   // ---------- Друзья ----------
 
   /** Список друзей с личным счётом и те, с кем недавно играли. */
@@ -400,6 +510,55 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     // Повторное добавление не ошибка: кнопка могла нажаться дважды.
     await store.addFriend(user.sub, friend.id);
     return { name: friend.name, code: parsed.data.code };
+  });
+
+  /**
+   * Код привязки Telegram. Нужен, когда игра открыта в браузере на другом
+   * устройстве: там initData взять неоткуда, и без этого у человека
+   * появился бы второй аккаунт.
+   */
+  app.post('/api/me/link/telegram', async (request, reply) => {
+    const user = await requireUser(request);
+    if (!bot) return reply.code(503).send({ error: 'telegram-disabled' });
+
+    const token = makeLinkToken();
+    await store.createLinkToken(user.sub, token);
+    const url = bot.startLink(`l_${token}`);
+    if (!url) return reply.code(503).send({ error: 'telegram-disabled' });
+    return { url };
+  });
+
+  /**
+   * Зовёт друга в комнату сообщением в Telegram. Не всем можно написать:
+   * бот не пишет первым тому, кто его не запускал, — тогда честно говорим
+   * об этом, и клиент предлагает переслать ссылку руками.
+   */
+  app.post('/api/friends/:code/invite', async (request, reply) => {
+    const user = await requireUser(request);
+    const parsedCode = FriendCodeSchema.safeParse((request.params as { code: string }).code);
+    const parsedBody = InviteRequestSchema.safeParse(request.body);
+    if (!parsedCode.success || !parsedBody.success) {
+      return reply.code(400).send({ error: 'bad-request' });
+    }
+    if (!bot) return reply.code(503).send({ error: 'telegram-disabled' });
+
+    const friend = await store.userByFriendCode(parsedCode.data);
+    if (!friend) return reply.code(404).send({ error: 'no-such-code' });
+    // Звать можно только друзей — иначе рассылку получил бы кто угодно.
+    if (!(await store.areFriends(user.sub, friend.id))) {
+      return reply.code(403).send({ error: 'not-a-friend' });
+    }
+
+    const chat = await store.botChatOf(friend.id);
+    const link = bot.miniAppLink(parsedBody.data.room);
+    if (!chat || !link) return reply.code(409).send({ error: 'no-telegram' });
+
+    const sent = await bot.sendMessage(chat, `${user.name} зовёт тебя на дуэль в Zaapo!`, {
+      text: '⚡ Принять вызов',
+      url: link,
+    });
+    if (!sent) return reply.code(409).send({ error: 'not-delivered' });
+    return { ok: true };
   });
 
   app.delete('/api/friends/:code', async (request, reply) => {
@@ -556,6 +715,10 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   app.get('/api/health', () => ({
     ok: true,
     ghosts: options.duelGhosts !== false,
+    // Токен бота задаётся переменной окружения — так видно, доехал ли он,
+    // не залезая в логи. Само значение, разумеется, не показываем.
+    telegram: bot !== null,
+    bot: bot?.knownUsername ?? null,
     ...matchmaker.stats,
   }));
 

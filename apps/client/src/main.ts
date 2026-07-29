@@ -5,13 +5,16 @@ import {
   addFriend,
   apiAvailable,
   ensureAuth,
+  getConfig,
   getMe,
   getRatingBoard,
   getReplay,
   getDaily,
   getLeaderboard,
   hasAuth,
+  inviteFriend,
   isTelegram,
+  openInTelegram,
   localDailySeed,
   localToday,
   resetAuth,
@@ -403,6 +406,10 @@ let pendingFriendCode = '';
 let searchHint = 0;
 /** Код комнаты, показанный в модалке, — для кнопки копирования ссылки. */
 let currentRoom = '';
+/** Ссылка на мини-приложение бота; null — бот не настроен. */
+let miniAppBase: string | null = null;
+/** Чем закончилась попытка позвать друга сообщением в Telegram. */
+let inviteNote: string | null = null;
 /** Открыта модалка ожидания соперника. */
 let waitingForOpponent = false;
 /** Открыта справочная модалка (таблица рейтинга): партия под ней продолжается. */
@@ -415,7 +422,9 @@ function handleDuelMessage(message: DuelServerMessage): void {
         message.room
           ? {
               title: 'Ждём друга',
-              note: 'Продиктуй другу код или пришли ссылку. Он вводит код кнопкой «Ввести код» — и матч начнётся сам.',
+              note:
+                inviteNote ??
+                'Продиктуй другу код или пришли ссылку. Он вводит код кнопкой «Ввести код» — и матч начнётся сам.',
               room: message.room,
               waiting: true,
             }
@@ -435,6 +444,7 @@ function handleDuelMessage(message: DuelServerMessage): void {
 
     case 'matched': {
       clearTimeout(searchHint);
+      inviteNote = null;
       connectionLost = false;
       duel.markActive();
       inDuel = true;
@@ -527,6 +537,7 @@ function handleDuelMessage(message: DuelServerMessage): void {
 
 function endDuel(options: { awaitRating?: boolean } = {}): void {
   clearTimeout(searchHint);
+  inviteNote = null;
   inDuel = false;
   versusEl.hidden = true;
   // Партия окончена вместе с матчем: иначе локальный таймер досчитает до
@@ -796,8 +807,27 @@ const cabinet = new Cabinet({
   onReplay: (duelId) => void startReplay(duelId),
   onRatingBoard: () => void showRatingBoard(),
   onRenamed: () => void refreshProfile(),
-  onInvite: () => void startDuel(makeRoomCode()),
+  onInvite: (friendCode) => void inviteToRoom(friendCode),
 });
+
+/**
+ * Зовёт друга в комнату. Сообщение в Telegram доходит не всегда — бот не
+ * пишет тому, кто его не запускал, — поэтому ссылка на комнату остаётся
+ * на экране в любом случае.
+ */
+async function inviteToRoom(friendCode: string): Promise<void> {
+  const room = makeRoomCode();
+  await startDuel(room);
+  try {
+    await inviteFriend(friendCode, room);
+    inviteNote = 'Позвал в Telegram — ждём друга.';
+  } catch {
+    inviteNote = 'В Telegram позвать не вышло: пришли другу ссылку сам.';
+  }
+  // Ответ сервера о поиске может прийти и раньше, и позже нашего — поэтому
+  // заметку не пишем напрямую, а держим и подставляем при перерисовке.
+  if (waitingForOpponent) overNoteEl.textContent = inviteNote;
+}
 
 addOpponentBtn.addEventListener('click', () => {
   const code = pendingFriendCode;
@@ -822,7 +852,10 @@ el<HTMLButtonElement>('replay-stop').addEventListener('click', () => {
 });
 
 copyLinkBtn.addEventListener('click', () => {
-  const link = inviteLink(currentRoom);
+  const link = inviteLink(currentRoom, miniAppBase);
+  // Внутри Telegram отдаём ссылку самому мессенджеру: там её сразу можно
+  // переслать другу, а буфер обмена в мини-приложении ненадёжен.
+  if (openInTelegram(`https://t.me/share/url?url=${encodeURIComponent(link)}`)) return;
   navigator.clipboard
     ?.writeText(link)
     .then(() => {
@@ -901,6 +934,18 @@ if (isTelegram()) {
 const invitedRoom = roomFromLocation();
 if (invitedRoom) void startDuel(invitedRoom);
 void refreshProfile();
+
+// Имя бота нужно для ссылок-приглашений: без него зовём обычным адресом.
+if (apiAvailable) {
+  void getConfig()
+    .then((config) => {
+      miniAppBase = config.miniApp;
+      cabinet.setMiniApp(config.miniApp);
+    })
+    .catch(() => {
+      // Бот не настроен — приглашения останутся ссылками на страницу.
+    });
+}
 
 // Уход со страницы во время матча — техническое поражение, а не зависший матч.
 addEventListener('beforeunload', () => {

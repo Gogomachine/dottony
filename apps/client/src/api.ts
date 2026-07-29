@@ -73,7 +73,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 interface TelegramWebApp {
   initData: string;
+  initDataUnsafe?: { start_param?: string };
+  themeParams?: { bg_color?: string; text_color?: string; hint_color?: string };
   ready(): void;
+  expand?(): void;
+  openTelegramLink?(url: string): void;
 }
 
 function telegramWebApp(): TelegramWebApp | null {
@@ -83,6 +87,23 @@ function telegramWebApp(): TelegramWebApp | null {
 
 export function isTelegram(): boolean {
   return telegramWebApp() !== null;
+}
+
+/** Параметр из ссылки-приглашения: t.me/бот?startapp=КОД. */
+export function telegramStartParam(): string | null {
+  return telegramWebApp()?.initDataUnsafe?.start_param ?? null;
+}
+
+/**
+ * Открывает ссылку внутри Telegram. Обычный переход по t.me из мини-
+ * приложения выбрасывает во внешний браузер, где нет ни аккаунта, ни
+ * initData, — поэтому просим сам Telegram.
+ */
+export function openInTelegram(url: string): boolean {
+  const tg = telegramWebApp();
+  if (!tg?.openTelegramLink) return false;
+  tg.openTelegramLink(url);
+  return true;
 }
 
 export function savedName(): string | null {
@@ -145,6 +166,24 @@ export function getHistory(): Promise<DuelHistoryResponse> {
   return request<DuelHistoryResponse>('/api/me/history');
 }
 
+/** Что сервер знает про бота: из этого строятся ссылки в Telegram. */
+export function getConfig(): Promise<{ bot: string | null; miniApp: string | null }> {
+  return request<{ bot: string | null; miniApp: string | null }>('/api/config');
+}
+
+/** Ссылка на бота, по которой Telegram привяжется к текущему аккаунту. */
+export function telegramLinkUrl(): Promise<{ url: string }> {
+  return request<{ url: string }>('/api/me/link/telegram', { method: 'POST' });
+}
+
+/** Зовёт друга в комнату сообщением в Telegram. */
+export function inviteFriend(code: string, room: string): Promise<void> {
+  return request(`/api/friends/${encodeURIComponent(code)}/invite`, {
+    method: 'POST',
+    body: JSON.stringify({ room }),
+  });
+}
+
 export function getFriends(): Promise<FriendsResponse> {
   return request<FriendsResponse>('/api/me/friends');
 }
@@ -197,4 +236,8 @@ export function localDailySeed(date: string): number {
 }
 
 const tg = telegramWebApp();
-if (tg) tg.ready();
+if (tg) {
+  tg.ready();
+  // Мини-приложение открывается в половину экрана: поле игры туда не влезает.
+  tg.expand?.();
+}
