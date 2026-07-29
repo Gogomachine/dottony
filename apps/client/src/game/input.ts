@@ -20,6 +20,8 @@ interface Point {
 export class ChainInput {
   chain: Cell[] = [];
   pointer: Point | null = null;
+  /** Во время реплея ходы делает запись, а не игрок. */
+  enabled = true;
   private dragging = false;
   private touch = false;
 
@@ -43,6 +45,7 @@ export class ChainInput {
   }
 
   private readonly onDown = (e: PointerEvent): void => {
+    if (!this.enabled) return;
     this.canvas.setPointerCapture(e.pointerId);
     this.dragging = true;
     this.touch = e.pointerType !== 'mouse';

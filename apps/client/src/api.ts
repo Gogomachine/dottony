@@ -2,9 +2,11 @@ import type {
   AuthResponse,
   DailyInfo,
   LeaderboardResponse,
+  DuelHistoryResponse,
   MeResponse,
   MoveLog,
   RatingLeaderboardResponse,
+  ReplayResponse,
   SubmitDailyResponse,
 } from '@doton/protocol';
 
@@ -136,6 +138,25 @@ export function getMe(): Promise<MeResponse> {
 
 export function getRatingBoard(): Promise<RatingLeaderboardResponse> {
   return request<RatingLeaderboardResponse>('/api/rating');
+}
+
+export function getHistory(): Promise<DuelHistoryResponse> {
+  return request<DuelHistoryResponse>('/api/me/history');
+}
+
+export function getReplay(duelId: string): Promise<ReplayResponse> {
+  return request<ReplayResponse>(`/api/me/history/${encodeURIComponent(duelId)}/replay`);
+}
+
+/** Переименование: сервер выдаёт новый токен, старый несёт прежнее имя. */
+export async function rename(name: string): Promise<string> {
+  const auth = await request<AuthResponse>('/api/me/name', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+  localStorage.setItem(TOKEN_KEY, auth.token);
+  localStorage.setItem(NAME_KEY, auth.user.name);
+  return auth.user.name;
 }
 
 /** Есть ли уже профиль: без токена рейтинг спрашивать бессмысленно. */

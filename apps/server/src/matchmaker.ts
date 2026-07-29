@@ -1,5 +1,5 @@
 import { randomInt } from 'node:crypto';
-import { DUEL_SECONDS } from '@doton/protocol';
+import { DUEL_SECONDS, type MoveLog } from '@doton/protocol';
 import type { Cell } from '@doton/core';
 import { Duel, type DuelOutcome, type DuelPlayer, type MoveOutcome, type ScorePoint } from './duel.js';
 import { ghostSchedule, type Ghost } from './ghost.js';
@@ -15,7 +15,14 @@ import { ghostSchedule, type Ghost } from './ghost.js';
 export interface MatchResult {
   duelId: string;
   seed: number;
-  players: { id: string; name: string; score: number; log: ScorePoint[]; ghost: boolean }[];
+  players: {
+    id: string;
+    name: string;
+    score: number;
+    log: ScorePoint[];
+    moves: MoveLog[];
+    ghost: boolean;
+  }[];
   /**
    * Исходы живых игроков. Рейтинговым считаем только матч двух живых
    * соперников из открытого подбора: против записи и в комнате с другом
@@ -231,6 +238,7 @@ export class Matchmaker {
         name: duel.nameOf(id),
         score: duel.scoreOf(id),
         log: duel.logOf(id),
+        moves: duel.movesOf(id),
         ghost: duel.isGhost(id),
       })),
       outcomes,

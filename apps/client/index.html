@@ -351,6 +351,127 @@
       background: color-mix(in srgb, var(--accent) 16%, transparent);
       font-weight: 700;
     }
+    /* ---------- Личный кабинет ---------- */
+
+    .cabinet {
+      padding: 22px 22px 18px;
+      gap: 16px;
+      width: min(92vw, 400px);
+      text-align: left;
+    }
+    .cab-head { display: flex; align-items: center; gap: 12px; }
+    #cab-mascot { flex-shrink: 0; }
+    #cab-mascot svg { display: block; }
+    .cab-who { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+    .cab-name {
+      font-size: 20px;
+      font-weight: 800;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .cab-login { font-size: 12px; color: var(--muted); }
+    #cab-rename { padding: 6px 10px; }
+
+    .cab-league {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+      border: 1px solid var(--control-border);
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .cab-league .league-name { font-size: 17px; font-weight: 800; color: var(--accent); }
+    .cab-league .league-note { font-size: 12px; font-weight: 600; color: var(--muted); }
+    .cab-league .league-bar {
+      height: 5px;
+      border-radius: 99px;
+      background: var(--board-border);
+      overflow: hidden;
+    }
+    .cab-league .league-bar i {
+      display: block;
+      height: 100%;
+      border-radius: 99px;
+      background: var(--accent);
+    }
+
+    .cab-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+    .cab-stats .stat { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+    .stat-value { font-size: 18px; font-weight: 800; }
+    .stat-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .cab-sub {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .history {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      max-height: 34vh;
+      overflow-y: auto;
+      font-size: 13px;
+    }
+    .history li {
+      display: grid;
+      grid-template-columns: 6px 1fr auto auto;
+      align-items: center;
+      gap: 9px;
+      padding: 7px 8px;
+      border-radius: 9px;
+      background: color-mix(in srgb, var(--ink) 3%, transparent);
+    }
+    .history li.playable { cursor: pointer; }
+    .history li.playable:active { transform: translateY(1px); }
+    .history .mark { width: 6px; height: 24px; border-radius: 99px; background: var(--muted); }
+    .history li.win .mark { background: #2f9e68; }
+    .history li.loss .mark { background: #d9483b; }
+    .history .who { display: flex; flex-direction: column; min-width: 0; }
+    .history .who b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .history .when { font-size: 11px; color: var(--muted); }
+    .history .pts { font-family: ui-monospace, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+    .history .rd { font-size: 12px; font-weight: 700; min-width: 38px; text-align: right; }
+    .history .rd.up { color: #2f9e68; }
+    .history .rd.down { color: #d9483b; }
+    .history .empty { color: var(--muted); background: none; display: block; padding: 4px 0; }
+
+    .cab-actions { display: flex; gap: 8px; }
+    .cab-actions button { flex: 1; }
+
+    .replay-bar {
+      position: fixed;
+      left: 50%;
+      bottom: 18px;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 10px 8px 16px;
+      border-radius: 99px;
+      background: var(--control);
+      border: 1px solid var(--accent);
+      box-shadow: 0 12px 30px -14px rgba(0, 0, 0, 0.5);
+      font-size: 13px;
+      font-weight: 700;
+      z-index: 9;
+    }
+    .replay-bar[hidden] { display: none; }
+
     .board-list .rank { color: var(--muted); font-variant-numeric: tabular-nums; }
     .board-list .who { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
     .board-list .who-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -416,6 +537,41 @@
       <span id="duel-record" class="mono"></span>
     </div>
 
+  </div>
+
+  <div id="cabinet" class="overlay" hidden>
+    <div class="modal cabinet">
+      <div class="cab-head">
+        <div id="cab-mascot"></div>
+        <div class="cab-who">
+          <span id="cab-name" class="cab-name"></span>
+          <span id="cab-login" class="cab-login"></span>
+        </div>
+        <button id="cab-rename" title="Сменить имя">✎</button>
+      </div>
+
+      <div id="cab-league" class="cab-league"></div>
+
+      <div class="cab-stats">
+        <div class="stat"><span id="cab-rating" class="stat-value mono"></span><span class="stat-label">рейтинг</span></div>
+        <div class="stat"><span id="cab-rank" class="stat-value mono"></span><span class="stat-label">место</span></div>
+        <div class="stat"><span id="cab-duels" class="stat-value mono"></span><span class="stat-label">дуэли</span></div>
+        <div class="stat"><span id="cab-daily" class="stat-value mono"></span><span class="stat-label">вызов дня</span></div>
+      </div>
+
+      <h3 class="cab-sub">Последние матчи</h3>
+      <ol id="cab-history" class="history"></ol>
+
+      <div class="cab-actions">
+        <button id="cab-rating-board">Таблица рейтинга</button>
+        <button id="cab-close">Закрыть</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="replay-bar" class="replay-bar" hidden>
+    <span id="replay-text">Реплей</span>
+    <button id="replay-stop">Стоп</button>
   </div>
 
   <div id="game-over" class="overlay" hidden>

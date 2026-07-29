@@ -23,9 +23,11 @@ export const SubmitDailyRequestSchema = z.object({
   moves: z.array(MoveLogSchema).max(400),
 });
 
-export const GuestAuthRequestSchema = z.object({
-  name: z.string().trim().min(1).max(24),
-});
+export const NameSchema = z.string().trim().min(1).max(24);
+
+export const GuestAuthRequestSchema = z.object({ name: NameSchema });
+
+export const RenameRequestSchema = z.object({ name: NameSchema });
 
 export const TelegramAuthRequestSchema = z.object({
   initData: z.string().min(1).max(8192),
@@ -35,6 +37,7 @@ export type Cell = z.infer<typeof CellSchema>;
 export type MoveLog = z.infer<typeof MoveLogSchema>;
 export type SubmitDailyRequest = z.infer<typeof SubmitDailyRequestSchema>;
 export type GuestAuthRequest = z.infer<typeof GuestAuthRequestSchema>;
+export type RenameRequest = z.infer<typeof RenameRequestSchema>;
 export type TelegramAuthRequest = z.infer<typeof TelegramAuthRequestSchema>;
 
 export interface AuthResponse {
@@ -72,11 +75,48 @@ export interface RatingEntry {
   league: string;
 }
 
+/** Способ входа в аккаунт: с чего начали и что привязали потом. */
+export interface IdentityInfo {
+  kind: 'guest' | 'telegram' | 'ton';
+  linkedAt: string;
+}
+
+/** Строка истории матчей в личном кабинете. */
+export interface DuelHistoryEntry {
+  duelId: string;
+  playedAt: string;
+  score: number;
+  outcome: 'win' | 'loss' | 'draw' | null;
+  /** Соперника может не быть в записи: он ушёл до сохранения. */
+  opponent: string | null;
+  opponentScore: number | null;
+  /** Соперник был записью чужой партии. */
+  ghost: boolean;
+  /** Сдвиг рейтинга; null — матч был нерейтинговым. */
+  rating: { before: number; after: number } | null;
+  /** Партию можно прокрутить заново. */
+  replay: boolean;
+}
+
+export interface DuelHistoryResponse {
+  entries: DuelHistoryEntry[];
+}
+
+/** Данные для прокрутки матча: поле восстанавливается из сида. */
+export interface ReplayResponse {
+  seed: number;
+  moves: MoveLog[];
+  score: number;
+  opponent: string | null;
+}
+
 export interface MeResponse {
   name: string;
   rating: number;
   deviation: number;
   league: string;
+  /** Нижняя граница текущей лиги — из неё считается прогресс до следующей. */
+  leagueFrom: number;
   /** Следующая лига и сколько очков до неё; null — уже на вершине. */
   next: { league: string; gap: number } | null;
   /** Место в таблице; null, пока игрок не прошёл калибровку. */
@@ -84,6 +124,10 @@ export interface MeResponse {
   /** Сколько рейтинговых матчей сыграно и сколько нужно; null — калибровка пройдена. */
   placement: { played: number; required: number } | null;
   duels: { played: number; won: number };
+  /** Способы входа: гость, Telegram, кошелёк. */
+  identities: IdentityInfo[];
+  /** Лучший результат в вызове дня и сколько дней сыграно. */
+  daily: { played: number; best: number | null };
 }
 
 export interface RatingLeaderboardResponse {

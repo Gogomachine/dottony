@@ -11,13 +11,37 @@ import { newRating, PLACEMENT_GAMES, type Rating } from '@doton/core';
 export interface UserRow {
   id: string;
   name: string;
-  tg_id: string | null;
+}
+
+/**
+ * Способ входа в аккаунт. Игрок один, способов может быть несколько:
+ * начал гостем, вошёл через Telegram, позже привяжет кошелёк TON.
+ */
+export type IdentityKind = 'guest' | 'telegram' | 'ton';
+
+export interface Identity {
+  kind: IdentityKind;
+  externalId: string;
 }
 
 export interface RunRow {
   date: string;
   score: number;
   name: string;
+}
+
+/** Строка истории матчей. Соперника может не быть: он ушёл или был призраком. */
+export interface DuelHistoryRow {
+  duelId: string;
+  playedAt: string;
+  score: number;
+  outcome: string | null;
+  opponentName: string | null;
+  opponentScore: number | null;
+  opponentGhost: boolean;
+  ratingBefore: number | null;
+  ratingAfter: number | null;
+  hasReplay: boolean;
 }
 
 /** Рейтинг игрока вместе с историей: когда играл и сколько рейтинговых матчей. */
@@ -74,6 +98,16 @@ export class Store {
          )`,
         `CREATE INDEX IF NOT EXISTS idx_duel_players_user
            ON duel_players (user_id)`,
+        // Способы входа в один и тот же аккаунт: гость, Telegram, позже — кошелёк.
+        // Личность отделена от игрока, поэтому новый способ входа не меняет схему.
+        `CREATE TABLE IF NOT EXISTS identities (
+           kind TEXT NOT NULL,
+           external_id TEXT NOT NULL,
+           user_id TEXT NOT NULL REFERENCES users(id),
+           linked_at TEXT NOT NULL DEFAULT (datetime('now')),
+           PRIMARY KEY (kind, external_id)
+         )`,
+        `CREATE INDEX IF NOT EXISTS idx_identities_user ON identities (user_id)`,
       ],
       'write',
     );
@@ -92,6 +126,24 @@ export class Store {
     // Исход хранится явно: по счёту его не восстановить — сдача при 0:0
     // выглядит как ничья, хотя это поражение.
     await this.addColumnIfMissing('duel_players', 'outcome', 'TEXT');
+    // Имя соперника на момент матча: после переименования история должна
+    // показывать того, с кем ты играл, а у призрака своего users-ряда нет.
+    await this.addColumnIfMissing('duel_players', 'name', 'TEXT');
+    await this.addColumnIfMissing('duel_players', 'ghost', 'INTEGER NOT NULL DEFAULT 0');
+    // Пути цепочек — из них собирается реплей. У матчей, сыгранных раньше,
+    // их нет: там писался только темп набора очков.
+    await this.addColumnIfMissing('duel_players', 'moves', 'TEXT');
+
+    // Старые аккаунты знали только Telegram — переносим их в общий вид.
+    // INSERT OR IGNORE делает перенос повторяемым.
+    await this.client.execute(
+      `INSERT OR IGNORE INTO identities (kind, external_id, user_id)
+       SELECT 'telegram', tg_id, id FROM users WHERE tg_id IS NOT NULL`,
+    );
+    await this.client.execute(
+      `INSERT OR IGNORE INTO identities (kind, external_id, user_id)
+       SELECT 'guest', id, id FROM users WHERE tg_id IS NULL`,
+    );
   }
 
   /** Идемпотентно добавляет колонку — безопасно на любой существующей базе. */
@@ -113,25 +165,99 @@ export class Store {
   async saveDuel(
     id: string,
     seed: number,
-    players: { id: string; score: number; log?: unknown; outcome?: string }[],
+    players: {
+      id: string;
+      name?: string;
+      score: number;
+      log?: unknown;
+      moves?: unknown;
+      outcome?: string;
+      ghost?: boolean;
+    }[],
   ): Promise<void> {
     await this.client.batch(
       [
         { sql: 'INSERT INTO duels (id, seed) VALUES (?, ?)', args: [id, seed] },
         ...players.map((player) => ({
-          sql: `INSERT INTO duel_players (duel_id, user_id, score, log, outcome)
-                VALUES (?, ?, ?, ?, ?)`,
+          sql: `INSERT INTO duel_players
+                  (duel_id, user_id, name, score, log, moves, outcome, ghost)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           args: [
             id,
             player.id,
+            player.name ?? null,
             player.score,
             JSON.stringify(player.log ?? []),
+            player.moves === undefined ? null : JSON.stringify(player.moves),
             player.outcome ?? null,
+            player.ghost ? 1 : 0,
           ],
         })),
       ],
       'write',
     );
+  }
+
+  /** Последние матчи игрока для личного кабинета. */
+  async duelHistory(userId: string, limit: number): Promise<DuelHistoryRow[]> {
+    const result = await this.client.execute({
+      sql: `SELECT d.id, d.created_at, mine.score, mine.outcome,
+                   mine.rating_before, mine.rating_after,
+                   mine.moves IS NOT NULL AS has_replay,
+                   theirs.score AS opponent_score,
+                   theirs.ghost AS opponent_ghost,
+                   COALESCE(theirs.name, u.name) AS opponent_name
+            FROM duel_players mine
+            JOIN duels d ON d.id = mine.duel_id
+            LEFT JOIN duel_players theirs
+              ON theirs.duel_id = mine.duel_id AND theirs.user_id <> mine.user_id
+            LEFT JOIN users u ON u.id = theirs.user_id
+            WHERE mine.user_id = ?
+            ORDER BY d.created_at DESC, d.rowid DESC
+            LIMIT ?`,
+      args: [userId, limit],
+    });
+    return result.rows.map((row) => ({
+      duelId: String(row.id),
+      playedAt: String(row.created_at),
+      score: Number(row.score),
+      outcome: row.outcome === null ? null : String(row.outcome),
+      opponentName: row.opponent_name === null ? null : String(row.opponent_name),
+      opponentScore: row.opponent_score === null ? null : Number(row.opponent_score),
+      opponentGhost: Number(row.opponent_ghost ?? 0) === 1,
+      ratingBefore: row.rating_before === null ? null : Number(row.rating_before),
+      ratingAfter: row.rating_after === null ? null : Number(row.rating_after),
+      hasReplay: Number(row.has_replay ?? 0) === 1,
+    }));
+  }
+
+  /**
+   * Ходы игрока в матче вместе с сидом поля — этого достаточно, чтобы
+   * прокрутить партию заново. Чужие матчи не отдаём.
+   */
+  async duelReplay(
+    duelId: string,
+    userId: string,
+  ): Promise<{ seed: number; moves: string; score: number; opponentName: string | null } | undefined> {
+    const result = await this.client.execute({
+      sql: `SELECT d.seed, mine.moves, mine.score,
+                   COALESCE(theirs.name, u.name) AS opponent_name
+            FROM duel_players mine
+            JOIN duels d ON d.id = mine.duel_id
+            LEFT JOIN duel_players theirs
+              ON theirs.duel_id = mine.duel_id AND theirs.user_id <> mine.user_id
+            LEFT JOIN users u ON u.id = theirs.user_id
+            WHERE mine.duel_id = ? AND mine.user_id = ?`,
+      args: [duelId, userId],
+    });
+    const row = result.rows[0];
+    if (!row || row.moves === null) return undefined;
+    return {
+      seed: Number(row.seed),
+      moves: String(row.moves),
+      score: Number(row.score),
+      opponentName: row.opponent_name === null ? null : String(row.opponent_name),
+    };
   }
 
   /**
@@ -147,7 +273,7 @@ export class Store {
             FROM duel_players p
             JOIN duels d ON d.id = p.duel_id
             JOIN users u ON u.id = p.user_id
-            WHERE p.user_id <> ? AND p.log <> '[]' AND p.score > 0
+            WHERE p.user_id <> ? AND p.log <> '[]' AND p.score > 0 AND p.ghost = 0
             ORDER BY ABS(p.score - ?) ASC, RANDOM()
             LIMIT 5`,
       args: [excludeUserId, targetScore],
@@ -268,20 +394,81 @@ export class Store {
     };
   }
 
-  async createUser(id: string, name: string, tgId: string | null = null): Promise<UserRow> {
-    await this.client.execute({
-      sql: 'INSERT INTO users (id, name, tg_id) VALUES (?, ?, ?)',
-      args: [id, name, tgId],
+  /** Заводит игрока вместе с первым способом входа. */
+  /** Сводка по вызову дня: сколько дней сыграно и лучший результат. */
+  async dailyRecord(userId: string): Promise<{ played: number; best: number | null }> {
+    const result = await this.client.execute({
+      sql: 'SELECT COUNT(*) AS played, MAX(score) AS best FROM daily_runs WHERE user_id = ?',
+      args: [userId],
     });
-    return { id, name, tg_id: tgId };
+    const row = result.rows[0];
+    return {
+      played: Number(row?.played ?? 0),
+      best: row?.best === null || row?.best === undefined ? null : Number(row.best),
+    };
   }
 
-  async userByTelegramId(tgId: string): Promise<UserRow | undefined> {
+  async createUser(id: string, name: string, identity: Identity): Promise<UserRow> {
+    await this.client.batch(
+      [
+        { sql: 'INSERT INTO users (id, name) VALUES (?, ?)', args: [id, name] },
+        {
+          sql: 'INSERT INTO identities (kind, external_id, user_id) VALUES (?, ?, ?)',
+          args: [identity.kind, identity.externalId, id],
+        },
+      ],
+      'write',
+    );
+    return { id, name };
+  }
+
+  /** Игрок по способу входа: с этого начинается любая авторизация. */
+  async userByIdentity(kind: IdentityKind, externalId: string): Promise<UserRow | undefined> {
     const result = await this.client.execute({
-      sql: 'SELECT id, name, tg_id FROM users WHERE tg_id = ?',
-      args: [tgId],
+      sql: `SELECT u.id, u.name FROM identities i
+            JOIN users u ON u.id = i.user_id
+            WHERE i.kind = ? AND i.external_id = ?`,
+      args: [kind, externalId],
     });
-    return result.rows[0] as unknown as UserRow | undefined;
+    const row = result.rows[0];
+    return row ? { id: String(row.id), name: String(row.name) } : undefined;
+  }
+
+  /**
+   * Привязывает способ входа к существующему аккаунту.
+   *
+   * Занятую личность к другому игроку не переносим и аккаунты не сливаем:
+   * слияние — это дыра, через которую можно вести две учётки и оставлять
+   * ту, где рейтинг удачнее. Честнее отказать и объяснить.
+   */
+  async linkIdentity(
+    userId: string,
+    identity: Identity,
+  ): Promise<'linked' | 'already-linked' | 'taken'> {
+    const existing = await this.client.execute({
+      sql: 'SELECT user_id FROM identities WHERE kind = ? AND external_id = ?',
+      args: [identity.kind, identity.externalId],
+    });
+    const owner = existing.rows[0];
+    if (owner) return String(owner.user_id) === userId ? 'already-linked' : 'taken';
+
+    await this.client.execute({
+      sql: 'INSERT INTO identities (kind, external_id, user_id) VALUES (?, ?, ?)',
+      args: [identity.kind, identity.externalId, userId],
+    });
+    return 'linked';
+  }
+
+  /** Все способы входа игрока — для личного кабинета. */
+  async identitiesOf(userId: string): Promise<{ kind: IdentityKind; linkedAt: string }[]> {
+    const result = await this.client.execute({
+      sql: 'SELECT kind, linked_at FROM identities WHERE user_id = ? ORDER BY linked_at ASC',
+      args: [userId],
+    });
+    return result.rows.map((row) => ({
+      kind: String(row.kind) as IdentityKind,
+      linkedAt: String(row.linked_at),
+    }));
   }
 
   async renameUser(id: string, name: string): Promise<void> {

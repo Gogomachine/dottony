@@ -106,6 +106,15 @@ export class Session {
     this.score = score;
   }
 
+  /**
+   * Ставит время партии в заданную секунду. Нужно реплею: там ритм задаёт
+   * запись, а не часы, и фазы «нагрузки сети» должны совпасть с исходными.
+   */
+  seek(t: number): void {
+    this.elapsed = t;
+    if (this.timed) this.timeLeft = Math.max(0, this.duration - t);
+  }
+
   /** Синхронизирует остаток времени с сервером после переподключения. */
   syncRemaining(remaining: number): void {
     this.timeLeft = Math.max(0, remaining);

@@ -8,7 +8,12 @@ import {
   type Board,
   type Cell,
 } from '@doton/core';
-import { DUEL_SECONDS, type DuelServerMessage, type DuelSnapshot } from '@doton/protocol';
+import {
+  DUEL_SECONDS,
+  type DuelServerMessage,
+  type DuelSnapshot,
+  type MoveLog,
+} from '@doton/protocol';
 
 /**
  * Дуэль — гонка на одинаковом поле: обоим игрокам выдаётся один сид,
@@ -41,6 +46,8 @@ interface PlayerState {
   ghost: boolean;
   /** Темп набора очков — из него потом получается призрак. */
   log: ScorePoint[];
+  /** Пути цепочек — из них собирается реплей партии. */
+  moves: MoveLog[];
 }
 
 export type MoveOutcome =
@@ -84,6 +91,7 @@ export class Duel {
         lastMoveAt: -Infinity,
         ghost,
         log: [],
+        moves: [],
       });
     }
   }
@@ -144,6 +152,11 @@ export class Duel {
     state.lastMoveAt = elapsed;
     // Записываем темп: позже этот матч может стать призраком для другого игрока.
     state.log.push({ t: Number(elapsed.toFixed(2)), points: result.points });
+    // И сам ход: сид плюс пути цепочек полностью восстанавливают партию.
+    state.moves.push({
+      path: path.map((cell) => ({ r: cell.r, c: cell.c })),
+      t: Number(elapsed.toFixed(2)),
+    });
 
     const opponent = this.opponentOf(playerId);
     if (opponent && !opponent.ghost) {
@@ -194,6 +207,11 @@ export class Duel {
   /** Темп набора очков игрока — материал для будущего призрака. */
   logOf(playerId: string): ScorePoint[] {
     return this.players.get(playerId)?.log ?? [];
+  }
+
+  /** Ходы игрока — материал для реплея. */
+  movesOf(playerId: string): MoveLog[] {
+    return this.players.get(playerId)?.moves ?? [];
   }
 
   /** Начисляет призраку очередную порцию очков и показывает их сопернику. */

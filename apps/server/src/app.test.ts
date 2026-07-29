@@ -161,13 +161,103 @@ describe('миграции', () => {
 
     // Именно эти вызовы падали на проде: подбор призрака и запись матча.
     await expect(store.pickGhostRun('nobody', 500)).resolves.toBeUndefined();
-    await store.createUser('u1', 'Ада');
+    await store.createUser('u1', 'Ада', { kind: 'guest', externalId: 'u1' });
     await expect(
       store.saveDuel('d1', 42, [{ id: 'u1', score: 300, log: [{ t: 1, points: 300 }] }]),
     ).resolves.toBeUndefined();
     const ghost = await store.pickGhostRun('other', 300);
     expect(ghost).toMatchObject({ name: 'Ада', seed: 42, score: 300 });
     store.close();
+  });
+
+  it('переносит старые аккаунты в таблицу личностей', async () => {
+    const url = `file:${join(tmpdir(), `zaapo-identities-${randomUUID()}.db`)}`;
+    const legacy = createClient({ url });
+    // Схема до личностей: способ входа хранился колонкой в users.
+    await legacy.batch(
+      [
+        `CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT NOT NULL, tg_id TEXT UNIQUE,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+        `INSERT INTO users (id, name, tg_id) VALUES ('u-tg', 'Ада', '777')`,
+        `INSERT INTO users (id, name, tg_id) VALUES ('u-guest', 'Гость', NULL)`,
+      ],
+      'write',
+    );
+    legacy.close();
+
+    const store = new Store({ url });
+    await store.migrate();
+
+    // Оба входа продолжают вести в те же аккаунты, что и до миграции.
+    await expect(store.userByIdentity('telegram', '777')).resolves.toMatchObject({ id: 'u-tg' });
+    await expect(store.userByIdentity('guest', 'u-guest')).resolves.toMatchObject({
+      id: 'u-guest',
+    });
+    // Повторный запуск ничего не ломает и не двоит.
+    await store.migrate();
+    await expect(store.identitiesOf('u-tg')).resolves.toEqual([
+      { kind: 'telegram', linkedAt: expect.any(String) },
+    ]);
+    store.close();
+  });
+});
+
+describe('привязка способов входа', () => {
+  let store: Store;
+
+  beforeEach(async () => {
+    store = new Store({ url: ':memory:' });
+    await store.migrate();
+  });
+
+  afterEach(() => store.close());
+
+  it('один аккаунт может иметь несколько входов', async () => {
+    await store.createUser('u1', 'Ада', { kind: 'guest', externalId: 'u1' });
+    await expect(store.linkIdentity('u1', { kind: 'ton', externalId: 'EQwallet' })).resolves.toBe(
+      'linked',
+    );
+    await expect(store.userByIdentity('ton', 'EQwallet')).resolves.toMatchObject({ id: 'u1' });
+    expect((await store.identitiesOf('u1')).map((entry) => entry.kind).sort()).toEqual([
+      'guest',
+      'ton',
+    ]);
+  });
+
+  it('повторная привязка того же входа безопасна', async () => {
+    await store.createUser('u1', 'Ада', { kind: 'guest', externalId: 'u1' });
+    await store.linkIdentity('u1', { kind: 'ton', externalId: 'EQwallet' });
+    await expect(store.linkIdentity('u1', { kind: 'ton', externalId: 'EQwallet' })).resolves.toBe(
+      'already-linked',
+    );
+    expect(await store.identitiesOf('u1')).toHaveLength(2);
+  });
+
+  it('матч с призраком виден в истории и не идёт в подбор призраков', async () => {
+    await store.createUser('u1', 'Ада', { kind: 'guest', externalId: 'u1' });
+    await store.saveDuel('d1', 42, [
+      { id: 'u1', name: 'Ада', score: 300, outcome: 'loss', log: [{ t: 1, points: 300 }] },
+      { id: 'ghost:Заппо:1', name: 'Заппо', score: 500, log: [{ t: 1, points: 500 }], ghost: true },
+    ]);
+
+    const [entry] = await store.duelHistory('u1', 10);
+    expect(entry).toMatchObject({ opponentName: 'Заппо', opponentScore: 500, opponentGhost: true });
+    // Запись призрака не должна снова стать призраком: это копия чужого темпа.
+    await expect(store.pickGhostRun('u1', 500)).resolves.toBeUndefined();
+    // И на сводку дуэлей строка призрака не влияет.
+    await expect(store.duelRecord('u1')).resolves.toEqual({ played: 1, won: 0 });
+  });
+
+  it('чужой кошелёк не переносится: аккаунты не сливаем', async () => {
+    await store.createUser('u1', 'Ада', { kind: 'guest', externalId: 'u1' });
+    await store.createUser('u2', 'Боб', { kind: 'guest', externalId: 'u2' });
+    await store.linkIdentity('u1', { kind: 'ton', externalId: 'EQwallet' });
+
+    await expect(store.linkIdentity('u2', { kind: 'ton', externalId: 'EQwallet' })).resolves.toBe(
+      'taken',
+    );
+    // Владелец не изменился — иначе кошелёк можно было бы «угнать».
+    await expect(store.userByIdentity('ton', 'EQwallet')).resolves.toMatchObject({ id: 'u1' });
   });
 });
 
@@ -214,6 +304,78 @@ describe('API', () => {
       payload: { initData: 'auth_date=1&hash=deadbeef&user=%7B%7D' },
     });
     expect(bad.statusCode).toBe(401);
+  });
+
+  it('гость, вошедший через Telegram, остаётся тем же игроком', async () => {
+    const token = await guestToken('Гость');
+    const me = await app.inject({
+      method: 'GET',
+      url: '/api/me',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const before = (me.json() as { name: string }).name;
+
+    // Тот же браузер, тот же токен — но теперь игра открыта внутри Telegram.
+    const linked = await app.inject({
+      method: 'POST',
+      url: '/api/auth/telegram',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { initData: signedInitData({ id: 7, first_name: 'Ада' }) },
+    });
+    expect(linked.statusCode).toBe(200);
+    const upgraded = (linked.json() as { token: string; user: { name: string } }).token;
+
+    const after = await app.inject({
+      method: 'GET',
+      url: '/api/me',
+      headers: { authorization: `Bearer ${upgraded}` },
+    });
+    // Аккаунт тот же — рейтинг и история не остались на брошенной учётке.
+    expect((after.json() as { name: string }).name).toBe(before);
+    expect((after.json() as { identities: { kind: string }[] }).identities.map((i) => i.kind)).toEqual(
+      ['guest', 'telegram'],
+    );
+
+    // А следующий вход через Telegram уже ведёт в этот же аккаунт без токена.
+    const again = await app.inject({
+      method: 'POST',
+      url: '/api/auth/telegram',
+      payload: { initData: signedInitData({ id: 7, first_name: 'Ада' }) },
+    });
+    const direct = await app.inject({
+      method: 'GET',
+      url: '/api/me',
+      headers: { authorization: `Bearer ${(again.json() as { token: string }).token}` },
+    });
+    expect((direct.json() as { identities: unknown[] }).identities).toHaveLength(2);
+  });
+
+  it('занятый Telegram не переносится на другой аккаунт', async () => {
+    // Аккаунт с уже привязанным Telegram.
+    await app.inject({
+      method: 'POST',
+      url: '/api/auth/telegram',
+      payload: { initData: signedInitData({ id: 7, first_name: 'Ада' }) },
+    });
+    // Другой гость входит тем же Telegram: он должен попасть в аккаунт Ады,
+    // а не увести чужую личность к себе.
+    const other = await guestToken('Чужой');
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/auth/telegram',
+      headers: { authorization: `Bearer ${other}` },
+      payload: { initData: signedInitData({ id: 7, first_name: 'Ада' }) },
+    });
+    expect((response.json() as { user: { name: string } }).user.name).toBe('Ада');
+
+    const me = await app.inject({
+      method: 'GET',
+      url: '/api/me',
+      headers: { authorization: `Bearer ${(response.json() as { token: string }).token}` },
+    });
+    expect((me.json() as { identities: { kind: string }[] }).identities.map((i) => i.kind)).toEqual([
+      'telegram',
+    ]);
   });
 
   it('повторный телеграм-вход возвращает того же пользователя', async () => {
@@ -421,7 +583,7 @@ describe('рейтинг за дуэль', () => {
    */
   async function playDuel(
     tokens: [string, string],
-    options: { room?: string; rated?: boolean } = {},
+    options: { room?: string; rated?: boolean; moves?: number } = {},
   ): Promise<{ loser: Finished | null; winner: Finished | null }> {
     const loser = await Client.open(base, tokens[0]);
     const winner = await Client.open(base, tokens[1]);
@@ -429,10 +591,24 @@ describe('рейтинг за дуэль', () => {
     loser.send(join);
     await loser.wait((message) => message.type === 'searching');
     winner.send(join);
-    await Promise.all([
+    const [matched] = await Promise.all([
+      winner.wait<Extract<DuelServerMessage, { type: 'matched' }>>(
+        (message) => message.type === 'matched',
+      ),
       loser.wait((message) => message.type === 'matched'),
-      winner.wait((message) => message.type === 'matched'),
     ]);
+
+    // Победитель играет честно: без ходов не было бы ни реплея, ни счёта.
+    let board = createBoard(seedRng(matched.seed), DEFAULT_CONFIG);
+    for (let i = 0; i < (options.moves ?? 2); i++) {
+      const path = findAnyChain(board);
+      winner.send({ type: 'move', path, t: i });
+      await winner.wait((message) => message.type === 'accepted' || message.type === 'rejected');
+      const applied = applyMove(board, path, DEFAULT_CONFIG, null);
+      if (typeof applied !== 'string') board = applied.board;
+      // Сервер отбивает нечеловеческий темп — выдерживаем паузу.
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
 
     loser.send({ type: 'leave' });
     // Рейтинг досылается отдельным сообщением уже после результата.
@@ -500,6 +676,110 @@ describe('рейтинг за дуэль', () => {
     expect(rating.entries[0]!.league).toBeTruthy();
     expect(rating.me).toMatchObject({ rank: 2, name: 'Проигравший' });
   }, 20_000);
+
+  it('история матчей помнит соперника, исход и сдвиг рейтинга', async () => {
+    const tokens: [string, string] = [await guest('Проигравший'), await guest('Победитель')];
+    await playDuel(tokens);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/me/history',
+      headers: { authorization: `Bearer ${tokens[1]}` },
+    });
+    const { entries } = response.json() as {
+      entries: {
+        duelId: string;
+        outcome: string;
+        opponent: string;
+        opponentScore: number;
+        ghost: boolean;
+        rating: { before: number; after: number };
+        replay: boolean;
+      }[];
+    };
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      outcome: 'win',
+      opponent: 'Проигравший',
+      opponentScore: 0,
+      ghost: false,
+    });
+    expect(entries[0]!.rating!.after).toBeGreaterThan(entries[0]!.rating!.before);
+  });
+
+  it('реплей отдаётся только своему хозяину', async () => {
+    const tokens: [string, string] = [await guest('Проигравший'), await guest('Победитель')];
+    await playDuel(tokens);
+    const stranger = await guest('Чужой');
+
+    const history = await app.inject({
+      method: 'GET',
+      url: '/api/me/history',
+      headers: { authorization: `Bearer ${tokens[1]}` },
+    });
+    const { duelId } = (history.json() as { entries: { duelId: string }[] }).entries[0]!;
+
+    const mine = await app.inject({
+      method: 'GET',
+      url: `/api/me/history/${duelId}/replay`,
+      headers: { authorization: `Bearer ${tokens[1]}` },
+    });
+    expect(mine.statusCode).toBe(200);
+    const replay = mine.json() as { seed: number; moves: MoveLog[]; opponent: string };
+    expect(replay.opponent).toBe('Проигравший');
+    // Ходы победителя: их достаточно, чтобы прокрутить партию на том же поле.
+    expect(replay.moves.length).toBeGreaterThan(0);
+    let board = createBoard(seedRng(replay.seed), DEFAULT_CONFIG);
+    let score = 0;
+    for (const move of replay.moves) {
+      const applied = applyMove(board, move.path, DEFAULT_CONFIG, null);
+      // Каждый записанный ход обязан быть легальным на своём месте —
+      // иначе реплей рассыпался бы на середине.
+      if (typeof applied === 'string') throw new Error(`ход не воспроизводится: ${applied}`);
+      board = applied.board;
+      score += applied.points;
+    }
+    expect(score).toBeGreaterThan(0);
+
+    const foreign = await app.inject({
+      method: 'GET',
+      url: `/api/me/history/${duelId}/replay`,
+      headers: { authorization: `Bearer ${stranger}` },
+    });
+    expect(foreign.statusCode).toBe(404);
+  });
+
+  it('смена имени выдаёт новый токен и видна в истории соперника', async () => {
+    const tokens: [string, string] = [await guest('Старое'), await guest('Победитель')];
+    await playDuel(tokens);
+
+    const renamed = await app.inject({
+      method: 'POST',
+      url: '/api/me/name',
+      headers: { authorization: `Bearer ${tokens[0]}` },
+      payload: { name: 'Новое' },
+    });
+    expect(renamed.statusCode).toBe(200);
+    const fresh = (renamed.json() as { token: string; user: { name: string } }).user.name;
+    expect(fresh).toBe('Новое');
+
+    const me = await app.inject({
+      method: 'GET',
+      url: '/api/me',
+      headers: { authorization: `Bearer ${(renamed.json() as { token: string }).token}` },
+    });
+    expect(me.json()).toMatchObject({ name: 'Новое', identities: [{ kind: 'guest' }] });
+
+    // История хранит имя на момент матча — соперник должен узнать партию.
+    const history = await app.inject({
+      method: 'GET',
+      url: '/api/me/history',
+      headers: { authorization: `Bearer ${tokens[1]}` },
+    });
+    expect((history.json() as { entries: { opponent: string }[] }).entries[0]!.opponent).toBe(
+      'Старое',
+    );
+  });
 
   it('матч в комнате с другом рейтинг не трогает', async () => {
     const tokens: [string, string] = [await guest('Друг'), await guest('Подруга')];

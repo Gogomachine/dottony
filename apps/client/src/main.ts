@@ -6,6 +6,7 @@ import {
   ensureAuth,
   getMe,
   getRatingBoard,
+  getReplay,
   getDaily,
   getLeaderboard,
   hasAuth,
@@ -17,6 +18,7 @@ import {
   submitDaily,
   ApiError,
 } from './api';
+import { Cabinet } from './cabinet';
 import { DuelConnection, inviteLink, makeRoomCode, roomFromLocation } from './duel';
 import { FEEL } from './game/feel';
 import { ChainInput } from './game/input';
@@ -53,6 +55,8 @@ const vsGapEl = el<HTMLSpanElement>('vs-gap');
 const duelRecordEl = el<HTMLSpanElement>('duel-record');
 const rankChipEl = el<HTMLButtonElement>('rank-chip');
 const ratingLineEl = el<HTMLDivElement>('rating-line');
+const replayBarEl = el<HTMLDivElement>('replay-bar');
+const replayTextEl = el<HTMLSpanElement>('replay-text');
 const roomBoxEl = el<HTMLDivElement>('room-box');
 const roomCodeEl = el<HTMLSpanElement>('room-code');
 const copyLinkBtn = el<HTMLButtonElement>('copy-link');
@@ -604,6 +608,81 @@ function renderRatingBoard(board: RatingLeaderboardResponse): void {
   }
 }
 
+// ---------- Реплей ----------
+
+/**
+ * Прокрутка сохранённой партии. Ходы применяются тем же ядром и в тот же
+ * момент партии, что и вживую, поэтому картинка и очки совпадают с
+ * настоящими — иначе реплей не был бы доказательством результата.
+ */
+let replay: { handles: number[] } | null = null;
+
+function stopReplay(): void {
+  if (!replay) return;
+  for (const handle of replay.handles) clearTimeout(handle);
+  replay = null;
+  replayBarEl.hidden = true;
+  input.enabled = true;
+}
+
+async function startReplay(duelId: string): Promise<void> {
+  stopReplay();
+  if (inDuel) endDuel();
+  showOverModal({ title: 'Реплей', note: 'Загружаю запись…', viewing: true });
+
+  let data;
+  try {
+    data = await getReplay(duelId);
+  } catch {
+    showOverModal({ title: 'Реплей', note: 'Записи этой партии нет.', viewing: true });
+    return;
+  }
+
+  overlay.hidden = true;
+  viewingOnly = false;
+  dailyRun = null;
+  mode = 'duel';
+  setActiveModeButton('duel');
+  session = new Session(data.seed, 'duel', DEFAULT_CONFIG, duelDuration);
+  renderer.resetAnims();
+  updateStreak(0);
+  seedEl.textContent = `#${session.seed.toString(16)}`;
+  updateHud();
+
+  input.enabled = false;
+  replayBarEl.hidden = false;
+  replayTextEl.textContent = data.opponent ? `Реплей · ${data.opponent}` : 'Реплей';
+
+  const handles = data.moves.map((move) =>
+    window.setTimeout(() => {
+      // Время партии задаёт запись: от него зависит фаза, а значит и очки.
+      session.seek(move.t);
+      const oldGrid = session.board.grid;
+      const result = session.tryMove(move.path);
+      if (typeof result === 'string') return;
+      renderer.animateMove(oldGrid, result);
+      showFloatingPoints(result.points, result.multiplier, renderer.center(move.path[0]!));
+      updateStreak(result.streak);
+      updateHud();
+    }, move.t * 1000),
+  );
+
+  const last = data.moves[data.moves.length - 1]?.t ?? 0;
+  handles.push(
+    window.setTimeout(() => {
+      stopReplay();
+      session.over = true;
+      showOverModal({
+        title: 'Реплей окончен',
+        score: data.score,
+        ...(data.opponent ? { note: `Соперник: ${data.opponent}` } : {}),
+        viewing: true,
+      });
+    }, (last + 1.5) * 1000),
+  );
+  replay = { handles };
+}
+
 // ---------- Ходы ----------
 
 function showFloatingPoints(points: number, multiplier: number, at: { x: number; y: number }): void {
@@ -668,6 +747,7 @@ function setActiveModeButton(active: keyof typeof modeButtons): void {
 
 function setMode(next: Mode): void {
   if (inDuel) endDuel();
+  stopReplay();
   mode = next;
   dailyRun = null;
   setActiveModeButton(next);
@@ -695,7 +775,18 @@ el<HTMLButtonElement>('join-code').addEventListener('click', () => {
   void startDuel(room);
 });
 
-rankChipEl.addEventListener('click', () => void showRatingBoard());
+const cabinet = new Cabinet({
+  onReplay: (duelId) => void startReplay(duelId),
+  onRatingBoard: () => void showRatingBoard(),
+  onRenamed: () => void refreshProfile(),
+});
+
+// Чип лиги — вход в кабинет: рейтинг там же, но с историей и профилем.
+rankChipEl.addEventListener('click', () => void cabinet.show());
+el<HTMLButtonElement>('replay-stop').addEventListener('click', () => {
+  stopReplay();
+  setMode('sprint');
+});
 
 copyLinkBtn.addEventListener('click', () => {
   const link = inviteLink(currentRoom);
@@ -746,7 +837,8 @@ function frame(now: number): void {
   const dt = Math.min((now - lastTime) / 1000, 0.05);
   lastTime = now;
 
-  if (session.tick(dt)) {
+  // Во время реплея время партии задаёт запись, а не часы.
+  if (!replay && session.tick(dt)) {
     if (dailyRun) {
       void finishDaily(dailyRun, session.score);
     } else if (inDuel) {

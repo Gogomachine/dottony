@@ -6,15 +6,20 @@ import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import {
   DuelClientMessageSchema,
   GuestAuthRequestSchema,
+  RenameRequestSchema,
   SubmitDailyRequestSchema,
   TelegramAuthRequestSchema,
   DateSchema,
   type AuthResponse,
   type DailyInfo,
   type DuelServerMessage,
+  type DuelHistoryEntry,
+  type DuelHistoryResponse,
   type LeaderboardResponse,
   type MeResponse,
+  type MoveLog,
   type RatingLeaderboardResponse,
+  type ReplayResponse,
   type SubmitDailyResponse,
 } from '@doton/protocol';
 import {
@@ -56,6 +61,7 @@ interface TokenPayload {
 
 const LEADERBOARD_SIZE = 50;
 const RATING_BOARD_SIZE = 50;
+const HISTORY_SIZE = 20;
 
 /** Сколько дней игрок не играл рейтинговых матчей. */
 function idleDays(ratedAt: string | null): number {
@@ -137,15 +143,16 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
 
   const matchmaker = new Matchmaker({
     onFinish: (result) => {
-      // Призрака в базу не пишем: он не игрок, и его «результат» уже там есть.
       const outcomes = new Map(result.outcomes.map((entry) => [entry.playerId, entry.outcome]));
-      const players = result.players
-        .filter((player) => !player.ghost)
-        .map((player) => {
-          const outcome = outcomes.get(player.id);
-          return outcome ? { ...player, outcome } : player;
-        });
-      if (players.length === 0) return;
+      // Призрака пишем тоже — иначе в истории матч выглядел бы как игра
+      // с пустотой. В подбор призраков и в рейтинг его строка не попадает:
+      // там всё идёт через users, а своего аккаунта у него нет.
+      const players = result.players.map((player) => {
+        const outcome = outcomes.get(player.id);
+        return outcome ? { ...player, outcome } : player;
+      });
+      // Матч без единого живого игрока сохранять незачем.
+      if (players.every((player) => player.ghost)) return;
       void store
         .saveDuel(result.duelId, result.seed, players)
         .then(() => applyRatings(result))
@@ -185,6 +192,15 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return request.user as TokenPayload;
   };
 
+  /** Токен, если он есть и валиден. Для мест, где вход не обязателен. */
+  const currentUser = async (request: FastifyRequest): Promise<TokenPayload | null> => {
+    try {
+      return await requireUser(request);
+    } catch {
+      return null;
+    }
+  };
+
   const issueToken = (id: string, name: string): AuthResponse => ({
     token: app.jwt.sign({ sub: id, name } satisfies TokenPayload),
     user: { id, name },
@@ -195,7 +211,10 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   app.post('/api/auth/guest', async (request, reply) => {
     const parsed = GuestAuthRequestSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
-    const user = await store.createUser(randomUUID(), parsed.data.name);
+    const id = randomUUID();
+    // Гостевой вход — тоже способ входа: аккаунт с самого начала живёт по
+    // общим правилам, и привязка Telegram или кошелька его не заменяет.
+    const user = await store.createUser(id, parsed.data.name, { kind: 'guest', externalId: id });
     return issueToken(user.id, user.name);
   });
 
@@ -209,14 +228,38 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     const tgUser = verifyTelegramInitData(parsed.data.initData, options.telegramBotToken);
     if (!tgUser) return reply.code(401).send({ error: 'bad-init-data' });
 
-    const existing = await store.userByTelegramId(tgUser.id);
+    const existing = await store.userByIdentity('telegram', tgUser.id);
     if (existing) {
       // Имя в Telegram могло смениться — держим свежее.
       if (existing.name !== tgUser.name) await store.renameUser(existing.id, tgUser.name);
       return issueToken(existing.id, tgUser.name);
     }
-    const user = await store.createUser(randomUUID(), tgUser.name, tgUser.id);
+
+    // Игрок уже играл гостем на этом устройстве: Telegram привязываем к тому
+    // же аккаунту, иначе рейтинг и история остались бы на брошенной учётке.
+    const guest = await currentUser(request);
+    if (guest) {
+      const linked = await store.linkIdentity(guest.sub, {
+        kind: 'telegram',
+        externalId: tgUser.id,
+      });
+      if (linked !== 'taken') return issueToken(guest.sub, guest.name);
+    }
+
+    const user = await store.createUser(randomUUID(), tgUser.name, {
+      kind: 'telegram',
+      externalId: tgUser.id,
+    });
     return issueToken(user.id, user.name);
+  });
+
+  /** Смена имени. Токен несёт имя, поэтому выдаём новый. */
+  app.post('/api/me/name', async (request, reply) => {
+    const user = await requireUser(request);
+    const parsed = RenameRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
+    await store.renameUser(user.sub, parsed.data.name);
+    return issueToken(user.sub, parsed.data.name);
   });
 
   // ---------- Ежедневный вызов ----------
@@ -287,17 +330,21 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   /** Карточка игрока: рейтинг, лига, место и сводка по дуэлям. */
   app.get('/api/me', async (request): Promise<MeResponse> => {
     const user = await requireUser(request);
-    const [rating, rank, duels] = await Promise.all([
+    const [rating, rank, duels, identities, daily] = await Promise.all([
       store.ratingOf(user.sub),
       store.ratingRank(user.sub),
       store.duelRecord(user.sub),
+      store.identitiesOf(user.sub),
+      store.dailyRecord(user.sub),
     ]);
     const up = nextLeague(rating.rating);
+    const league = leagueOf(rating.rating);
     return {
       name: user.name,
       rating: rating.rating,
       deviation: rating.deviation,
-      league: leagueOf(rating.rating).name,
+      league: league.name,
+      leagueFrom: league.from,
       next: up ? { league: up.league.name, gap: up.gap } : null,
       rank,
       placement:
@@ -305,7 +352,53 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
           ? null
           : { played: rating.games, required: PLACEMENT_GAMES },
       duels,
+      identities,
+      daily,
     };
+  });
+
+  app.get('/api/me/history', async (request): Promise<DuelHistoryResponse> => {
+    const user = await requireUser(request);
+    const rows = await store.duelHistory(user.sub, HISTORY_SIZE);
+    return {
+      entries: rows.map((row) => ({
+        duelId: row.duelId,
+        playedAt: row.playedAt,
+        score: row.score,
+        outcome: row.outcome as DuelHistoryEntry['outcome'],
+        opponent: row.opponentName,
+        opponentScore: row.opponentScore,
+        ghost: row.opponentGhost,
+        rating:
+          row.ratingBefore === null || row.ratingAfter === null
+            ? null
+            : { before: row.ratingBefore, after: row.ratingAfter },
+        replay: row.hasReplay,
+      })),
+    };
+  });
+
+  /** Реплей своей партии: сид поля плюс сыгранные цепочки. */
+  app.get('/api/me/history/:duelId/replay', async (request, reply) => {
+    const user = await requireUser(request);
+    const { duelId } = request.params as { duelId: string };
+    const replay = await store.duelReplay(duelId, user.sub);
+    // Нет записи либо матч чужой — в обоих случаях показывать нечего.
+    if (!replay) return reply.code(404).send({ error: 'no-replay' });
+
+    let moves: MoveLog[];
+    try {
+      moves = JSON.parse(replay.moves) as MoveLog[];
+    } catch {
+      return reply.code(404).send({ error: 'no-replay' });
+    }
+    const response: ReplayResponse = {
+      seed: replay.seed,
+      moves,
+      score: replay.score,
+      opponent: replay.opponentName,
+    };
+    return response;
   });
 
   app.get('/api/rating', async (request): Promise<RatingLeaderboardResponse> => {
