@@ -2,7 +2,9 @@ import type {
   AuthResponse,
   DailyInfo,
   LeaderboardResponse,
+  MeResponse,
   MoveLog,
+  RatingLeaderboardResponse,
   SubmitDailyResponse,
 } from '@doton/protocol';
 
@@ -127,8 +129,18 @@ export function getLeaderboard(date?: string): Promise<LeaderboardResponse> {
   return request<LeaderboardResponse>(`/api/daily/leaderboard${query}`);
 }
 
-export function getDuelRecord(): Promise<{ played: number; won: number }> {
-  return request<{ played: number; won: number }>('/api/me/duels');
+/** Карточка игрока: рейтинг, лига, место, счёт дуэлей. Нужен токен. */
+export function getMe(): Promise<MeResponse> {
+  return request<MeResponse>('/api/me');
+}
+
+export function getRatingBoard(): Promise<RatingLeaderboardResponse> {
+  return request<RatingLeaderboardResponse>('/api/rating');
+}
+
+/** Есть ли уже профиль: без токена рейтинг спрашивать бессмысленно. */
+export function hasAuth(): boolean {
+  return token() !== null;
 }
 
 // ---------- Оффлайн-режим ----------

@@ -208,6 +208,34 @@
 
     #duel-record { font-size: 12px; color: var(--muted); }
 
+    /* Лига и рейтинг: короткая строка, по нажатию — таблица. */
+    .rank-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      padding: 6px 10px;
+      border-radius: 99px;
+      color: var(--accent);
+      border-color: color-mix(in srgb, var(--accent) 45%, var(--control-border));
+    }
+    .rank-chip[hidden] { display: none; }
+    .rank-chip .rating { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
+    .rank-chip.provisional { color: var(--muted); border-color: var(--control-border); }
+
+    .rating-line {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .rating-line[hidden] { display: none; }
+    .rating-line .delta { font-size: 22px; font-variant-numeric: tabular-nums; }
+    .rating-line .delta.up { color: #2f9e68; }
+    .rating-line .delta.down { color: #d9483b; }
+    .rating-line .caption { font-size: 12px; font-weight: 600; color: var(--muted); }
+
     .board-wrap { position: relative; }
     canvas {
       display: block;
@@ -324,6 +352,9 @@
       font-weight: 700;
     }
     .board-list .rank { color: var(--muted); font-variant-numeric: tabular-nums; }
+    .board-list .who { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+    .board-list .who-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .board-list .who-league { font-size: 11px; font-weight: 600; color: var(--muted); }
     .board-list .pts {
       font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
       font-variant-numeric: tabular-nums;
@@ -378,6 +409,10 @@
       <button id="mode-duel">⚡ Дуэль</button>
       <button id="invite">Позвать друга</button>
       <button id="join-code">Ввести код</button>
+      <span class="spacer"></span>
+      <button id="rank-chip" class="rank-chip" hidden></button>
+    </div>
+    <div class="controls">
       <span id="duel-record" class="mono"></span>
     </div>
 
@@ -388,6 +423,7 @@
       <div id="over-mascot"></div>
       <h2 id="over-title">Время вышло</h2>
       <span id="final-score" class="mono">0</span>
+      <div id="rating-line" class="rating-line" hidden></div>
       <p id="over-note" hidden></p>
       <div id="room-box" hidden>
         <span class="room-label">Код комнаты</span>

@@ -1,12 +1,14 @@
 import { DEFAULT_CONFIG, type Cell } from '@doton/core';
-import type { LeaderboardResponse, MoveLog } from '@doton/protocol';
+import type { LeaderboardResponse, MoveLog, RatingLeaderboardResponse } from '@doton/protocol';
 import type { DuelServerMessage } from '@doton/protocol';
 import {
   apiAvailable,
   ensureAuth,
-  getDuelRecord,
+  getMe,
+  getRatingBoard,
   getDaily,
   getLeaderboard,
+  hasAuth,
   isTelegram,
   localDailySeed,
   localToday,
@@ -49,6 +51,8 @@ const vsNameEl = el<HTMLSpanElement>('vs-name');
 const vsScoreEl = el<HTMLSpanElement>('vs-score');
 const vsGapEl = el<HTMLSpanElement>('vs-gap');
 const duelRecordEl = el<HTMLSpanElement>('duel-record');
+const rankChipEl = el<HTMLButtonElement>('rank-chip');
+const ratingLineEl = el<HTMLDivElement>('rating-line');
 const roomBoxEl = el<HTMLDivElement>('room-box');
 const roomCodeEl = el<HTMLSpanElement>('room-code');
 const copyLinkBtn = el<HTMLButtonElement>('copy-link');
@@ -291,6 +295,26 @@ function renderBoard(board: LeaderboardResponse): void {
   }
 }
 
+/** Изменение рейтинга за матч — как его присылает сервер. */
+type RatingChange = NonNullable<Extract<DuelServerMessage, { type: 'finished' }>['rating']>;
+
+/**
+ * Строка «рейтинг после матча». Во время калибровки лигу не называем:
+ * она ещё ничего не значит — вместо неё показываем, сколько матчей осталось.
+ */
+function showRatingChange(change: RatingChange): void {
+  const delta = change.after - change.before;
+  const sign = delta > 0 ? '+' : '';
+  const direction = delta > 0 ? 'up' : delta < 0 ? 'down' : '';
+  const caption = change.placement
+    ? `Калибровка · ${change.placement.played} из ${change.placement.required}`
+    : `${change.league} · ${change.after}`;
+  ratingLineEl.hidden = false;
+  ratingLineEl.innerHTML = `<span class="delta ${direction}"></span><span class="caption"></span>`;
+  (ratingLineEl.children[0] as HTMLElement).textContent = `${sign}${delta}`;
+  (ratingLineEl.children[1] as HTMLElement).textContent = caption;
+}
+
 function showOverModal(options: {
   title: string;
   score?: number;
@@ -299,6 +323,10 @@ function showOverModal(options: {
   room?: string;
   /** Идёт ожидание соперника: кнопка станет «Отменить». */
   waiting?: boolean;
+  /** Как матч сдвинул рейтинг. */
+  rating?: RatingChange;
+  /** Просмотр таблицы поверх игры: кнопка просто закрывает окно. */
+  viewing?: boolean;
 }): void {
   // В модалке финиша Заппо подмигивает за вызов дня, в остальных — просто рад.
   overMascotEl.innerHTML = mascotSvg({ size: 84, wink: options.title.startsWith('Вызов') });
@@ -314,11 +342,14 @@ function showOverModal(options: {
   overNoteEl.hidden = options.note === undefined;
   overNoteEl.textContent = options.note ?? '';
   dailyBoardEl.hidden = true;
+  ratingLineEl.hidden = true;
+  if (options.rating) showRatingChange(options.rating);
   // Пока ждём соперника, единственное осмысленное действие — отменить поиск.
   waitingForOpponent = options.waiting ?? false;
+  viewingOnly = options.viewing ?? false;
   restartBtn.textContent = waitingForOpponent
     ? 'Отменить'
-    : dailyRun || options.title.startsWith('Вызов')
+    : viewingOnly || dailyRun || options.title.startsWith('Вызов')
       ? 'Закрыть'
       : 'Ещё раз';
   overlay.hidden = false;
@@ -356,6 +387,8 @@ let searchHint = 0;
 let currentRoom = '';
 /** Открыта модалка ожидания соперника. */
 let waitingForOpponent = false;
+/** Открыта справочная модалка (таблица рейтинга): партия под ней продолжается. */
+let viewingOnly = false;
 
 function handleDuelMessage(message: DuelServerMessage): void {
   switch (message.type) {
@@ -445,13 +478,16 @@ function handleDuelMessage(message: DuelServerMessage): void {
           : message.outcome === 'loss'
             ? 'Поражение'
             : 'Ничья';
+      // Рейтинг приходит вторым «finished» — он лишь дополняет уже
+      // показанный результат, поэтому экран просто перерисовывается.
       showOverModal({
         title,
         score: message.score,
         note: `${opponentName}: ${message.opponentScore}`,
+        ...(message.rating ? { rating: message.rating } : {}),
       });
-      endDuel();
-      void refreshDuelRecord();
+      endDuel({ awaitRating: true });
+      void refreshProfile();
       break;
     }
 
@@ -468,14 +504,15 @@ function handleDuelMessage(message: DuelServerMessage): void {
   }
 }
 
-function endDuel(): void {
+function endDuel(options: { awaitRating?: boolean } = {}): void {
   clearTimeout(searchHint);
   inDuel = false;
   versusEl.hidden = true;
   // Партия окончена вместе с матчем: иначе локальный таймер досчитает до
   // нуля и перепишет объявленный сервером результат на «Время вышло».
   session.over = true;
-  duel.close();
+  if (options.awaitRating) duel.closeAfterResults();
+  else duel.close();
 }
 
 async function startDuel(room?: string): Promise<void> {
@@ -495,16 +532,75 @@ async function startDuel(room?: string): Promise<void> {
     showOverModal({ title: 'Дуэль', note: 'Не удалось войти. Попробуй ещё раз.' });
     return;
   }
+  // Профиль мог только что появиться — покажем лигу, не дожидаясь конца матча.
+  void refreshProfile();
   duel.connect(room);
 }
 
-async function refreshDuelRecord(): Promise<void> {
-  if (!apiAvailable) return;
+/** Обновляет чип лиги и сводку дуэлей. Без профиля чип просто скрыт. */
+async function refreshProfile(): Promise<void> {
+  if (!apiAvailable || !hasAuth()) return;
   try {
-    const record = await getDuelRecord();
-    duelRecordEl.textContent = record.played > 0 ? `дуэли: ${record.won}/${record.played}` : '';
+    const me = await getMe();
+    duelRecordEl.textContent =
+      me.duels.played > 0 ? `дуэли: ${me.duels.won} из ${me.duels.played}` : '';
+
+    rankChipEl.hidden = false;
+    rankChipEl.classList.toggle('provisional', me.placement !== null);
+    if (me.placement) {
+      // До калибровки лига не присвоена — показываем прогресс, а не звание.
+      rankChipEl.textContent = `Калибровка ${me.placement.played}/${me.placement.required}`;
+      rankChipEl.title = 'Сыграй рейтинговые дуэли, чтобы получить лигу';
+      return;
+    }
+    rankChipEl.innerHTML = `<span></span><span class="rating"></span>`;
+    (rankChipEl.children[0] as HTMLElement).textContent = me.league;
+    (rankChipEl.children[1] as HTMLElement).textContent = String(me.rating);
+    rankChipEl.title = me.next
+      ? `${me.rank}-е место · до лиги «${me.next.league}» ${me.next.gap}`
+      : `${me.rank}-е место · высшая лига`;
   } catch {
     // Статистика необязательна — молча пропускаем.
+  }
+}
+
+async function showRatingBoard(): Promise<void> {
+  showOverModal({ title: 'Рейтинг', note: 'Загружаю таблицу…', viewing: true });
+  try {
+    const board = await getRatingBoard();
+    if (board.entries.length === 0) {
+      overNoteEl.textContent =
+        'Таблица пока пуста: в неё попадают те, кто прошёл калибровку в дуэлях.';
+      return;
+    }
+    overNoteEl.textContent = board.me
+      ? `Ты на ${board.me.rank}-м месте · ${board.me.league}`
+      : 'Пройди калибровку в дуэлях, чтобы попасть в таблицу.';
+    renderRatingBoard(board);
+  } catch {
+    overNoteEl.textContent = 'Таблица рейтинга недоступна. Попробуй позже.';
+  }
+}
+
+function renderRatingBoard(board: RatingLeaderboardResponse): void {
+  dailyBoardEl.hidden = false;
+  dailyBoardEl.innerHTML = '';
+  const rows = [...board.entries];
+  // Своя строка нужна всегда, даже если игрок не попал в верхушку таблицы.
+  if (board.me && !rows.some((entry) => entry.rank === board.me!.rank)) rows.push(board.me);
+  for (const entry of rows) {
+    const item = document.createElement('li');
+    if (board.me && entry.rank === board.me.rank) item.className = 'me';
+    item.innerHTML =
+      `<span class="rank">${entry.rank}</span>` +
+      `<span class="who"><span class="who-name"></span><span class="who-league"></span></span>` +
+      `<span class="pts"></span>`;
+    const who = item.children[1] as HTMLElement;
+    (who.children[0] as HTMLElement).textContent = entry.name;
+    // Лига подписью под именем: на телефоне подсказки по наведению не работают.
+    (who.children[1] as HTMLElement).textContent = entry.league;
+    (item.children[2] as HTMLElement).textContent = String(entry.rating);
+    dailyBoardEl.appendChild(item);
   }
 }
 
@@ -599,6 +695,8 @@ el<HTMLButtonElement>('join-code').addEventListener('click', () => {
   void startDuel(room);
 });
 
+rankChipEl.addEventListener('click', () => void showRatingBoard());
+
 copyLinkBtn.addEventListener('click', () => {
   const link = inviteLink(currentRoom);
   navigator.clipboard
@@ -617,6 +715,12 @@ el<HTMLButtonElement>('new-board').addEventListener('click', () => {
   startGame();
 });
 restartBtn.addEventListener('click', () => {
+  if (viewingOnly) {
+    // Смотрели таблицу — партия под окном не тронута.
+    viewingOnly = false;
+    overlay.hidden = true;
+    return;
+  }
   if (waitingForOpponent) {
     // Отменяем поиск и возвращаемся в обычный спринт.
     endDuel();
@@ -669,7 +773,7 @@ if (isTelegram()) {
 // Ссылка-приглашение сразу ведёт в комнату друга.
 const invitedRoom = roomFromLocation();
 if (invitedRoom) void startDuel(invitedRoom);
-void refreshDuelRecord();
+void refreshProfile();
 
 // Уход со страницы во время матча — техническое поражение, а не зависший матч.
 addEventListener('beforeunload', () => {

@@ -47,6 +47,17 @@ export type MoveOutcome =
   | { ok: true; score: number; points: number }
   | { ok: false; reason: string };
 
+/** Итог матча для одного живого игрока — основа для пересчёта рейтинга. */
+export interface DuelOutcome {
+  playerId: string;
+  player: DuelPlayer;
+  outcome: 'win' | 'loss' | 'draw';
+  score: number;
+  opponentScore: number;
+  /** Соперник был записью: такой матч рейтинг не меняет. */
+  opponentIsGhost: boolean;
+}
+
 export class Duel {
   readonly id = randomUUID();
   readonly seed: number;
@@ -206,10 +217,14 @@ export class Duel {
    * Завершает матч и рассылает результаты. Повторный вызов безопасен.
    * forfeitedBy — техническое поражение (игрок ушёл): исход не зависит
    * от счёта, иначе уход при равном счёте давал бы ничью.
+   *
+   * Результаты возвращаются наружу: рейтинг считается уже после, поэтому
+   * отправку сообщения о нём берёт на себя вызывающая сторона.
    */
-  finish(forfeitedBy?: string): void {
-    if (this.finished) return;
+  finish(forfeitedBy?: string): DuelOutcome[] {
+    if (this.finished) return [];
     this.finished = true;
+    const results: DuelOutcome[] = [];
     for (const [id, state] of this.players) {
       const opponent = this.opponentOf(id);
       if (state.ghost || !opponent) continue;
@@ -226,7 +241,16 @@ export class Duel {
               ? 'loss'
               : 'draw';
       state.player.send({ type: 'finished', score: mine, opponentScore: theirs, outcome });
+      results.push({
+        playerId: id,
+        player: state.player,
+        outcome,
+        score: mine,
+        opponentScore: theirs,
+        opponentIsGhost: opponent.ghost,
+      });
     }
+    return results;
   }
 
   /** Игрок вышел: матч засчитывается сопернику. */

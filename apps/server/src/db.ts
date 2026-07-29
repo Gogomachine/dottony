@@ -1,4 +1,5 @@
 import { createClient, type Client } from '@libsql/client';
+import { newRating, PLACEMENT_GAMES, type Rating } from '@doton/core';
 
 /**
  * Хранилище на libSQL (диалект SQLite). Один и тот же код работает с
@@ -17,6 +18,12 @@ export interface RunRow {
   date: string;
   score: number;
   name: string;
+}
+
+/** Рейтинг игрока вместе с историей: когда играл и сколько рейтинговых матчей. */
+export interface PlayerRating extends Rating {
+  ratedAt: string | null;
+  games: number;
 }
 
 export interface StoreOptions {
@@ -74,6 +81,17 @@ export class Store {
     // CREATE TABLE IF NOT EXISTS не меняет уже существующую таблицу, поэтому
     // колонки, добавленные после первого запуска, доливаем отдельно.
     await this.addColumnIfMissing('duel_players', 'log', "TEXT NOT NULL DEFAULT '[]'");
+    // Рейтинг Glicko-2: сила, неуверенность в ней и волатильность.
+    await this.addColumnIfMissing('users', 'rating', 'INTEGER NOT NULL DEFAULT 1500');
+    await this.addColumnIfMissing('users', 'deviation', 'INTEGER NOT NULL DEFAULT 350');
+    await this.addColumnIfMissing('users', 'volatility', 'REAL NOT NULL DEFAULT 0.06');
+    await this.addColumnIfMissing('users', 'rated_at', 'TEXT');
+    await this.addColumnIfMissing('users', 'rated_games', 'INTEGER NOT NULL DEFAULT 0');
+    await this.addColumnIfMissing('duel_players', 'rating_before', 'INTEGER');
+    await this.addColumnIfMissing('duel_players', 'rating_after', 'INTEGER');
+    // Исход хранится явно: по счёту его не восстановить — сдача при 0:0
+    // выглядит как ничья, хотя это поражение.
+    await this.addColumnIfMissing('duel_players', 'outcome', 'TEXT');
   }
 
   /** Идемпотентно добавляет колонку — безопасно на любой существующей базе. */
@@ -95,14 +113,21 @@ export class Store {
   async saveDuel(
     id: string,
     seed: number,
-    players: { id: string; score: number; log?: unknown }[],
+    players: { id: string; score: number; log?: unknown; outcome?: string }[],
   ): Promise<void> {
     await this.client.batch(
       [
         { sql: 'INSERT INTO duels (id, seed) VALUES (?, ?)', args: [id, seed] },
         ...players.map((player) => ({
-          sql: 'INSERT INTO duel_players (duel_id, user_id, score, log) VALUES (?, ?, ?, ?)',
-          args: [id, player.id, player.score, JSON.stringify(player.log ?? [])],
+          sql: `INSERT INTO duel_players (duel_id, user_id, score, log, outcome)
+                VALUES (?, ?, ?, ?, ?)`,
+          args: [
+            id,
+            player.id,
+            player.score,
+            JSON.stringify(player.log ?? []),
+            player.outcome ?? null,
+          ],
         })),
       ],
       'write',
@@ -138,6 +163,74 @@ export class Store {
     };
   }
 
+  /** Рейтинг игрока; для новичка — стартовые значения. */
+  async ratingOf(userId: string): Promise<PlayerRating> {
+    const result = await this.client.execute({
+      sql: 'SELECT rating, deviation, volatility, rated_at, rated_games FROM users WHERE id = ?',
+      args: [userId],
+    });
+    const row = result.rows[0];
+    if (!row) return { ...newRating(), ratedAt: null, games: 0 };
+    return {
+      rating: Number(row.rating),
+      deviation: Number(row.deviation),
+      volatility: Number(row.volatility),
+      ratedAt: row.rated_at === null ? null : String(row.rated_at),
+      games: Number(row.rated_games),
+    };
+  }
+
+  /** Сохраняет новый рейтинг и засчитывает ещё один рейтинговый матч. */
+  async saveRating(userId: string, rating: Rating): Promise<void> {
+    await this.client.execute({
+      sql: `UPDATE users
+            SET rating = ?, deviation = ?, volatility = ?,
+                rated_at = datetime('now'), rated_games = rated_games + 1
+            WHERE id = ?`,
+      args: [rating.rating, rating.deviation, rating.volatility, userId],
+    });
+  }
+
+  /** Запоминает, как матч сдвинул рейтинг — для истории и экрана результата. */
+  async saveRatingChange(
+    duelId: string,
+    userId: string,
+    before: number,
+    after: number,
+  ): Promise<void> {
+    await this.client.execute({
+      sql: 'UPDATE duel_players SET rating_before = ?, rating_after = ? WHERE duel_id = ? AND user_id = ?',
+      args: [before, after, duelId, userId],
+    });
+  }
+
+  /** Таблица лидеров по рейтингу: только прошедшие калибровку. */
+  async ratingLeaderboard(limit: number): Promise<{ name: string; rating: number }[]> {
+    const result = await this.client.execute({
+      sql: `SELECT name, rating FROM users
+            WHERE rated_games >= ?
+            ORDER BY rating DESC, name ASC
+            LIMIT ?`,
+      args: [PLACEMENT_GAMES, limit],
+    });
+    return result.rows.map((row) => ({ name: String(row.name), rating: Number(row.rating) }));
+  }
+
+  /** Место игрока в рейтинге: 1 + число тех, кто выше. До калибровки — null. */
+  async ratingRank(userId: string): Promise<number | null> {
+    const me = await this.client.execute({
+      sql: 'SELECT rating, rated_games FROM users WHERE id = ?',
+      args: [userId],
+    });
+    const row = me.rows[0];
+    if (!row || Number(row.rated_games) < PLACEMENT_GAMES) return null;
+    const above = await this.client.execute({
+      sql: 'SELECT COUNT(*) AS above FROM users WHERE rated_games >= ? AND rating > ?',
+      args: [PLACEMENT_GAMES, Number(row.rating)],
+    });
+    return Number(above.rows[0]!.above) + 1;
+  }
+
   /** Средний счёт игрока в дуэлях — ориентир для подбора призрака. */
   async averageDuelScore(userId: string): Promise<number | undefined> {
     const result = await this.client.execute({
@@ -148,12 +241,20 @@ export class Store {
     return value === null || value === undefined ? undefined : Number(value);
   }
 
-  /** Сводка дуэлей игрока: сыграно и выиграно. */
+  /**
+   * Сводка дуэлей игрока: сыграно и выиграно. У матчей, сыгранных до
+   * появления колонки outcome, исход восстанавливаем по счёту.
+   */
   async duelRecord(userId: string): Promise<{ played: number; won: number }> {
     const result = await this.client.execute({
       sql: `SELECT
               COUNT(*) AS played,
-              SUM(CASE WHEN mine.score > COALESCE(theirs.score, -1) THEN 1 ELSE 0 END) AS won
+              SUM(CASE
+                    WHEN mine.outcome IS NOT NULL
+                      THEN (CASE WHEN mine.outcome = 'win' THEN 1 ELSE 0 END)
+                    WHEN mine.score > COALESCE(theirs.score, -1) THEN 1
+                    ELSE 0
+                  END) AS won
             FROM duel_players mine
             LEFT JOIN duel_players theirs
               ON theirs.duel_id = mine.duel_id AND theirs.user_id <> mine.user_id

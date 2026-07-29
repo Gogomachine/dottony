@@ -286,6 +286,85 @@ describe('Matchmaker', () => {
   });
 });
 
+describe('признак рейтингового матча', () => {
+  function make(options: { findGhost?: () => Promise<Ghost | undefined> } = {}) {
+    const timers: { fn: () => void; ms: number }[] = [];
+    const onFinish = vi.fn();
+    const maker = new Matchmaker({
+      onFinish,
+      ...(options.findGhost ? { findGhost: options.findGhost, ghostAfterMs: 100 } : {}),
+      setTimer: (fn, ms) => {
+        timers.push({ fn, ms });
+        return timers.length;
+      },
+      clearTimer: () => {},
+    });
+    return {
+      maker,
+      onFinish,
+      fire: (upToMs: number) => {
+        for (const timer of timers.filter((entry) => entry.ms <= upToMs)) {
+          timers.splice(timers.indexOf(timer), 1);
+          timer.fn();
+        }
+      },
+      result: () => onFinish.mock.calls[0]![0] as MatchResult,
+    };
+  }
+
+  it('открытый матч двух живых игроков рейтинговый, исходы приходят наружу', () => {
+    const { maker, fire, result } = make();
+    const a = recorder('a', 'Ада');
+    const b = recorder('b', 'Боб');
+    maker.join(a);
+    maker.join(b);
+    const seed = (a.last('matched') as { seed: number }).seed;
+    maker.move('a', findAnyChain(createBoard(seedRng(seed), DEFAULT_CONFIG)), 1);
+
+    fire((DUEL_SECONDS + 1) * 1000);
+    expect(result().rated).toBe(true);
+    const outcomes = result().outcomes;
+    expect(outcomes.map((outcome) => outcome.outcome).sort()).toEqual(['loss', 'win']);
+    expect(outcomes.find((outcome) => outcome.playerId === 'a')).toMatchObject({
+      outcome: 'win',
+      score: 30,
+      opponentScore: 0,
+    });
+  });
+
+  it('матч в комнате с другом рейтинг не двигает', () => {
+    const { maker, fire, result } = make();
+    maker.join(recorder('a'), 'КОД123');
+    maker.join(recorder('b'), 'КОД123');
+    fire((DUEL_SECONDS + 1) * 1000);
+    expect(result().rated).toBe(false);
+  });
+
+  it('матч с призраком не рейтинговый: запись не может проиграть', async () => {
+    const ghost: Ghost = { name: 'Ада', seed: 777, score: 300, log: [{ t: 1, points: 300 }] };
+    const { maker, fire, result } = make({ findGhost: async () => ghost });
+    maker.join(recorder('p'));
+    fire(100);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    fire((DUEL_SECONDS + 1) * 1000);
+    expect(result().rated).toBe(false);
+    // Исход живому игроку всё равно нужен — экран результата его показывает.
+    expect(result().outcomes).toHaveLength(1);
+    expect(result().outcomes[0]).toMatchObject({ playerId: 'p', opponentIsGhost: true });
+  });
+
+  it('сдача в открытом матче остаётся рейтинговой', () => {
+    const { maker, result } = make();
+    maker.join(recorder('a'));
+    maker.join(recorder('b'));
+    maker.leave('a');
+    expect(result().rated).toBe(true);
+    expect(result().outcomes.find((outcome) => outcome.playerId === 'a')?.outcome).toBe('loss');
+  });
+});
+
 describe('обрыв связи', () => {
   function make() {
     const timers: (() => void)[] = [];

@@ -19,6 +19,7 @@ export class DuelConnection {
   private active = false;
   private retries = 0;
   private retryTimer = 0;
+  private closeTimer = 0;
 
   constructor(
     private readonly onMessage: DuelHandler,
@@ -39,6 +40,7 @@ export class DuelConnection {
   connect(room?: string): void {
     this.room = room;
     this.retries = 0;
+    clearTimeout(this.closeTimer);
     this.close({ keepActive: false });
     this.open();
   }
@@ -99,8 +101,21 @@ export class DuelConnection {
    * Осознанный выход: сервер засчитает поражение. Обрыв связи сюда
    * не относится — он лечится переподключением.
    */
+  /**
+   * Матч окончен: соединение больше не нужно, но закрывать его сразу нельзя.
+   * Рейтинг сервер досылает отдельным сообщением сразу после результата —
+   * закрыв сокет по первому же «finished», клиент бы его не дождался.
+   */
+  closeAfterResults(graceMs = 4000): void {
+    this.active = false;
+    clearTimeout(this.retryTimer);
+    clearTimeout(this.closeTimer);
+    this.closeTimer = window.setTimeout(() => this.close(), graceMs);
+  }
+
   close(options: { keepActive?: boolean } = {}): void {
     if (!options.keepActive) this.active = false;
+    clearTimeout(this.closeTimer);
     clearTimeout(this.retryTimer);
     this.retries = 0;
     if (!this.socket) return;

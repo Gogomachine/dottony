@@ -1,7 +1,7 @@
 import { randomInt } from 'node:crypto';
 import { DUEL_SECONDS } from '@doton/protocol';
 import type { Cell } from '@doton/core';
-import { Duel, type DuelPlayer, type MoveOutcome, type ScorePoint } from './duel.js';
+import { Duel, type DuelOutcome, type DuelPlayer, type MoveOutcome, type ScorePoint } from './duel.js';
 import { ghostSchedule, type Ghost } from './ghost.js';
 
 /**
@@ -16,6 +16,13 @@ export interface MatchResult {
   duelId: string;
   seed: number;
   players: { id: string; name: string; score: number; log: ScorePoint[]; ghost: boolean }[];
+  /**
+   * Исходы живых игроков. Рейтинговым считаем только матч двух живых
+   * соперников из открытого подбора: против записи и в комнате с другом
+   * рейтинг не двигаем.
+   */
+  outcomes: DuelOutcome[];
+  rated: boolean;
 }
 
 interface Waiting {
@@ -46,6 +53,8 @@ const DEFAULT_GHOST_AFTER_MS = 12_000;
 export class Matchmaker {
   private readonly waiting: Waiting[] = [];
   private readonly duels = new Map<string, Duel>();
+  /** Матчи из приватных комнат: они не влияют на рейтинг. */
+  private readonly privateDuels = new Set<string>();
   /** playerId → активная дуэль. */
   private readonly byPlayer = new Map<string, Duel>();
   /** Таймеры дуэлей и отложенные начисления призракам. */
@@ -92,7 +101,7 @@ export class Matchmaker {
 
     const [opponent] = this.waiting.splice(index, 1);
     this.cancelGhostWait(opponent!.player.id);
-    this.start(opponent!.player, player);
+    this.start(opponent!.player, player, room !== undefined);
   }
 
   /** Через паузу ожидания подставляет призрака, если игрок всё ещё в очереди. */
@@ -128,9 +137,11 @@ export class Matchmaker {
     this.ghostTimers.delete(playerId);
   }
 
-  private start(a: DuelPlayer, b: DuelPlayer): void {
+  private start(a: DuelPlayer, b: DuelPlayer, isPrivate = false): void {
     const seed = randomInt(0, 0xffffffff);
-    this.launch(new Duel(seed, a, b));
+    const duel = new Duel(seed, a, b);
+    if (isPrivate) this.privateDuels.add(duel.id);
+    this.launch(duel);
   }
 
   /** Матч против записи: играем на её сиде, чтобы поле было тем же самым. */
@@ -183,8 +194,7 @@ export class Matchmaker {
 
     const duel = this.byPlayer.get(playerId);
     if (!duel) return;
-    if (!options.silent) duel.abandon(playerId);
-    this.settle(duel);
+    this.settle(duel, options.silent ? undefined : playerId);
   }
 
   /**
@@ -199,14 +209,19 @@ export class Matchmaker {
     this.cancelGhostWait(playerId);
   }
 
-  private settle(duel: Duel): void {
+  private settle(duel: Duel, forfeitedBy?: string): void {
     if (!this.duels.has(duel.id)) return;
-    duel.finish();
+    const outcomes = duel.finish(forfeitedBy);
 
     for (const handle of this.timers.get(duel.id) ?? []) this.clearTimer(handle);
     this.timers.delete(duel.id);
     this.duels.delete(duel.id);
+    const wasPrivate = this.privateDuels.delete(duel.id);
     for (const id of duel.playerIds) this.byPlayer.delete(id);
+
+    // Рейтинг — только за открытый матч двух живых игроков.
+    const rated =
+      !wasPrivate && outcomes.length === 2 && outcomes.every((result) => !result.opponentIsGhost);
 
     this.options.onFinish?.({
       duelId: duel.id,
@@ -218,6 +233,8 @@ export class Matchmaker {
         log: duel.logOf(id),
         ghost: duel.isGhost(id),
       })),
+      outcomes,
+      rated,
     });
   }
 

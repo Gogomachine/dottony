@@ -13,12 +13,23 @@ import {
   type DailyInfo,
   type DuelServerMessage,
   type LeaderboardResponse,
+  type MeResponse,
+  type RatingLeaderboardResponse,
   type SubmitDailyResponse,
 } from '@doton/protocol';
+import {
+  decayDeviation,
+  leagueOf,
+  nextLeague,
+  updateRating,
+  PLACEMENT_GAMES,
+  type Rating,
+} from '@doton/core';
 import { dailySeed, replayDaily, todayUtc } from './daily.js';
 import { Store } from './db.js';
 import { DEFAULT_GHOST_SCORE, makeSyntheticGhost } from './ghost.js';
-import { Matchmaker } from './matchmaker.js';
+import { Matchmaker, type MatchResult } from './matchmaker.js';
+import type { DuelOutcome } from './duel.js';
 import { verifyTelegramInitData } from './telegram.js';
 
 export interface AppOptions {
@@ -44,6 +55,15 @@ interface TokenPayload {
 }
 
 const LEADERBOARD_SIZE = 50;
+const RATING_BOARD_SIZE = 50;
+
+/** Сколько дней игрок не играл рейтинговых матчей. */
+function idleDays(ratedAt: string | null): number {
+  if (!ratedAt) return 0;
+  const last = Date.parse(`${ratedAt.replace(' ', 'T')}Z`);
+  if (Number.isNaN(last)) return 0;
+  return Math.max(0, (Date.now() - last) / 86_400_000);
+}
 
 /** Собирает приложение и готовит схему БД. */
 export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
@@ -59,13 +79,76 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   await app.register(jwt, { secret: options.jwtSecret });
   await app.register(websocket);
 
+  /**
+   * Пересчитывает рейтинги обоих игроков по итогу матча и сообщает им
+   * новые значения. Считаем после отправки результата: игрок сразу видит
+   * исход, а рейтинг «догоняет» через мгновение.
+   */
+  const applyRatings = async (result: MatchResult): Promise<void> => {
+    if (!result.rated || result.outcomes.length !== 2) return;
+    const [first, second] = result.outcomes as [DuelOutcome, DuelOutcome];
+
+    const before = await Promise.all([
+      store.ratingOf(first.playerId),
+      store.ratingOf(second.playerId),
+    ]);
+    // Простой между матчами повышает неуверенность — так рейтинг вернувшегося
+    // игрока быстрее приходит к его настоящей силе.
+    const [firstBefore, secondBefore] = before.map((rating) =>
+      decayDeviation(rating, idleDays(rating.ratedAt)),
+    ) as [Rating, Rating];
+
+    const updates = [
+      {
+        outcome: first,
+        before: firstBefore,
+        played: before[0]!.games,
+        after: updateRating(firstBefore, secondBefore, first.outcome),
+      },
+      {
+        outcome: second,
+        before: secondBefore,
+        played: before[1]!.games,
+        after: updateRating(secondBefore, firstBefore, second.outcome),
+      },
+    ];
+
+    await Promise.all(
+      updates.map(async ({ outcome, before: was, played, after }) => {
+        await store.saveRating(outcome.playerId, after);
+        await store.saveRatingChange(result.duelId, outcome.playerId, was.rating, after.rating);
+        outcome.player.send({
+          type: 'finished',
+          score: outcome.score,
+          opponentScore: outcome.opponentScore,
+          outcome: outcome.outcome,
+          rating: {
+            before: was.rating,
+            after: after.rating,
+            league: leagueOf(after.rating).name,
+            ...(played + 1 < PLACEMENT_GAMES
+              ? { placement: { played: played + 1, required: PLACEMENT_GAMES } }
+              : {}),
+          },
+        });
+      }),
+    );
+  };
+
   const matchmaker = new Matchmaker({
     onFinish: (result) => {
       // Призрака в базу не пишем: он не игрок, и его «результат» уже там есть.
-      const players = result.players.filter((player) => !player.ghost);
+      const outcomes = new Map(result.outcomes.map((entry) => [entry.playerId, entry.outcome]));
+      const players = result.players
+        .filter((player) => !player.ghost)
+        .map((player) => {
+          const outcome = outcomes.get(player.id);
+          return outcome ? { ...player, outcome } : player;
+        });
       if (players.length === 0) return;
       void store
         .saveDuel(result.duelId, result.seed, players)
+        .then(() => applyRatings(result))
         .catch((error: unknown) => app.log.error(error, 'failed to save duel'));
     },
     findGhost: async (playerId) => {
@@ -199,6 +282,54 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   app.get('/api/me/duels', async (request) => {
     const user = await requireUser(request);
     return store.duelRecord(user.sub);
+  });
+
+  /** Карточка игрока: рейтинг, лига, место и сводка по дуэлям. */
+  app.get('/api/me', async (request): Promise<MeResponse> => {
+    const user = await requireUser(request);
+    const [rating, rank, duels] = await Promise.all([
+      store.ratingOf(user.sub),
+      store.ratingRank(user.sub),
+      store.duelRecord(user.sub),
+    ]);
+    const up = nextLeague(rating.rating);
+    return {
+      name: user.name,
+      rating: rating.rating,
+      deviation: rating.deviation,
+      league: leagueOf(rating.rating).name,
+      next: up ? { league: up.league.name, gap: up.gap } : null,
+      rank,
+      placement:
+        rating.games >= PLACEMENT_GAMES
+          ? null
+          : { played: rating.games, required: PLACEMENT_GAMES },
+      duels,
+    };
+  });
+
+  app.get('/api/rating', async (request): Promise<RatingLeaderboardResponse> => {
+    const rows = await store.ratingLeaderboard(RATING_BOARD_SIZE);
+    const entries = rows.map((row, index) => ({
+      rank: index + 1,
+      name: row.name,
+      rating: row.rating,
+      league: leagueOf(row.rating).name,
+    }));
+
+    // Токен не обязателен: гость просто увидит таблицу без своей строки.
+    let me: RatingLeaderboardResponse['me'] = null;
+    try {
+      const user = await requireUser(request);
+      const rank = await store.ratingRank(user.sub);
+      if (rank !== null) {
+        const rating = await store.ratingOf(user.sub);
+        me = { rank, name: user.name, rating: rating.rating, league: leagueOf(rating.rating).name };
+      }
+    } catch {
+      // нет или битый токен — смотрим таблицу анонимно
+    }
+    return { entries, me };
   });
 
   /**

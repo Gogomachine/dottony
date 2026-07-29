@@ -65,6 +65,32 @@ export interface SubmitDailyResponse {
   rank: number;
 }
 
+export interface RatingEntry {
+  rank: number;
+  name: string;
+  rating: number;
+  league: string;
+}
+
+export interface MeResponse {
+  name: string;
+  rating: number;
+  deviation: number;
+  league: string;
+  /** Следующая лига и сколько очков до неё; null — уже на вершине. */
+  next: { league: string; gap: number } | null;
+  /** Место в таблице; null, пока игрок не прошёл калибровку. */
+  rank: number | null;
+  /** Сколько рейтинговых матчей сыграно и сколько нужно; null — калибровка пройдена. */
+  placement: { played: number; required: number } | null;
+  duels: { played: number; won: number };
+}
+
+export interface RatingLeaderboardResponse {
+  entries: RatingEntry[];
+  me: RatingEntry | null;
+}
+
 export interface ApiError {
   error: string;
 }
@@ -149,5 +175,13 @@ export type DuelServerMessage =
       score: number;
       opponentScore: number;
       outcome: 'win' | 'loss' | 'draw';
+      /** Как матч сдвинул рейтинг; отсутствует, если матч был нерейтинговым. */
+      rating?: {
+        before: number;
+        after: number;
+        league: string;
+        /** Идёт калибровка: лига ещё не присвоена. */
+        placement?: { played: number; required: number };
+      };
     }
   | { type: 'error'; error: string };

@@ -14,7 +14,7 @@ import {
   type Board,
   type Cell,
 } from '@doton/core';
-import type { MoveLog } from '@doton/protocol';
+import type { DuelServerMessage, MoveLog } from '@doton/protocol';
 import { buildApp } from './app.js';
 import { Store } from './db.js';
 import { dailySeed, replayDaily, todayUtc } from './daily.js';
@@ -321,5 +321,200 @@ describe('API', () => {
     const board = await app.inject({ method: 'GET', url: '/api/daily/leaderboard' });
     const { entries } = board.json() as { entries: { name: string; rank: number }[] };
     expect(entries.map((entry) => entry.name)).toEqual(['Сильный', 'Слабый']);
+  });
+
+  it('новичок стоит на стартовом рейтинге и вне таблицы', async () => {
+    const token = await guestToken('Новичок');
+    const me = await app.inject({
+      method: 'GET',
+      url: '/api/me',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(me.json()).toMatchObject({
+      name: 'Новичок',
+      rating: 1500,
+      league: '9 вольт',
+      // До калибровки в таблице не показываемся.
+      rank: null,
+      placement: { played: 0, required: 5 },
+      duels: { played: 0, won: 0 },
+      next: { league: 'Киловатт', gap: 100 },
+    });
+
+    const board = await app.inject({ method: 'GET', url: '/api/rating' });
+    expect(board.json()).toEqual({ entries: [], me: null });
+  });
+});
+
+describe('рейтинг за дуэль', () => {
+  let app: FastifyInstance;
+  let base: string;
+
+  beforeEach(async () => {
+    app = await buildApp({
+      databaseUrl: ':memory:',
+      jwtSecret: 'test-jwt',
+      dailySecret: DAILY_SECRET,
+      // Призрак в этих тестах только мешал бы: ждём живого соперника.
+      duelGhosts: false,
+    });
+    await app.listen({ port: 0, host: '127.0.0.1' });
+    const address = app.server.address();
+    if (address === null || typeof address === 'string') throw new Error('no address');
+    base = `127.0.0.1:${address.port}`;
+  });
+
+  afterEach(async () => {
+    await app.close();
+  });
+
+  async function guest(name: string): Promise<string> {
+    const response = await app.inject({ method: 'POST', url: '/api/auth/guest', payload: { name } });
+    return (response.json() as { token: string }).token;
+  }
+
+  /** Живой игрок поверх настоящего WebSocket: инъекция сокеты не умеет. */
+  class Client {
+    readonly messages: DuelServerMessage[] = [];
+    private constructor(private readonly socket: WebSocket) {}
+
+    static async open(base: string, token: string): Promise<Client> {
+      const socket = new WebSocket(`ws://${base}/duel?token=${token}`);
+      const client = new Client(socket);
+      socket.addEventListener('message', (event) => {
+        client.messages.push(JSON.parse(String(event.data)) as DuelServerMessage);
+      });
+      await new Promise<void>((resolve, reject) => {
+        socket.addEventListener('open', () => resolve());
+        socket.addEventListener('error', () => reject(new Error('socket failed')));
+      });
+      return client;
+    }
+
+    send(message: unknown): void {
+      this.socket.send(JSON.stringify(message));
+    }
+
+    close(): void {
+      this.socket.close();
+    }
+
+    /** Ждёт сообщение, подходящее под условие: порядок ответов не гарантирован. */
+    async wait<T extends DuelServerMessage>(match: (message: DuelServerMessage) => boolean) {
+      const deadline = Date.now() + 5000;
+      for (;;) {
+        const found = this.messages.find(match);
+        if (found) return found as T;
+        if (Date.now() > deadline) {
+          throw new Error(`timeout, got: ${JSON.stringify(this.messages)}`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    }
+  }
+
+  type Finished = Extract<DuelServerMessage, { type: 'finished' }>;
+
+  /**
+   * Сводит двух игроков и завершает матч сдачей первого — исход предсказуем.
+   * Возвращает итоговые сообщения с рейтингом (в нерейтинговом матче — null).
+   */
+  async function playDuel(
+    tokens: [string, string],
+    options: { room?: string; rated?: boolean } = {},
+  ): Promise<{ loser: Finished | null; winner: Finished | null }> {
+    const loser = await Client.open(base, tokens[0]);
+    const winner = await Client.open(base, tokens[1]);
+    const join = options.room ? { type: 'join', room: options.room } : { type: 'join' };
+    loser.send(join);
+    await loser.wait((message) => message.type === 'searching');
+    winner.send(join);
+    await Promise.all([
+      loser.wait((message) => message.type === 'matched'),
+      winner.wait((message) => message.type === 'matched'),
+    ]);
+
+    loser.send({ type: 'leave' });
+    // Рейтинг досылается отдельным сообщением уже после результата.
+    const wanted = (message: DuelServerMessage): boolean =>
+      message.type === 'finished' && (options.rated !== false ? message.rating !== undefined : true);
+    const [loserFinal, winnerFinal] = await Promise.all([
+      loser.wait<Finished>(wanted),
+      winner.wait<Finished>(wanted),
+    ]);
+    loser.close();
+    winner.close();
+    return { loser: loserFinal, winner: winnerFinal };
+  }
+
+  it('победитель растёт, проигравший падает, и оба видят новый рейтинг', async () => {
+    const tokens: [string, string] = [await guest('Проигравший'), await guest('Победитель')];
+    const { loser, winner } = await playDuel(tokens);
+
+    expect(winner!.rating!.after).toBeGreaterThan(winner!.rating!.before);
+    expect(loser!.rating!.after).toBeLessThan(loser!.rating!.before);
+
+    const me = await app.inject({
+      method: 'GET',
+      url: '/api/me',
+      headers: { authorization: `Bearer ${tokens[1]}` },
+    });
+    const card = me.json() as {
+      rating: number;
+      rank: number | null;
+      placement: { played: number; required: number };
+      duels: { played: number; won: number };
+    };
+    expect(card.rating).toBe(winner!.rating!.after);
+    expect(card.duels).toEqual({ played: 1, won: 1 });
+    // Одна победа лигу не даёт: сначала калибровка.
+    expect(card.rank).toBeNull();
+    expect(card.placement).toEqual({ played: 1, required: 5 });
+    expect(winner!.rating!.placement).toEqual({ played: 1, required: 5 });
+
+    const board = await app.inject({ method: 'GET', url: '/api/rating' });
+    expect((board.json() as { entries: unknown[] }).entries).toEqual([]);
+  });
+
+  it('после калибровки игрок попадает в таблицу рейтинга', async () => {
+    const tokens: [string, string] = [await guest('Проигравший'), await guest('Победитель')];
+    for (let i = 0; i < 5; i++) await playDuel(tokens);
+
+    const me = await app.inject({
+      method: 'GET',
+      url: '/api/me',
+      headers: { authorization: `Bearer ${tokens[1]}` },
+    });
+    expect(me.json()).toMatchObject({ rank: 1, placement: null });
+
+    const board = await app.inject({
+      method: 'GET',
+      url: '/api/rating',
+      headers: { authorization: `Bearer ${tokens[0]}` },
+    });
+    const rating = board.json() as {
+      entries: { rank: number; name: string; league: string }[];
+      me: { rank: number; name: string };
+    };
+    expect(rating.entries.map((entry) => entry.name)).toEqual(['Победитель', 'Проигравший']);
+    expect(rating.entries[0]!.league).toBeTruthy();
+    expect(rating.me).toMatchObject({ rank: 2, name: 'Проигравший' });
+  }, 20_000);
+
+  it('матч в комнате с другом рейтинг не трогает', async () => {
+    const tokens: [string, string] = [await guest('Друг'), await guest('Подруга')];
+    const { winner } = await playDuel(tokens, { room: 'КОД1234', rated: false });
+    expect(winner!.rating).toBeUndefined();
+
+    // Даём фору асинхронному пересчёту: если бы он был, он бы уже прошёл.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    for (const token of tokens) {
+      const me = await app.inject({
+        method: 'GET',
+        url: '/api/me',
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(me.json()).toMatchObject({ rating: 1500, placement: { played: 0, required: 5 } });
+    }
   });
 });

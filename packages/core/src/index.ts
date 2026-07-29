@@ -4,3 +4,16 @@ export { createBoard, collapse, cellAt, dot } from './board.js';
 export { areNeighbors, validatePath, applyMove, chainPoints } from './move.js';
 export { phaseColorAt, phaseStateAt } from './phase.js';
 export type { PhaseState } from './phase.js';
+export {
+  newRating,
+  updateRating,
+  decayDeviation,
+  leagueOf,
+  nextLeague,
+  DEFAULT_RATING,
+  DEFAULT_DEVIATION,
+  DEFAULT_VOLATILITY,
+  PLACEMENT_GAMES,
+  LEAGUES,
+} from './rating.js';
+export type { Rating, Outcome, League } from './rating.js';
