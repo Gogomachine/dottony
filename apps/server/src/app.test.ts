@@ -1,4 +1,7 @@
-import { createHmac } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createClient } from '@libsql/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import {
@@ -13,6 +16,7 @@ import {
 } from '@doton/core';
 import type { MoveLog } from '@doton/protocol';
 import { buildApp } from './app.js';
+import { Store } from './db.js';
 import { dailySeed, replayDaily, todayUtc } from './daily.js';
 import { verifyTelegramInitData } from './telegram.js';
 
@@ -131,6 +135,39 @@ describe('verifyTelegramInitData', () => {
     const old = Math.floor(Date.now() / 1000) - 7200;
     const initData = signedInitData({ id: 42, first_name: 'Kira' }, old);
     expect(verifyTelegramInitData(initData, BOT_TOKEN)).toBeNull();
+  });
+});
+
+describe('миграции', () => {
+  it('доливает колонку log в базу, созданную до появления призраков', async () => {
+    const url = `file:${join(tmpdir(), `zaapo-migrate-${randomUUID()}.db`)}`;
+    const legacy = createClient({ url });
+    // Схема, какой она была до призраков: у duel_players нет колонки log.
+    await legacy.batch(
+      [
+        `CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT NOT NULL, tg_id TEXT UNIQUE,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+        `CREATE TABLE duels (id TEXT PRIMARY KEY, seed INTEGER NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+        `CREATE TABLE duel_players (duel_id TEXT NOT NULL, user_id TEXT NOT NULL,
+          score INTEGER NOT NULL, PRIMARY KEY (duel_id, user_id))`,
+      ],
+      'write',
+    );
+    legacy.close();
+
+    const store = new Store({ url });
+    await store.migrate();
+
+    // Именно эти вызовы падали на проде: подбор призрака и запись матча.
+    await expect(store.pickGhostRun('nobody', 500)).resolves.toBeUndefined();
+    await store.createUser('u1', 'Ада');
+    await expect(
+      store.saveDuel('d1', 42, [{ id: 'u1', score: 300, log: [{ t: 1, points: 300 }] }]),
+    ).resolves.toBeUndefined();
+    const ghost = await store.pickGhostRun('other', 300);
+    expect(ghost).toMatchObject({ name: 'Ада', seed: 42, score: 300 });
+    store.close();
   });
 });
 

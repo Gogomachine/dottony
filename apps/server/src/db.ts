@@ -70,6 +70,22 @@ export class Store {
       ],
       'write',
     );
+
+    // CREATE TABLE IF NOT EXISTS не меняет уже существующую таблицу, поэтому
+    // колонки, добавленные после первого запуска, доливаем отдельно.
+    await this.addColumnIfMissing('duel_players', 'log', "TEXT NOT NULL DEFAULT '[]'");
+  }
+
+  /** Идемпотентно добавляет колонку — безопасно на любой существующей базе. */
+  private async addColumnIfMissing(
+    table: string,
+    column: string,
+    definition: string,
+  ): Promise<void> {
+    const info = await this.client.execute(`PRAGMA table_info(${table})`);
+    const exists = info.rows.some((row) => String(row.name) === column);
+    if (exists) return;
+    await this.client.execute(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
 
   /**

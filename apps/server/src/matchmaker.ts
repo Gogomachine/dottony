@@ -34,6 +34,8 @@ export interface MatchmakerOptions {
   findGhost?: (playerId: string) => Promise<Ghost | undefined>;
   /** Сколько ждать живого соперника, прежде чем звать призрака, мс. */
   ghostAfterMs?: number;
+  /** Куда сообщать о сбоях подбора призрака. */
+  onError?: (error: unknown) => void;
   /** Подменяются в тестах, чтобы не ждать реальные секунды. */
   setTimer?: (fn: () => void, ms: number) => NodeJS.Timeout | number;
   clearTimer?: (handle: NodeJS.Timeout | number) => void;
@@ -97,8 +99,11 @@ export class Matchmaker {
           this.waiting.splice(stillWaiting, 1);
           this.startWithGhost(player, ghost);
         })
-        .catch(() => {
-          // Призрак не обязателен: без него игрок просто ждёт живого соперника.
+        .catch((error: unknown) => {
+          // Без призрака игрок останется ждать живого соперника — молча
+          // проглатывать причину нельзя, иначе поломка выглядит как «ничего
+          // не происходит» и не видна в логах.
+          this.options.onError?.(error);
         });
     }, this.ghostAfterMs);
     this.ghostTimers.set(player.id, handle);

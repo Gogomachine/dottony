@@ -22,7 +22,9 @@ if (!databaseUrl.startsWith('libsql://') && process.env.NODE_ENV === 'production
   console.warn(`DATABASE_URL not set — using ${databaseUrl}, data may be lost on restart`);
 }
 
+// В проде логи — единственный способ увидеть, что пошло не так.
 const app = await buildApp({
+  logger: process.env.NODE_ENV === 'production',
   databaseUrl,
   jwtSecret: jwtSecret ?? 'dev-jwt-secret',
   dailySecret: dailySecret ?? 'dev-daily-secret',

@@ -34,6 +34,8 @@ export interface AppOptions {
   duelGhosts?: boolean;
   /** Сколько ждать живого соперника до призрака, мс. */
   ghostAfterMs?: number;
+  /** Логи запросов и ошибок — включаем в проде. */
+  logger?: boolean;
 }
 
 interface TokenPayload {
@@ -45,7 +47,7 @@ const LEADERBOARD_SIZE = 50;
 
 /** Собирает приложение и готовит схему БД. */
 export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
+  const app = Fastify({ logger: options.logger ?? false });
   const store = new Store(
     options.databaseAuthToken
       ? { url: options.databaseUrl, authToken: options.databaseAuthToken }
@@ -86,6 +88,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       // Записей ещё нет: соперника отыгрывает Заппо примерно в силу игрока.
       return makeSyntheticGhost(randomInt(0, 0xffffffff), Math.round(target));
     },
+    onError: (error) => app.log.error(error, 'ghost lookup failed'),
     ...(options.ghostAfterMs === undefined ? {} : { ghostAfterMs: options.ghostAfterMs }),
   });
 
@@ -258,7 +261,13 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     socket.on('close', () => matchmaker.leave(player.id));
   });
 
-  app.get('/api/health', () => ({ ok: true, ...matchmaker.stats }));
+  // ghosts в ответе позволяет с одного взгляда понять, доехал ли деплой
+  // с призраками, не залезая в логи.
+  app.get('/api/health', () => ({
+    ok: true,
+    ghosts: options.duelGhosts !== false,
+    ...matchmaker.stats,
+  }));
 
   return app;
 }

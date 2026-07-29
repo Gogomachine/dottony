@@ -339,6 +339,8 @@ function showVersus(name: string, opponentScore: number): void {
 
 let opponentName = 'Соперник';
 let opponentScore = 0;
+/** Таймер подсказки на экране ожидания. */
+let searchHint = 0;
 /** Код комнаты, показанный в модалке, — для кнопки копирования ссылки. */
 let currentRoom = '';
 /** Открыта модалка ожидания соперника. */
@@ -355,15 +357,22 @@ function handleDuelMessage(message: DuelServerMessage): void {
               room: message.room,
               waiting: true,
             }
-          : {
-              title: 'Дуэль',
-              note: 'Ищем соперника… Если никого нет рядом, сыграешь против записи чужого матча.',
-              waiting: true,
-            },
+          : { title: 'Дуэль', note: 'Ищем живого соперника…', waiting: true },
       );
+      // Ожидание не должно выглядеть зависанием: если живого соперника нет,
+      // через несколько секунд сервер подставит запись — так и говорим.
+      if (!message.room) {
+        clearTimeout(searchHint);
+        searchHint = window.setTimeout(() => {
+          if (waitingForOpponent) {
+            overNoteEl.textContent = 'Никого рядом — подбираю запись чужого матча…';
+          }
+        }, 6000);
+      }
       break;
 
     case 'matched': {
+      clearTimeout(searchHint);
       inDuel = true;
       duelDuration = message.duration;
       // Честно помечаем запись: игрок должен знать, что соперник не живой.
@@ -426,6 +435,7 @@ function handleDuelMessage(message: DuelServerMessage): void {
 }
 
 function endDuel(): void {
+  clearTimeout(searchHint);
   inDuel = false;
   versusEl.hidden = true;
   duel.close();
