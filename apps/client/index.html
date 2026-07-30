@@ -44,17 +44,27 @@
     .mono { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
 
     /*
-     * В полноэкранном режиме Telegram кладёт поверх страницы свои плавающие
-     * кнопки сверху, а снизу остаётся системная полоса. Отступы берём из
-     * переменных клиента; на старых версиях их нет — тогда работают нули,
-     * то есть обычная вёрстка.
+     * В полноэкранном режиме поверх страницы оказываются сразу две полосы,
+     * и они складываются: системная (вырез, статус-бар, домашняя черта) и
+     * зона под плавающими кнопками самого Telegram, которая отсчитывается
+     * уже от системной. Учесть только вторую мало — шапка уезжает под
+     * «Закрыть». На старых клиентах переменных нет: работают нули, то есть
+     * обычная вёрстка.
      */
     .in-telegram .app {
-      padding-top: calc(18px + var(--tg-content-safe-area-inset-top, 0px));
-      padding-bottom: calc(24px + var(--tg-safe-area-inset-bottom, 0px));
+      padding-top: calc(
+        18px + var(--tg-safe-area-inset-top, 0px) + var(--tg-content-safe-area-inset-top, 0px)
+      );
+      padding-bottom: calc(
+        24px + var(--tg-safe-area-inset-bottom, 0px) +
+          var(--tg-content-safe-area-inset-bottom, 0px)
+      );
     }
     .in-telegram .replay-bar {
-      bottom: calc(18px + var(--tg-safe-area-inset-bottom, 0px));
+      bottom: calc(
+        18px + var(--tg-safe-area-inset-bottom, 0px) +
+          var(--tg-content-safe-area-inset-bottom, 0px)
+      );
     }
 
     .app {
