@@ -37,22 +37,16 @@ interface ChainWave {
 
 const GHOST_LIFE = FEEL.ghostLife;
 const SHOCK_LIFE = 0.5;
-/** Контур молнии заряда, в долях радиуса точки. */
-const BOLT = [
-  [0.18, -0.55],
-  [-0.3, 0.1],
-  [-0.02, 0.1],
-  [-0.18, 0.55],
-  [0.34, -0.14],
-  [0.06, -0.14],
-] as const;
+/** Метка отшлифованной линзы, в долях радиуса точки. */
+const LENS_RING = 0.62;
+const LENS_CORE = 0.2;
 
 function newAnim(): DotAnim {
   return { offset: 0, velocity: 0, delay: 0, scale: 1, scaleVelocity: 0, squash: 0 };
 }
 
 /**
- * Canvas-рендер поля: точки, заряды, линия цепочки, падение.
+ * Canvas-рендер поля: точки, линзы, линия цепочки, падение.
  * Свечение — только как ответ на действие (стайлгайд «Цепи»).
  */
 export class Renderer {
@@ -270,7 +264,7 @@ export class Renderer {
         ctx.fill();
 
         if (content.charged) {
-          this.drawBolt(center.x, y, radius * anim.scale);
+          this.drawLens(center.x, y, radius * anim.scale);
         }
       }
     }
@@ -316,16 +310,20 @@ export class Renderer {
     ctx.globalAlpha = 1;
   }
 
-  private drawBolt(x: number, y: number, radius: number): void {
+  /**
+   * Метка линзы на точке — кольцо с ядром внутри: та же фигура, что
+   * эмблема прибора, поэтому связь читается без объяснений.
+   */
+  private drawLens(x: number, y: number, radius: number): void {
     const ctx = this.ctx;
-    const scale = radius * 1.35;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.92)';
+    ctx.lineWidth = Math.max(1.4, radius * 0.15);
+    ctx.beginPath();
+    ctx.arc(x, y, radius * LENS_RING, 0, Math.PI * 2);
+    ctx.stroke();
     ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
     ctx.beginPath();
-    BOLT.forEach(([bx, by], i) => {
-      if (i === 0) ctx.moveTo(x + bx * scale, y + by * scale);
-      else ctx.lineTo(x + bx * scale, y + by * scale);
-    });
-    ctx.closePath();
+    ctx.arc(x, y, radius * LENS_CORE, 0, Math.PI * 2);
     ctx.fill();
   }
 

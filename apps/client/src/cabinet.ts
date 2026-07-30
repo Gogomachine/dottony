@@ -9,7 +9,7 @@ import {
   rename,
   telegramLinkUrl,
 } from './api';
-import { mascotSvg } from './mascot';
+import { emblemSvg } from './emblem';
 
 /**
  * Личный кабинет: кто я, какая лига, что сыграно.
@@ -64,7 +64,7 @@ export class Cabinet {
   private miniApp: string | null = null;
 
   constructor(private readonly handlers: CabinetHandlers) {
-    el<HTMLDivElement>('cab-mascot').innerHTML = mascotSvg({ size: 46 });
+    el<HTMLDivElement>('cab-emblem').innerHTML = emblemSvg({ size: 46 });
     this.historyTab.addEventListener('click', () => this.openTab('history'));
     this.friendsTab.addEventListener('click', () => this.openTab('friends'));
     el<HTMLButtonElement>('cab-add-friend').addEventListener('click', () => void this.addByCode());

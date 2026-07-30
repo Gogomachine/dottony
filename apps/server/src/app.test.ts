@@ -99,7 +99,7 @@ function stubTelegram(): TelegramCall[] {
   vi.stubGlobal('fetch', async (url: string, init: { body: string }) => {
     const method = String(url).split('/').pop() ?? '';
     calls.push({ method, payload: JSON.parse(init.body) as Record<string, unknown> });
-    const result = method === 'getMe' ? { username: 'ZaapoBot' } : {};
+    const result = method === 'getMe' ? { username: 'dotoscope_bot' } : {};
     return new Response(JSON.stringify({ ok: true, result }), {
       headers: { 'Content-Type': 'application/json' },
     });
@@ -168,7 +168,7 @@ describe('verifyTelegramInitData', () => {
 
 describe('миграции', () => {
   it('доливает колонку log в базу, созданную до появления призраков', async () => {
-    const url = `file:${join(tmpdir(), `zaapo-migrate-${randomUUID()}.db`)}`;
+    const url = `file:${join(tmpdir(), `dotoscope-migrate-${randomUUID()}.db`)}`;
     const legacy = createClient({ url });
     // Схема, какой она была до призраков: у duel_players нет колонки log.
     await legacy.batch(
@@ -199,7 +199,7 @@ describe('миграции', () => {
   });
 
   it('переносит старые аккаунты в таблицу личностей', async () => {
-    const url = `file:${join(tmpdir(), `zaapo-identities-${randomUUID()}.db`)}`;
+    const url = `file:${join(tmpdir(), `dotoscope-identities-${randomUUID()}.db`)}`;
     const legacy = createClient({ url });
     // Схема до личностей: способ входа хранился колонкой в users.
     await legacy.batch(
@@ -294,7 +294,7 @@ describe('бот', () => {
   it('простой /start заводит игрока и разрешает боту писать', async () => {
     const response = await app.inject(update('/start'));
     expect(response.statusCode).toBe(200);
-    expect(lastMessage()).toContain('Zaapo');
+    expect(lastMessage()).toContain('dotoscope');
 
     // Тот же Telegram теперь входит в игру и находит этот же аккаунт.
     const auth = await app.inject({
@@ -337,7 +337,7 @@ describe('бот', () => {
       headers: { authorization: `Bearer ${token}` },
     });
     const { url } = link.json() as { url: string };
-    expect(url).toContain('https://t.me/ZaapoBot?start=l_');
+    expect(url).toContain('https://t.me/dotoscope_bot?start=l_');
     const payload = url.split('start=')[1]!;
 
     await app.inject(update(`/start ${payload}`));
@@ -440,7 +440,7 @@ describe('бот', () => {
     expect(String(sent.payload.text)).toContain('Ада');
     // Кнопка ведёт прямо в комнату внутри Telegram.
     const markup = sent.payload.reply_markup as { inline_keyboard: { url: string }[][] };
-    expect(markup.inline_keyboard[0]![0]!.url).toBe('https://t.me/ZaapoBot?startapp=ROOM1234');
+    expect(markup.inline_keyboard[0]![0]!.url).toBe('https://t.me/dotoscope_bot?startapp=ROOM1234');
   });
 
   it('другу без Telegram сообщение не уходит — клиент предложит ссылку', async () => {
@@ -474,7 +474,7 @@ describe('бот', () => {
 
   it('health показывает, доехал ли токен бота', async () => {
     const response = await app.inject({ method: 'GET', url: '/api/health' });
-    expect(response.json()).toMatchObject({ telegram: true, bot: 'ZaapoBot' });
+    expect(response.json()).toMatchObject({ telegram: true, bot: 'dotoscope_bot' });
 
     const without = await buildApp({
       databaseUrl: ':memory:',
@@ -533,11 +533,11 @@ describe('привязка способов входа', () => {
     await store.createUser('u1', 'Ада', { kind: 'guest', externalId: 'u1' });
     await store.saveDuel('d1', 42, [
       { id: 'u1', name: 'Ада', score: 300, outcome: 'loss', log: [{ t: 1, points: 300 }] },
-      { id: 'ghost:Заппо:1', name: 'Заппо', score: 500, log: [{ t: 1, points: 500 }], ghost: true },
+      { id: 'ghost:Эталон:1', name: 'Эталон', score: 500, log: [{ t: 1, points: 500 }], ghost: true },
     ]);
 
     const [entry] = await store.duelHistory('u1', 10);
-    expect(entry).toMatchObject({ opponentName: 'Заппо', opponentScore: 500, opponentGhost: true });
+    expect(entry).toMatchObject({ opponentName: 'Эталон', opponentScore: 500, opponentGhost: true });
     // Запись призрака не должна снова стать призраком: это копия чужого темпа.
     await expect(store.pickGhostRun('u1', 500)).resolves.toBeUndefined();
     // И на сводку дуэлей строка призрака не влияет.
@@ -903,12 +903,12 @@ describe('API', () => {
     expect(me.json()).toMatchObject({
       name: 'Новичок',
       rating: 1500,
-      league: '9 вольт',
+      league: 'Лупа',
       // До калибровки в таблице не показываемся.
       rank: null,
       placement: { played: 0, required: 5 },
       duels: { played: 0, won: 0 },
-      next: { league: 'Киловатт', gap: 100 },
+      next: { league: 'Бинокль', gap: 100 },
     });
 
     const board = await app.inject({ method: 'GET', url: '/api/rating' });

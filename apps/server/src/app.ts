@@ -192,7 +192,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
           // Битая запись — лучше синтетический соперник, чем пустое ожидание.
         }
       }
-      // Записей ещё нет: соперника отыгрывает Заппо примерно в силу игрока.
+      // Записей ещё нет: соперника отыгрывает «Эталон» примерно в силу игрока.
       return makeSyntheticGhost(randomInt(0, 0xffffffff), Math.round(target));
     },
     onError: (error) => app.log.error(error, 'ghost lookup failed'),
@@ -420,7 +420,11 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       return `${friend.name} теперь у тебя в друзьях. Зови на дуэль!`;
     }
 
-    return 'Это Zaapo! Соединяй точки, собирай заряды и вызывай друзей на дуэль.';
+    return (
+      'dotoscope — прибор для наблюдения за круглыми объектами.\n' +
+      'Соединяй точки, шлифуй линзы, вызывай друзей на дуэль.\n\n' +
+      'ROUND THINGS INC'
+    );
   };
 
   if (bot) {
@@ -444,7 +448,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         await bot.sendMessage(
           String(message?.chat?.id ?? telegramId),
           answer,
-          link ? { text: '⚡ Играть', url: link } : undefined,
+          link ? { text: '🔭 Открыть прибор', url: link } : undefined,
         );
       } catch (error) {
         // Ошибку Telegram не увидит: повтор доставки только продублировал
@@ -553,8 +557,8 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     const link = bot.miniAppLink(parsedBody.data.room);
     if (!chat || !link) return reply.code(409).send({ error: 'no-telegram' });
 
-    const sent = await bot.sendMessage(chat, `${user.name} зовёт тебя на дуэль в Zaapo!`, {
-      text: '⚡ Принять вызов',
+    const sent = await bot.sendMessage(chat, `${user.name} зовёт тебя к прибору — дуэль в dotoscope.`, {
+      text: '🔭 Принять вызов',
       url: link,
     });
     if (!sent) return reply.code(409).send({ error: 'not-delivered' });

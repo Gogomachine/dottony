@@ -1,4 +1,4 @@
-# Деплой сервера Zaapo! на Render (https://render.com), режим Blueprint:
+# Деплой сервера dotoscope на Render (https://render.com), режим Blueprint:
 # New → Blueprint → выбрать этот репозиторий.
 #
 # Диск не подключаем: на бесплатном плане Render его нет, а файловая
@@ -8,6 +8,9 @@
 # DATABASE_URL (libsql://…) и DATABASE_AUTH_TOKEN — код тот же.
 services:
   - type: web
+    # Имя осталось от прежнего названия игры и менять его нельзя: по нему
+    # Render узнаёт уже развёрнутый сервис. Другое имя — это новый сервис,
+    # с новым адресом и без наших переменных окружения.
     name: zaapo-server
     runtime: node
     plan: free

@@ -29,7 +29,7 @@ import { FEEL } from './game/feel';
 import { ChainInput } from './game/input';
 import { Renderer } from './game/renderer';
 import { Session, SPRINT_SECONDS, type Mode } from './game/session';
-import { mascotSvg } from './mascot';
+import { emblemSvg } from './emblem';
 import { applyTheme, loadThemeName, THEMES, type Theme } from './theme';
 
 function el<T extends HTMLElement>(id: string): T {
@@ -51,7 +51,7 @@ const dailyBoardEl = el<HTMLOListElement>('daily-board');
 const modalBtn = el<HTMLButtonElement>('modal-action');
 const phaseEl = el<HTMLDivElement>('phase');
 const phaseTextEl = el<HTMLSpanElement>('phase-text');
-const mascotEl = el<HTMLSpanElement>('mascot');
+const emblemEl = el<HTMLSpanElement>('emblem');
 const streakEl = el<HTMLSpanElement>('streak');
 const versusEl = el<HTMLDivElement>('versus');
 const vsNameEl = el<HTMLSpanElement>('vs-name');
@@ -66,23 +66,23 @@ const replayTextEl = el<HTMLSpanElement>('replay-text');
 const roomBoxEl = el<HTMLDivElement>('room-box');
 const roomCodeEl = el<HTMLSpanElement>('room-code');
 const copyLinkBtn = el<HTMLButtonElement>('copy-link');
-const overMascotEl = el<HTMLDivElement>('over-mascot');
+const overEmblemEl = el<HTMLDivElement>('over-emblem');
 const boardWrap = canvas.parentElement as HTMLElement;
 
-// ---------- Заппо ----------
+// ---------- Объектив прибора ----------
 
-mascotEl.innerHTML = mascotSvg({ size: 38 });
-let winkTimer = 0;
+emblemEl.innerHTML = emblemSvg({ size: 38 });
+let focusTimer = 0;
 
-/** Заппо подмигивает и подпрыгивает — реакция на яркий момент. */
-function winkMascot(): void {
-  mascotEl.innerHTML = mascotSvg({ size: 38, wink: true });
-  mascotEl.classList.remove('bounce');
-  void mascotEl.offsetWidth; // перезапуск CSS-анимации
-  mascotEl.classList.add('bounce');
-  clearTimeout(winkTimer);
-  winkTimer = window.setTimeout(() => {
-    mascotEl.innerHTML = mascotSvg({ size: 38 });
+/** Прибор наводится на резкость — отклик на яркий момент партии. */
+function focusEmblem(): void {
+  emblemEl.innerHTML = emblemSvg({ size: 38, focused: true });
+  emblemEl.classList.remove('bounce');
+  void emblemEl.offsetWidth; // перезапуск CSS-анимации
+  emblemEl.classList.add('bounce');
+  clearTimeout(focusTimer);
+  focusTimer = window.setTimeout(() => {
+    emblemEl.innerHTML = emblemSvg({ size: 38 });
   }, 900);
 }
 
@@ -126,13 +126,13 @@ function startGame(seed?: number): void {
   updateHud();
 }
 
-/** Показывает текущую серию зарядов: следующий заряд даст такой множитель. */
+/** Текущее увеличение: следующая линза умножит отсчёты на столько. */
 function updateStreak(streak: number): void {
   const active = streak > 0;
   streakEl.hidden = !active;
   if (!active) return;
   streakEl.textContent = `×${streak + 1}`;
-  // Перезапуск анимации, чтобы каждый новый заряд «выстреливал».
+  // Перезапуск анимации, чтобы каждая новая линза «выстреливала».
   streakEl.style.animation = 'none';
   void streakEl.offsetWidth;
   streakEl.style.animation = '';
@@ -163,14 +163,14 @@ function updatePhaseBanner(): void {
   let bannerClass = '';
 
   if (active !== null) {
-    html = `<span class="swatch" style="--swatch:#fff"></span> Нагрузка сети ×${session.cfg.phaseMultiplier} — ${Math.ceil(remaining)} с`;
+    html = `<span class="swatch" style="--swatch:#fff"></span> Резонанс ×${session.cfg.phaseMultiplier} — ${Math.ceil(remaining)} с`;
     bannerClass = 'active';
     phaseEl.style.setProperty('--phase-bg', theme.dots[active]!);
   } else if (nextIn <= 5) {
     const color = theme.dots[nextColor]!;
-    html = `<span class="swatch" style="--swatch:${color}"></span> Нагрузка через ${Math.ceil(nextIn)} с`;
+    html = `<span class="swatch" style="--swatch:${color}"></span> Резонанс через ${Math.ceil(nextIn)} с`;
   } else {
-    html = 'Сеть стабильна';
+    html = 'Сигнал ровный';
   }
 
   const cacheKey = bannerClass + html;
@@ -340,8 +340,8 @@ function showOverModal(options: {
   /** Показать кнопку «добавить соперника в друзья». */
   addFriend?: { name: string; code: string };
 }): void {
-  // В модалке финиша Заппо подмигивает за вызов дня, в остальных — просто рад.
-  overMascotEl.innerHTML = mascotSvg({ size: 84, wink: options.title.startsWith('Вызов') });
+  // В модалке финиша прибор наведён на резкость за вызов дня.
+  overEmblemEl.innerHTML = emblemSvg({ size: 84, focused: options.title.startsWith('Вызов') });
   overTitleEl.textContent = options.title;
   roomBoxEl.hidden = options.room === undefined;
   if (options.room !== undefined) {
@@ -717,7 +717,7 @@ async function startReplay(duelId: string): Promise<void> {
 function showFloatingPoints(points: number, multiplier: number, at: { x: number; y: number }): void {
   const label = document.createElement('span');
   label.className = 'float-label';
-  label.textContent = multiplier > 1 ? `+${points} В ×${multiplier}` : `+${points} В`;
+  label.textContent = multiplier > 1 ? `+${points} ×${multiplier}` : `+${points}`;
   label.style.left = `${at.x}px`;
   label.style.top = `${at.y}px`;
   boardWrap.appendChild(label);
@@ -742,7 +742,7 @@ const input = new ChainInput(
     renderer.animateMove(oldGrid, result);
     showFloatingPoints(result.points, result.multiplier, at);
     updateStreak(result.streak);
-    if (result.charged || result.exploded.length > 0) winkMascot();
+    if (result.charged || result.exploded.length > 0) focusEmblem();
     updateHud();
   },
   (length: number) => {

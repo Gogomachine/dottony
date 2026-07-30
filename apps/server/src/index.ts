@@ -44,7 +44,7 @@ const app = await buildApp({
 
 try {
   await app.listen({ port, host: '0.0.0.0' });
-  console.log(`zaapo server on :${port}`);
+  console.log(`dotoscope server on :${port}`);
 } catch (error) {
   console.error(error);
   process.exit(1);

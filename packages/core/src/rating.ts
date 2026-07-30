@@ -154,15 +154,15 @@ export interface League {
 }
 
 /**
- * Лиги в словаре мира «Цепь»: от батарейки до энергосистемы.
- * Границы подобраны так, чтобы новичок стартовал в середине «9 вольт».
+ * Лиги — приборы возрастающей разрешающей силы: от лупы до обсерватории.
+ * Границы подобраны так, чтобы новичок стартовал в середине «Лупы».
  */
 export const LEAGUES: League[] = [
-  { key: 'volt9', name: '9 вольт', from: 0 },
-  { key: 'kilo', name: 'Киловатт', from: 1600 },
-  { key: 'mega', name: 'Мегаватт', from: 1750 },
-  { key: 'giga', name: 'Гигаватт', from: 1900 },
-  { key: 'grid', name: 'Энергосистема', from: 2100 },
+  { key: 'loupe', name: 'Лупа', from: 0 },
+  { key: 'binocular', name: 'Бинокль', from: 1600 },
+  { key: 'microscope', name: 'Микроскоп', from: 1750 },
+  { key: 'telescope', name: 'Телескоп', from: 1900 },
+  { key: 'observatory', name: 'Обсерватория', from: 2100 },
 ];
 
 export function leagueOf(rating: number): League {

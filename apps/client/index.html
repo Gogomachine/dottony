@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
-  <title>Zaapo! — соедини точки</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20100%20100'%3E%3Cpolygon%20points='54.7,4.9%2024.4,50.4%2043.9,50.4%2034.8,94.7%2075.2,44.5%2062.1,44.5'%20fill='%23F2A93F'%20stroke='%238A4A15'%20stroke-width='6'%20stroke-linejoin='round'/%3E%3C/svg%3E" />
+  <title>dotoscope — прибор для наблюдения за круглыми объектами</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20100%20100'%3E%3Ccircle%20cx='50'%20cy='50'%20r='34'%20fill='none'%20stroke='%23C9925C'%20stroke-width='9'/%3E%3Ccircle%20cx='50'%20cy='50'%20r='14'%20fill='%23C9925C'/%3E%3C/svg%3E" />
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     :root {
@@ -81,15 +81,23 @@
       align-items: center;
       gap: 10px;
     }
+    .brand { display: flex; flex-direction: column; line-height: 1.05; }
     .logo {
-      font-size: 20px;
+      font-size: 21px;
       font-weight: 800;
-      letter-spacing: 0.06em;
+      letter-spacing: -0.01em;
     }
-    #mascot { flex-shrink: 0; }
-    #mascot svg { display: block; }
-    #mascot.bounce { animation: mascotBounce 0.7s ease-out; }
-    @keyframes mascotBounce {
+    /* Производитель — мелким шрифтом, как гравировка на корпусе прибора. */
+    .maker {
+      font-size: 8px;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      color: var(--muted);
+    }
+    #emblem { flex-shrink: 0; }
+    #emblem svg { display: block; }
+    #emblem.bounce { animation: emblemBounce 0.7s ease-out; }
+    @keyframes emblemBounce {
       0% { transform: scale(1) rotate(0deg); }
       30% { transform: scale(1.35) rotate(-10deg); }
       60% { transform: scale(1.15) rotate(7deg); }
@@ -385,8 +393,8 @@
       text-align: left;
     }
     .cab-head { display: flex; align-items: center; gap: 12px; }
-    #cab-mascot { flex-shrink: 0; }
-    #cab-mascot svg { display: block; }
+    #cab-emblem { flex-shrink: 0; }
+    #cab-emblem svg { display: block; }
     .cab-who { display: flex; flex-direction: column; flex: 1; min-width: 0; }
     .cab-name {
       font-size: 20px;
@@ -544,15 +552,18 @@
 <body>
   <div class="app">
     <header>
-      <span id="mascot"></span>
-      <span class="logo">ZAAPO!</span>
+      <span id="emblem"></span>
+      <span class="brand">
+        <span class="logo">dotoscope</span>
+        <span class="maker">ROUND THINGS INC</span>
+      </span>
       <span class="spacer"></span>
       <button id="theme-toggle" title="Сменить тему">◐</button>
     </header>
 
     <div class="hud">
       <div class="score-block">
-        <span class="score-label">Вольты</span>
+        <span class="score-label">Отсчёты</span>
         <span class="score-row">
           <span id="score" class="mono">0</span>
           <span id="streak" class="mono" hidden></span>
@@ -581,12 +592,12 @@
       <button id="mode-free">Свободно</button>
       <button id="mode-daily">Вызов дня</button>
       <span class="spacer"></span>
-      <button id="new-board">Новая плата</button>
+      <button id="new-board">Новый образец</button>
       <span id="seed" class="mono"></span>
     </div>
 
     <div class="controls">
-      <button id="mode-duel">⚡ Дуэль</button>
+      <button id="mode-duel">Дуэль</button>
       <button id="invite">Позвать друга</button>
       <button id="join-code">Ввести код</button>
       <span class="spacer"></span>
@@ -601,7 +612,7 @@
   <div id="cabinet" class="overlay" hidden>
     <div class="modal cabinet">
       <div class="cab-head">
-        <div id="cab-mascot"></div>
+        <div id="cab-emblem"></div>
         <div class="cab-who">
           <span id="cab-name" class="cab-name"></span>
           <span id="cab-login" class="cab-login"></span>
@@ -653,7 +664,7 @@
 
   <div id="game-over" class="overlay" hidden>
     <div class="modal">
-      <div id="over-mascot"></div>
+      <div id="over-emblem"></div>
       <h2 id="over-title">Время вышло</h2>
       <span id="final-score" class="mono">0</span>
       <div id="rating-line" class="rating-line" hidden></div>
