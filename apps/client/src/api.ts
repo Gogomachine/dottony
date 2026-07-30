@@ -74,9 +74,15 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 interface TelegramWebApp {
   initData: string;
   initDataUnsafe?: { start_param?: string };
-  themeParams?: { bg_color?: string; text_color?: string; hint_color?: string };
   ready(): void;
   expand?(): void;
+  /** Запрет вертикальных свайпов (Bot API 7.7+). */
+  disableVerticalSwipes?(): void;
+  /** Полный экран (Bot API 8.0+). */
+  requestFullscreen?(): void;
+  setBackgroundColor?(color: string): void;
+  setHeaderColor?(color: string): void;
+  setBottomBarColor?(color: string): void;
   openTelegramLink?(url: string): void;
 }
 
@@ -235,9 +241,39 @@ export function localDailySeed(date: string): number {
   return hash >>> 0;
 }
 
-const tg = telegramWebApp();
-if (tg) {
-  tg.ready();
-  // Мини-приложение открывается в половину экрана: поле игры туда не влезает.
-  tg.expand?.();
+/**
+ * Методы окна появлялись в разных версиях Bot API, и старый клиент на
+ * незнакомый вызов бросает исключение — даже когда сама функция в скрипте
+ * есть. Поэтому каждый вызов необязательный: не поддержали — не беда.
+ */
+function tryCall(action: () => void): void {
+  try {
+    action();
+  } catch {
+    // Старый Telegram: обойдёмся без этой возможности.
+  }
 }
+
+/** Готовит окно мини-приложения: во весь экран и без случайного сворачивания. */
+export function setupTelegramViewport(): void {
+  const tg = telegramWebApp();
+  if (!tg) return;
+  tryCall(() => tg.ready());
+  // Мини-приложение открывается в половину экрана: поле игры туда не влезает.
+  tryCall(() => tg.expand?.());
+  // Игрок ведёт цепочку пальцем, и движение вниз сворачивало бы игру
+  // прямо посреди хода.
+  tryCall(() => tg.disableVerticalSwipes?.());
+  tryCall(() => tg.requestFullscreen?.());
+}
+
+/** Красит системные полосы Telegram в цвет темы игры. */
+export function syncTelegramTheme(color: string): void {
+  const tg = telegramWebApp();
+  if (!tg || color.length === 0) return;
+  tryCall(() => tg.setBackgroundColor?.(color));
+  tryCall(() => tg.setHeaderColor?.(color));
+  tryCall(() => tg.setBottomBarColor?.(color));
+}
+
+setupTelegramViewport();

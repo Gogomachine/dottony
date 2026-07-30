@@ -15,6 +15,7 @@ import {
   inviteFriend,
   isTelegram,
   openInTelegram,
+  syncTelegramTheme,
   localDailySeed,
   localToday,
   resetAuth,
@@ -754,10 +755,20 @@ const input = new ChainInput(
 
 // ---------- Управление ----------
 
+/**
+ * Держит системные полосы Telegram в цвете темы: иначе в полноэкранном
+ * режиме они выпадают из картинки светлой или тёмной рамкой.
+ */
+function syncChrome(): void {
+  const color = getComputedStyle(document.documentElement).getPropertyValue('--screen').trim();
+  syncTelegramTheme(color);
+}
+
 el<HTMLButtonElement>('theme-toggle').addEventListener('click', () => {
   themeName = themeName === 'draft' ? 'graphite' : 'draft';
   theme = applyTheme(themeName);
   renderer.setTheme(THEMES[themeName]);
+  syncChrome();
 });
 
 const modeButtons = {
@@ -928,6 +939,7 @@ requestAnimationFrame(frame);
 
 if (isTelegram()) {
   document.documentElement.classList.add('in-telegram');
+  syncChrome();
 }
 
 // Ссылка-приглашение сразу ведёт в комнату друга.
