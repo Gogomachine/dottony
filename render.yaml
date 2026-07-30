@@ -11,16 +11,19 @@ services:
     name: zaapo-server
     runtime: node
     plan: free
-    # Простой `corepack enable` падает: он ставит шимы в /usr/bin, а тот
-    # на сборщике Render только для чтения. Ставим их в домашний каталог
-    # и добавляем в PATH.
+    # pnpm ставим напрямую через npm, без corepack: тот генерирует шимы
+    # сразу для всех пакетных менеджеров и ломается на ненужном нам yarn,
+    # причём по-разному от версии к версии — Render сам обновляет Node
+    # внутри 22.x, и сборка падала на ровном месте.
+    # Каталог npm — домашний: глобальный префикс может быть только для
+    # чтения. Версия берётся из packageManager, чтобы не разъезжалась.
     # --prod=false: сборке нужны devDependencies (esbuild), иначе NODE_ENV
     # ниже заставил бы pnpm поставить только runtime-зависимости.
     buildCommand: >-
-      export COREPACK_ENABLE_DOWNLOAD_PROMPT=0 &&
-      mkdir -p "$HOME/.corepack-bin" &&
-      corepack enable --install-directory "$HOME/.corepack-bin" &&
-      export PATH="$HOME/.corepack-bin:$PATH" &&
+      export npm_config_prefix="$HOME/.npm-global" &&
+      export PATH="$HOME/.npm-global/bin:$PATH" &&
+      export PNPM_VERSION="$(node -p "require('./package.json').packageManager.split('@')[1]")" &&
+      npm install --global --no-fund --no-audit "pnpm@$PNPM_VERSION" &&
       pnpm install --frozen-lockfile --prod=false &&
       pnpm --filter @doton/server build
     # Запускаем собранный бандл чистым node: в рантайме не нужны ни pnpm,
