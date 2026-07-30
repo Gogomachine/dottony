@@ -5,6 +5,7 @@ import websocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import {
   AddFriendRequestSchema,
+  AddScoreRequestSchema,
   DuelClientMessageSchema,
   FriendCodeSchema,
   GuestAuthRequestSchema,
@@ -72,6 +73,8 @@ const LEADERBOARD_SIZE = 50;
 const RATING_BOARD_SIZE = 50;
 const HISTORY_SIZE = 20;
 const RECENT_OPPONENTS = 8;
+/** Потолок стоимости одного хода — грубая проверка правдоподобия досыла. */
+const MAX_POINTS_PER_MOVE = 20_000;
 
 /** Сколько дней игрок не играл рейтинговых матчей. */
 function idleDays(ratedAt: string | null): number {
@@ -172,6 +175,13 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       if (players.every((player) => player.ghost)) return;
       void store
         .saveDuel(result.duelId, result.seed, players)
+        .then(() =>
+          Promise.all(
+            players
+              .filter((player) => !player.ghost)
+              .map((player) => store.addTotal(player.id, player.score)),
+          ),
+        )
         .then(() => applyRatings(result))
         .catch((error: unknown) => app.log.error(error, 'failed to save duel'));
     },
@@ -302,6 +312,8 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     if (typeof replay === 'string') return reply.code(400).send({ error: replay });
 
     await store.insertRun(user.sub, date, replay.score, JSON.stringify(moves));
+    // Очки уже пересчитаны ядром — засчитываем в наработку без проверок.
+    await store.addTotal(user.sub, replay.score);
     const response: SubmitDailyResponse = {
       score: replay.score,
       rank: await store.rank(date, replay.score),
@@ -345,15 +357,37 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return store.duelRecord(user.sub);
   });
 
+  /**
+   * Досыл отсчётов из режимов без конца партии. Дуэли и вызов дня сюда не
+   * ходят: их очки сервер считает сам и засчитывает у себя.
+   */
+  app.post('/api/me/score', async (request, reply) => {
+    const user = await requireUser(request);
+    const parsed = AddScoreRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
+
+    const { points, moves } = parsed.data;
+    // Один ход не может стоить сколько угодно: даже самая длинная цепочка
+    // с каскадом линз в резонансе не даёт и близко столько.
+    if (points > moves * MAX_POINTS_PER_MOVE) {
+      return reply.code(400).send({ error: 'implausible' });
+    }
+
+    const result = await store.addScore(user.sub, points, moves);
+    if (result === 'too-fast') return reply.code(429).send({ error: 'too-fast' });
+    return result;
+  });
+
   /** Карточка игрока: рейтинг, лига, место и сводка по дуэлям. */
   app.get('/api/me', async (request): Promise<MeResponse> => {
     const user = await requireUser(request);
-    const [rating, rank, duels, identities, daily] = await Promise.all([
+    const [rating, rank, duels, identities, daily, total] = await Promise.all([
       store.ratingOf(user.sub),
       store.ratingRank(user.sub),
       store.duelRecord(user.sub),
       store.identitiesOf(user.sub),
       store.dailyRecord(user.sub),
+      store.totalScore(user.sub),
     ]);
     const up = nextLeague(rating.rating);
     const league = leagueOf(rating.rating);
@@ -370,6 +404,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
           ? null
           : { played: rating.games, required: PLACEMENT_GAMES },
       duels,
+      total,
       identities,
       daily,
     };

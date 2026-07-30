@@ -893,6 +893,89 @@ describe('API', () => {
     }
   });
 
+  it('наработка копится из режима без конца партии', async () => {
+    const token = await guestToken('Наблюдатель');
+    const add = async (points: number, moves: number) =>
+      app.inject({
+        method: 'POST',
+        url: '/api/me/score',
+        headers: { authorization: `Bearer ${token}` },
+        payload: { points, moves },
+      });
+
+    expect((await add(1200, 12)).statusCode).toBe(200);
+    expect((await add(800, 9)).json()).toEqual({ total: 2000 });
+
+    const me = await app.inject({
+      method: 'GET',
+      url: '/api/me',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(me.json()).toMatchObject({ total: 2000 });
+  });
+
+  it('накрутить наработку одним запросом не выйдет', async () => {
+    const token = await guestToken('Хитрец');
+
+    // Ходов больше, чем человек успел бы сделать за время жизни аккаунта.
+    const tooMany = await app.inject({
+      method: 'POST',
+      url: '/api/me/score',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { points: 100_000, moves: 1500 },
+    });
+    expect(tooMany.statusCode).toBe(429);
+
+    // Немного ходов, но неправдоподобно дорогих.
+    const tooRich = await app.inject({
+      method: 'POST',
+      url: '/api/me/score',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { points: 199_999, moves: 3 },
+    });
+    expect(tooRich.statusCode).toBe(400);
+    expect(tooRich.json()).toEqual({ error: 'implausible' });
+
+    // За пределами схемы вообще не принимаем.
+    const absurd = await app.inject({
+      method: 'POST',
+      url: '/api/me/score',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { points: 10_000_000, moves: 1 },
+    });
+    expect(absurd.statusCode).toBe(400);
+
+    const me = await app.inject({
+      method: 'GET',
+      url: '/api/me',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    // Ни один из отклонённых досылов не прошёл.
+    expect(me.json()).toMatchObject({ total: 0 });
+  });
+
+  it('вызов дня добавляет в наработку проверенные очки', async () => {
+    const token = await guestToken('Вольт');
+    const daily = await app.inject({ method: 'GET', url: '/api/daily' });
+    const { date, seed } = daily.json() as { date: string; seed: number };
+    const { moves, score } = playHonestRun(seed, 4);
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/daily/run',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { date, moves },
+    });
+
+    const me = await app.inject({
+      method: 'GET',
+      url: '/api/me',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    // Очки прошли через ядро — досылать их клиенту незачем.
+    expect(me.json()).toMatchObject({ total: score });
+  });
+
   it('новичок стоит на стартовом рейтинге и вне таблицы', async () => {
     const token = await guestToken('Новичок');
     const me = await app.inject({
@@ -1048,9 +1131,12 @@ describe('рейтинг за дуэль', () => {
       rank: number | null;
       placement: { played: number; required: number };
       duels: { played: number; won: number };
+      total: number;
     };
     expect(card.rating).toBe(winner!.rating!.after);
     expect(card.duels).toEqual({ played: 1, won: 1 });
+    // Очки дуэли идут в наработку сами: сервер их уже посчитал.
+    expect(card.total).toBe(winner!.score);
     // Одна победа лигу не даёт: сначала калибровка.
     expect(card.rank).toBeNull();
     expect(card.placement).toEqual({ played: 1, required: 5 });

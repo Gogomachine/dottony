@@ -15,6 +15,7 @@ import {
   inviteFriend,
   isTelegram,
   openInTelegram,
+  postScore,
   syncTelegramTheme,
   localDailySeed,
   localToday,
@@ -235,6 +236,8 @@ async function startDaily(): Promise<void> {
     setActiveModeButton('daily');
     dailyRun = { date: info.date, moves: [] };
     startGame(info.seed);
+    // Вход мог произойти только что — покажем лигу, не дожидаясь конца забега.
+    void refreshProfile();
   } catch {
     showOverModal({
       title: 'Вызов дня',
@@ -260,6 +263,8 @@ async function finishDaily(run: { date: string; moves: MoveLog[] }, score: numbe
     const board = await getLeaderboard(run.date);
     overNoteEl.textContent = `Твоё место: ${result.rank}`;
     renderBoard(board);
+    // Профиль мог появиться только что, да и наработка пополнилась.
+    void refreshProfile();
   } catch (error) {
     overNoteEl.textContent =
       error instanceof ApiError && error.code === 'already-played'
@@ -637,6 +642,48 @@ function renderRatingBoard(board: RatingLeaderboardResponse): void {
   }
 }
 
+// ---------- Наработка прибора ----------
+
+/**
+ * Отсчёты из режимов, у которых нет конца партии, копятся здесь и уходят
+ * на сервер пачками. Слать каждый ход было бы расточительно, а копить до
+ * конца партии нельзя — её попросту нет.
+ *
+ * Дуэли и вызов дня сюда не попадают: их очки сервер считает сам.
+ */
+let pendingScore = { points: 0, moves: 0 };
+let flushTimer = 0;
+
+function countScore(points: number): void {
+  if (inDuel || dailyRun || replay) return;
+  pendingScore.points += points;
+  pendingScore.moves += 1;
+  if (flushTimer !== 0) return;
+  flushTimer = window.setTimeout(() => {
+    flushTimer = 0;
+    void flushScore();
+  }, 15_000);
+}
+
+async function flushScore(): Promise<void> {
+  if (!apiAvailable || !hasAuth()) return;
+  const batch = pendingScore;
+  if (batch.points === 0) return;
+  // Обнуляем до отправки: неудачный досыл лучше потерять, чем зачесть дважды.
+  pendingScore = { points: 0, moves: 0 };
+  try {
+    await postScore(batch.points, batch.moves);
+  } catch {
+    // Сеть подведёт — партия продолжается, накопим заново.
+  }
+}
+
+// Сворачивание — последний надёжный момент досчитать наработку: на
+// телефоне вкладку часто закрывают, не возвращаясь в неё.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') void flushScore();
+});
+
 // ---------- Реплей ----------
 
 /**
@@ -739,6 +786,7 @@ const input = new ChainInput(
       dailyRun.moves.push({ path: path.map((cell) => ({ ...cell })), t: Number(elapsed.toFixed(3)) });
     }
     if (inDuel) duel.move(path, elapsed);
+    countScore(result.points);
     renderer.animateMove(oldGrid, result);
     showFloatingPoints(result.points, result.multiplier, at);
     updateStreak(result.streak);
@@ -787,6 +835,7 @@ function setActiveModeButton(active: keyof typeof modeButtons): void {
 function setMode(next: Mode): void {
   if (inDuel) endDuel();
   stopReplay();
+  void flushScore();
   mode = next;
   dailyRun = null;
   setActiveModeButton(next);
@@ -961,6 +1010,7 @@ if (apiAvailable) {
 
 // Уход со страницы во время матча — техническое поражение, а не зависший матч.
 addEventListener('beforeunload', () => {
+  void flushScore();
   if (inDuel) duel.close();
 });
 

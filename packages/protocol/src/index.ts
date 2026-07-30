@@ -38,6 +38,16 @@ export const FriendCodeSchema = z
 
 export const AddFriendRequestSchema = z.object({ code: FriendCodeSchema });
 
+/**
+ * Досыл набранного в режимах без конца партии. Ходы нужны для проверки
+ * правдоподобия: сервер не видел этой партии и не может пересчитать её
+ * ядром, как дуэль или вызов дня.
+ */
+export const AddScoreRequestSchema = z.object({
+  points: z.number().int().min(1).max(200_000),
+  moves: z.number().int().min(1).max(2000),
+});
+
 /** Приглашение друга в комнату: код комнаты тот же, что у приватной дуэли. */
 export const InviteRequestSchema = z.object({
   room: z.string().trim().min(4).max(16),
@@ -53,6 +63,7 @@ export type SubmitDailyRequest = z.infer<typeof SubmitDailyRequestSchema>;
 export type GuestAuthRequest = z.infer<typeof GuestAuthRequestSchema>;
 export type RenameRequest = z.infer<typeof RenameRequestSchema>;
 export type AddFriendRequest = z.infer<typeof AddFriendRequestSchema>;
+export type AddScoreRequest = z.infer<typeof AddScoreRequestSchema>;
 export type TelegramAuthRequest = z.infer<typeof TelegramAuthRequestSchema>;
 
 export interface AuthResponse {
@@ -164,6 +175,8 @@ export interface MeResponse {
   /** Сколько рейтинговых матчей сыграно и сколько нужно; null — калибровка пройдена. */
   placement: { played: number; required: number } | null;
   duels: { played: number; won: number };
+  /** Наработка прибора: все отсчёты за всё время, во всех режимах. */
+  total: number;
   /** Способы входа: гость, Telegram, кошелёк. */
   identities: IdentityInfo[];
   /** Лучший результат в вызове дня и сколько дней сыграно. */

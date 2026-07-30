@@ -432,6 +432,21 @@
       background: var(--accent);
     }
 
+    /* Счётчик наработки — как суммирующий индикатор на корпусе прибора. */
+    .totalizer { display: flex; flex-direction: column; gap: 5px; }
+    .tot-head { display: flex; align-items: baseline; justify-content: space-between; }
+    .tot-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .tot-value { font-size: 24px; font-weight: 800; letter-spacing: 0.04em; }
+    .tot-bar { height: 4px; border-radius: 99px; background: var(--board-border); overflow: hidden; }
+    .tot-bar i { display: block; height: 100%; border-radius: 99px; background: var(--accent); }
+    .tot-next { font-size: 11px; font-weight: 600; color: var(--muted); }
+
     .cab-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
     .cab-stats .stat { display: flex; flex-direction: column; align-items: center; gap: 2px; }
     .stat-value { font-size: 18px; font-weight: 800; }
@@ -622,6 +637,15 @@
       <button id="cab-link-tg" hidden>Привязать Telegram</button>
 
       <div id="cab-league" class="cab-league"></div>
+
+      <div class="totalizer">
+        <div class="tot-head">
+          <span class="tot-label">Наработка</span>
+          <span id="cab-total" class="tot-value mono">0</span>
+        </div>
+        <div class="tot-bar"><i id="cab-total-bar"></i></div>
+        <span id="cab-total-next" class="tot-next"></span>
+      </div>
 
       <div class="cab-stats">
         <div class="stat"><span id="cab-rating" class="stat-value mono"></span><span class="stat-label">рейтинг</span></div>

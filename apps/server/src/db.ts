@@ -5,6 +5,11 @@ import { newRating, PLACEMENT_GAMES, type Rating } from '@doton/core';
 /** Без похожих друг на друга символов: код диктуют вслух. */
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
+/** Минимальный интервал между ходами — тот же, что проверяет дуэль. */
+const MIN_MOVE_GAP = 0.1;
+/** Запас на первый досыл и расхождение часов. */
+const MOVE_SLACK = 30;
+
 export function makeFriendCode(): string {
   let code = '';
   for (let i = 0; i < 6; i++) code += CODE_ALPHABET[randomInt(0, CODE_ALPHABET.length)];
@@ -177,6 +182,10 @@ export class Store {
     // Бот не может написать первым тому, кто его не запускал, — отмечаем,
     // кому писать можно, чтобы не считать отказ доставки поломкой.
     await this.addColumnIfMissing('identities', 'bot_started', 'INTEGER NOT NULL DEFAULT 0');
+    // Наработка прибора: сумма отсчётов за всё время. scored_at нужен, чтобы
+    // проверять темп досылов из режимов, которые сервер не пересчитывает.
+    await this.addColumnIfMissing('users', 'total_score', 'INTEGER NOT NULL DEFAULT 0');
+    await this.addColumnIfMissing('users', 'scored_at', 'TEXT');
     // Код друга: короткий, его диктуют вслух и шлют ссылкой.
     await this.addColumnIfMissing('users', 'friend_code', 'TEXT');
     await this.client.execute(
@@ -606,6 +615,63 @@ export class Store {
       code: String(row.friend_code),
       playedAt: String(row.last_at),
     }));
+  }
+
+  /** Наработка прибора — сумма отсчётов игрока за всё время. */
+  async totalScore(userId: string): Promise<number> {
+    const result = await this.client.execute({
+      sql: 'SELECT total_score FROM users WHERE id = ?',
+      args: [userId],
+    });
+    return Number(result.rows[0]?.total_score ?? 0);
+  }
+
+  /**
+   * Засчитывает отсчёты, которые сервер посчитал сам: результат дуэли или
+   * вызова дня. Проверять тут нечего — эти очки уже прошли через ядро.
+   */
+  async addTotal(userId: string, points: number): Promise<void> {
+    if (points <= 0) return;
+    await this.client.execute({
+      sql: 'UPDATE users SET total_score = total_score + ? WHERE id = ?',
+      args: [points, userId],
+    });
+  }
+
+  /**
+   * Засчитывает досыл из режима без конца партии. Такую партию сервер не
+   * видел и пересчитать не может, поэтому проверяем правдоподобие темпа:
+   * ходов не может быть больше, чем физически успел сделать человек с
+   * прошлого досыла. Это не защита от упорного мошенника, но она рушит
+   * простейшее «отправить миллион одним запросом».
+   */
+  async addScore(
+    userId: string,
+    points: number,
+    moves: number,
+  ): Promise<{ total: number } | 'too-fast'> {
+    const result = await this.client.execute({
+      sql: `SELECT total_score, scored_at,
+                   (julianday('now') - julianday(COALESCE(scored_at, created_at))) * 86400
+                     AS elapsed
+            FROM users WHERE id = ?`,
+      args: [userId],
+    });
+    const row = result.rows[0];
+    if (!row) return 'too-fast';
+
+    // Небольшой запас поверх окна: первый досыл приходит с накопленным
+    // за сессию, а часы клиента и сервера могут разойтись.
+    const elapsed = Math.max(0, Number(row.elapsed ?? 0));
+    if (moves > elapsed / MIN_MOVE_GAP + MOVE_SLACK) return 'too-fast';
+
+    await this.client.execute({
+      sql: `UPDATE users
+            SET total_score = total_score + ?, scored_at = datetime('now')
+            WHERE id = ?`,
+      args: [points, userId],
+    });
+    return { total: Number(row.total_score) + points };
   }
 
   /** Сводка по вызову дня: сколько дней сыграно и лучший результат. */
