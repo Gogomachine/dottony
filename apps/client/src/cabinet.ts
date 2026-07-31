@@ -53,8 +53,6 @@ function shortDate(iso: string): string {
 export interface CabinetHandlers {
   onReplay(duelId: string): void;
   onRatingBoard(): void;
-  /** Имя поменялось — снаружи его показывают ещё в паре мест. */
-  onRenamed(name: string): void;
   /**
    * Позвать друга в матч: снаружи это открывает приватную комнату.
    * Код друга нужен, чтобы дослать приглашение сообщением в Telegram.
@@ -150,9 +148,7 @@ export class Cabinet {
     const next = answer.trim().slice(0, 24);
     if (next.length === 0) return;
     try {
-      const saved = await rename(next);
-      this.nameEl.textContent = saved;
-      this.handlers.onRenamed(saved);
+      this.nameEl.textContent = await rename(next);
     } catch {
       this.loginEl.textContent = 'Имя не сохранилось — попробуй ещё раз';
     }

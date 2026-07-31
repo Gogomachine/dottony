@@ -36,7 +36,9 @@ export class Session {
    * накоплением кадров: в свёрнутой вкладке кадры не идут, и таймер бы
    * «замерзал», расходясь с серверным.
    */
-  private readonly startedAt = Date.now();
+  private startedAt = Date.now();
+  /** Момент постановки на паузу; null — партия идёт. */
+  private pausedAt: number | null = null;
   private readonly duration: number;
 
   constructor(
@@ -79,7 +81,7 @@ export class Session {
    * вкладка или заблокированный экран не останавливают партию.
    */
   tick(_dtSeconds: number, now = Date.now()): boolean {
-    if (this.over) return false;
+    if (this.over || this.pausedAt !== null) return false;
     this.elapsed = (now - this.startedAt) / 1000;
     if (!this.timed) return false;
     this.timeLeft = Math.max(0, this.duration - this.elapsed);
@@ -104,6 +106,26 @@ export class Session {
       surgeStreak: streak,
     };
     this.score = score;
+  }
+
+  /**
+   * Пауза сдвигает начало партии вперёд на время простоя — часы идут, а
+   * партия нет. Разрешать её можно не везде: в дуэли время общее, а в
+   * вызове дня остановка дала бы фору перед остальными.
+   */
+  pause(now = Date.now()): void {
+    if (this.pausedAt !== null || this.over) return;
+    this.pausedAt = now;
+  }
+
+  resume(now = Date.now()): void {
+    if (this.pausedAt === null) return;
+    this.startedAt += now - this.pausedAt;
+    this.pausedAt = null;
+  }
+
+  get paused(): boolean {
+    return this.pausedAt !== null;
   }
 
   /**

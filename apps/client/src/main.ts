@@ -6,7 +6,6 @@ import {
   apiAvailable,
   ensureAuth,
   getConfig,
-  getMe,
   getRatingBoard,
   getReplay,
   getDaily,
@@ -43,6 +42,7 @@ const canvas = el<HTMLCanvasElement>('game');
 const scoreEl = el<HTMLSpanElement>('score');
 const timeEl = el<HTMLSpanElement>('time');
 const timeFill = el<HTMLElement>('time-fill');
+const timeBar = timeFill.parentElement as HTMLElement;
 const seedEl = el<HTMLSpanElement>('seed');
 const overlay = el<HTMLDivElement>('game-over');
 const overTitleEl = el<HTMLHeadingElement>('over-title');
@@ -58,9 +58,14 @@ const versusEl = el<HTMLDivElement>('versus');
 const vsNameEl = el<HTMLSpanElement>('vs-name');
 const vsScoreEl = el<HTMLSpanElement>('vs-score');
 const vsGapEl = el<HTMLSpanElement>('vs-gap');
-const duelRecordEl = el<HTMLSpanElement>('duel-record');
-const rankChipEl = el<HTMLButtonElement>('rank-chip');
 const ratingLineEl = el<HTMLDivElement>('rating-line');
+const menuEl = el<HTMLElement>('menu');
+const playEl = el<HTMLElement>('play');
+const pauseSheet = el<HTMLDivElement>('pause-sheet');
+const pauseNoteEl = el<HTMLSpanElement>('pause-note');
+const restartBtn = el<HTMLButtonElement>('pause-restart');
+const duelSheet = el<HTMLDivElement>('duel-sheet');
+const rulesSheet = el<HTMLDivElement>('rules-sheet');
 const addOpponentBtn = el<HTMLButtonElement>('add-opponent');
 const replayBarEl = el<HTMLDivElement>('replay-bar');
 const replayTextEl = el<HTMLSpanElement>('replay-text');
@@ -73,6 +78,7 @@ const boardWrap = canvas.parentElement as HTMLElement;
 // ---------- Объектив прибора ----------
 
 emblemEl.innerHTML = emblemSvg({ size: 38 });
+el<HTMLSpanElement>('menu-emblem').innerHTML = emblemSvg({ size: 64 });
 let focusTimer = 0;
 
 /** Прибор наводится на резкость — отклик на яркий момент партии. */
@@ -141,6 +147,9 @@ function updateStreak(streak: number): void {
 
 function updateHud(): void {
   scoreEl.textContent = String(session.score);
+  // В бесконечном режиме полоса времени только сбивает с толку: заполнена,
+  // но ничего не отсчитывает.
+  timeBar.hidden = !session.timed;
   if (session.timed) {
     const total = Math.ceil(session.timeLeft);
     const minutes = Math.floor(total / 60);
@@ -233,11 +242,8 @@ async function startDaily(): Promise<void> {
     }
 
     mode = 'sprint';
-    setActiveModeButton('daily');
     dailyRun = { date: info.date, moves: [] };
     startGame(info.seed);
-    // Вход мог произойти только что — покажем лигу, не дожидаясь конца забега.
-    void refreshProfile();
   } catch {
     showOverModal({
       title: 'Вызов дня',
@@ -263,8 +269,6 @@ async function finishDaily(run: { date: string; moves: MoveLog[] }, score: numbe
     const board = await getLeaderboard(run.date);
     overNoteEl.textContent = `Твоё место: ${result.rank}`;
     renderBoard(board);
-    // Профиль мог появиться только что, да и наработка пополнилась.
-    void refreshProfile();
   } catch (error) {
     overNoteEl.textContent =
       error instanceof ApiError && error.code === 'already-played'
@@ -461,7 +465,6 @@ function handleDuelMessage(message: DuelServerMessage): void {
       opponentCode = message.opponentCode ?? null;
       mode = 'duel';
       dailyRun = null;
-      setActiveModeButton('duel');
       startGame(message.seed);
       showVersus(opponentName, 0);
       break;
@@ -479,8 +482,7 @@ function handleDuelMessage(message: DuelServerMessage): void {
       opponentScore = message.opponentScore;
       opponentCode = message.opponentCode ?? null;
       mode = 'duel';
-      setActiveModeButton('duel');
-      startGame(message.seed);
+          startGame(message.seed);
       session.restore(message.grid, message.score, message.streak);
       session.syncRemaining(message.remaining);
       updateStreak(message.streak);
@@ -524,7 +526,6 @@ function handleDuelMessage(message: DuelServerMessage): void {
         ...(opponentCode ? { addFriend: { name: opponentName, code: opponentCode } } : {}),
       });
       endDuel({ awaitRating: true });
-      void refreshProfile();
       break;
     }
 
@@ -570,36 +571,7 @@ async function startDuel(room?: string): Promise<void> {
     showOverModal({ title: 'Дуэль', note: 'Не удалось войти. Попробуй ещё раз.' });
     return;
   }
-  // Профиль мог только что появиться — покажем лигу, не дожидаясь конца матча.
-  void refreshProfile();
   duel.connect(room);
-}
-
-/** Обновляет чип лиги и сводку дуэлей. Без профиля чип просто скрыт. */
-async function refreshProfile(): Promise<void> {
-  if (!apiAvailable || !hasAuth()) return;
-  try {
-    const me = await getMe();
-    duelRecordEl.textContent =
-      me.duels.played > 0 ? `дуэли: ${me.duels.won} из ${me.duels.played}` : '';
-
-    rankChipEl.hidden = false;
-    rankChipEl.classList.toggle('provisional', me.placement !== null);
-    if (me.placement) {
-      // До калибровки лига не присвоена — показываем прогресс, а не звание.
-      rankChipEl.textContent = `Калибровка ${me.placement.played}/${me.placement.required}`;
-      rankChipEl.title = 'Сыграй рейтинговые дуэли, чтобы получить лигу';
-      return;
-    }
-    rankChipEl.innerHTML = `<span></span><span class="rating"></span>`;
-    (rankChipEl.children[0] as HTMLElement).textContent = me.league;
-    (rankChipEl.children[1] as HTMLElement).textContent = String(me.rating);
-    rankChipEl.title = me.next
-      ? `${me.rank}-е место · до лиги «${me.next.league}» ${me.next.gap}`
-      : `${me.rank}-е место · высшая лига`;
-  } catch {
-    // Статистика необязательна — молча пропускаем.
-  }
 }
 
 async function showRatingBoard(): Promise<void> {
@@ -718,7 +690,7 @@ async function startReplay(duelId: string): Promise<void> {
   viewingOnly = false;
   dailyRun = null;
   mode = 'duel';
-  setActiveModeButton('duel');
+  showPlay();
   session = new Session(data.seed, 'duel', DEFAULT_CONFIG, duelDuration);
   renderer.resetAnims();
   updateStreak(0);
@@ -819,17 +791,29 @@ el<HTMLButtonElement>('theme-toggle').addEventListener('click', () => {
   syncChrome();
 });
 
-const modeButtons = {
-  sprint: el<HTMLButtonElement>('mode-sprint'),
-  free: el<HTMLButtonElement>('mode-free'),
-  daily: el<HTMLButtonElement>('mode-daily'),
-  duel: el<HTMLButtonElement>('mode-duel'),
-};
+// ---------- Экраны ----------
 
-function setActiveModeButton(active: keyof typeof modeButtons): void {
-  for (const [key, button] of Object.entries(modeButtons)) {
-    button.classList.toggle('active', key === active);
-  }
+/**
+ * Игра живёт на двух экранах: меню и партия. На поле нет ничего, кроме
+ * доски и паузы, — всё остальное открывается из меню, чтобы во время
+ * наблюдения ничего не отвлекало и не нажималось случайно.
+ */
+function showMenu(): void {
+  if (inDuel) endDuel();
+  stopReplay();
+  void flushScore();
+  session.over = true;
+  overlay.hidden = true;
+  pauseSheet.hidden = true;
+  playEl.hidden = true;
+  menuEl.hidden = false;
+}
+
+function showPlay(): void {
+  menuEl.hidden = true;
+  playEl.hidden = false;
+  // Канвас был скрыт, и его размеры равнялись нулю.
+  renderer.resize();
 }
 
 function setMode(next: Mode): void {
@@ -838,16 +822,47 @@ function setMode(next: Mode): void {
   void flushScore();
   mode = next;
   dailyRun = null;
-  setActiveModeButton(next);
   startGame();
+  showPlay();
 }
 
-modeButtons.sprint.addEventListener('click', () => setMode('sprint'));
-modeButtons.free.addEventListener('click', () => setMode('free'));
-modeButtons.daily.addEventListener('click', () => void startDaily());
-modeButtons.duel.addEventListener('click', () => void startDuel());
+const MENU_ACTIONS: Record<string, () => void> = {
+  profile: () => void cabinet.show('history'),
+  friends: () => void cabinet.show('friends'),
+  daily: () => {
+    showPlay();
+    void startDaily();
+  },
+  sprint: () => setMode('sprint'),
+  free: () => setMode('free'),
+  duel: () => {
+    duelSheet.hidden = false;
+  },
+  rules: () => {
+    rulesSheet.hidden = false;
+  },
+};
+
+for (const button of document.querySelectorAll<HTMLButtonElement>('.menu-list button')) {
+  const action = MENU_ACTIONS[button.dataset.go ?? ''];
+  if (action) button.addEventListener('click', action);
+}
+
+el<HTMLButtonElement>('rules-close').addEventListener('click', () => {
+  rulesSheet.hidden = true;
+});
+el<HTMLButtonElement>('duel-cancel').addEventListener('click', () => {
+  duelSheet.hidden = true;
+});
+el<HTMLButtonElement>('duel-quick').addEventListener('click', () => {
+  duelSheet.hidden = true;
+  showPlay();
+  void startDuel();
+});
 
 el<HTMLButtonElement>('invite').addEventListener('click', () => {
+  duelSheet.hidden = true;
+  showPlay();
   // Код придумываем сразу, чтобы показать его ещё до ответа сервера.
   void startDuel(makeRoomCode());
 });
@@ -860,13 +875,52 @@ el<HTMLButtonElement>('join-code').addEventListener('click', () => {
     showOverModal({ title: 'Дуэль', note: 'Код слишком короткий — проверь и введи ещё раз.' });
     return;
   }
+  duelSheet.hidden = true;
+  showPlay();
   void startDuel(room);
 });
+
+// ---------- Пауза ----------
+
+/**
+ * Останавливать время можно не везде: в дуэли оно общее с соперником, а в
+ * вызове дня остановка дала бы фору перед остальными. Там окно паузы
+ * открывается, но часы продолжают идти — и это честно сказано.
+ */
+function canPause(): boolean {
+  return !inDuel && dailyRun === null && replay === null;
+}
+
+el<HTMLButtonElement>('pause').addEventListener('click', () => {
+  if (canPause()) {
+    session.pause();
+    pauseNoteEl.textContent = 'Время остановлено';
+  } else {
+    pauseNoteEl.textContent = inDuel
+      ? 'Матч идёт: время не останавливается'
+      : 'Время идёт: попытка дня не ставится на паузу';
+  }
+  // Начинать заново посреди дуэли или попытки дня нечего.
+  restartBtn.hidden = !canPause();
+  seedEl.textContent = `образец #${session.seed.toString(16)}`;
+  pauseSheet.hidden = false;
+});
+
+el<HTMLButtonElement>('pause-resume').addEventListener('click', () => {
+  session.resume();
+  pauseSheet.hidden = true;
+});
+
+restartBtn.addEventListener('click', () => {
+  pauseSheet.hidden = true;
+  startGame();
+});
+
+el<HTMLButtonElement>('pause-quit').addEventListener('click', () => showMenu());
 
 const cabinet = new Cabinet({
   onReplay: (duelId) => void startReplay(duelId),
   onRatingBoard: () => void showRatingBoard(),
-  onRenamed: () => void refreshProfile(),
   onInvite: (friendCode) => void inviteToRoom(friendCode),
 });
 
@@ -904,11 +958,9 @@ addOpponentBtn.addEventListener('click', () => {
     });
 });
 
-// Чип лиги — вход в кабинет: рейтинг там же, но с историей и профилем.
-rankChipEl.addEventListener('click', () => void cabinet.show());
 el<HTMLButtonElement>('replay-stop').addEventListener('click', () => {
   stopReplay();
-  setMode('sprint');
+  showMenu();
 });
 
 copyLinkBtn.addEventListener('click', () => {
@@ -926,11 +978,6 @@ copyLinkBtn.addEventListener('click', () => {
       overNoteEl.textContent = link;
     });
 });
-el<HTMLButtonElement>('new-board').addEventListener('click', () => {
-  dailyRun = null;
-  setActiveModeButton(mode);
-  startGame();
-});
 modalBtn.addEventListener('click', () => {
   if (viewingOnly) {
     // Смотрели таблицу — партия под окном не тронута.
@@ -939,20 +986,19 @@ modalBtn.addEventListener('click', () => {
     return;
   }
   if (waitingForOpponent) {
-    // Отменяем поиск и возвращаемся в обычный спринт.
+    // Отменяем поиск и возвращаемся в меню.
     endDuel();
-    setMode('sprint');
+    showMenu();
     return;
   }
   if (dailyRun) {
-    // Попытка дня закончена — возвращаемся в обычный спринт.
+    // Попытка дня закончена — обратно в меню.
     dailyRun = null;
-    setActiveModeButton('sprint');
-    startGame();
+    showMenu();
     return;
   }
-  // Итог просто закрывается: новую партию игрок начинает сам — кнопкой
-  // «Новая плата» или выбором режима.
+  // Итог просто закрывается: партия под окном уже кончилась, а новую
+  // игрок начинает сам — паузой или из меню.
   overlay.hidden = true;
 });
 
@@ -985,17 +1031,19 @@ function frame(now: number): void {
 
 startGame();
 requestAnimationFrame(frame);
+showMenu();
 
 if (isTelegram()) {
   document.documentElement.classList.add('in-telegram');
   syncChrome();
 }
 
-// Ссылка-приглашение сразу ведёт в комнату друга.
+// Ссылка-приглашение сразу ведёт в комнату друга, минуя меню.
 const invitedRoom = roomFromLocation();
-if (invitedRoom) void startDuel(invitedRoom);
-void refreshProfile();
-
+if (invitedRoom) {
+  showPlay();
+  void startDuel(invitedRoom);
+}
 // Имя бота нужно для ссылок-приглашений: без него зовём обычным адресом.
 if (apiAvailable) {
   void getConfig()
