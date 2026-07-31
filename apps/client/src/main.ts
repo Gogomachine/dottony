@@ -724,7 +724,6 @@ async function startReplay(duelId: string): Promise<void> {
         title: 'Реплей окончен',
         score: data.score,
         ...(data.opponent ? { note: `Соперник: ${data.opponent}` } : {}),
-        viewing: true,
       });
     }, (last + 1.5) * 1000),
   );
@@ -997,9 +996,9 @@ modalBtn.addEventListener('click', () => {
     showMenu();
     return;
   }
-  // Итог просто закрывается: партия под окном уже кончилась, а новую
-  // игрок начинает сам — паузой или из меню.
-  overlay.hidden = true;
+  // Партия кончилась — возвращаемся в меню: оставаться на мёртвой доске
+  // незачем, а следующий режим игрок выбирает там же.
+  showMenu();
 });
 
 new ResizeObserver(() => renderer.resize()).observe(canvas);
