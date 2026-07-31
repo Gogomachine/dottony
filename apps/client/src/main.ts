@@ -13,7 +13,6 @@ import {
   hasAuth,
   inviteFriend,
   isTelegram,
-  openInTelegram,
   postScore,
   syncTelegramTheme,
   localDailySeed,
@@ -24,7 +23,7 @@ import {
   ApiError,
 } from './api';
 import { Cabinet } from './cabinet';
-import { DuelConnection, inviteLink, makeRoomCode, roomFromLocation } from './duel';
+import { DuelConnection, makeRoomCode } from './duel';
 import { FEEL } from './game/feel';
 import { ChainInput } from './game/input';
 import { Renderer } from './game/renderer';
@@ -71,7 +70,6 @@ const replayBarEl = el<HTMLDivElement>('replay-bar');
 const replayTextEl = el<HTMLSpanElement>('replay-text');
 const roomBoxEl = el<HTMLDivElement>('room-box');
 const roomCodeEl = el<HTMLSpanElement>('room-code');
-const copyLinkBtn = el<HTMLButtonElement>('copy-link');
 const overEmblemEl = el<HTMLDivElement>('over-emblem');
 const boardWrap = canvas.parentElement as HTMLElement;
 
@@ -338,7 +336,7 @@ function showOverModal(options: {
   title: string;
   score?: number;
   note?: string;
-  /** Показать код комнаты и кнопку копирования ссылки. */
+  /** Показать код комнаты — по нему друг заходит в матч. */
   room?: string;
   /** Идёт ожидание соперника: кнопка станет «Отменить». */
   waiting?: boolean;
@@ -355,8 +353,6 @@ function showOverModal(options: {
   roomBoxEl.hidden = options.room === undefined;
   if (options.room !== undefined) {
     roomCodeEl.textContent = options.room;
-    currentRoom = options.room;
-    copyLinkBtn.textContent = 'Скопировать ссылку';
   }
   finalScoreEl.hidden = options.score === undefined;
   if (options.score !== undefined) finalScoreEl.textContent = String(options.score);
@@ -414,10 +410,6 @@ let opponentCode: string | null = null;
 let pendingFriendCode = '';
 /** Таймер подсказки на экране ожидания. */
 let searchHint = 0;
-/** Код комнаты, показанный в модалке, — для кнопки копирования ссылки. */
-let currentRoom = '';
-/** Ссылка на мини-приложение бота; null — бот не настроен. */
-let miniAppBase: string | null = null;
 /** Чем закончилась попытка позвать друга сообщением в Telegram. */
 let inviteNote: string | null = null;
 /** Открыта модалка ожидания соперника. */
@@ -434,7 +426,7 @@ function handleDuelMessage(message: DuelServerMessage): void {
               title: 'Ждём друга',
               note:
                 inviteNote ??
-                'Продиктуй другу код или пришли ссылку. Он вводит код кнопкой «Ввести код» — и матч начнётся сам.',
+                'Продиктуй другу код комнаты. Он вводит его кнопкой «Ввести код» — и матч начнётся сам.',
               room: message.room,
               waiting: true,
             }
@@ -925,8 +917,8 @@ const cabinet = new Cabinet({
 
 /**
  * Зовёт друга в комнату. Сообщение в Telegram доходит не всегда — бот не
- * пишет тому, кто его не запускал, — поэтому ссылка на комнату остаётся
- * на экране в любом случае.
+ * пишет тому, кто его не запускал, — поэтому код комнаты остаётся на
+ * экране в любом случае, его можно продиктовать.
  */
 async function inviteToRoom(friendCode: string): Promise<void> {
   const room = makeRoomCode();
@@ -935,7 +927,7 @@ async function inviteToRoom(friendCode: string): Promise<void> {
     await inviteFriend(friendCode, room);
     inviteNote = 'Позвал в Telegram — ждём друга.';
   } catch {
-    inviteNote = 'В Telegram позвать не вышло: пришли другу ссылку сам.';
+    inviteNote = 'В Telegram позвать не вышло — продиктуй другу код.';
   }
   // Ответ сервера о поиске может прийти и раньше, и позже нашего — поэтому
   // заметку не пишем напрямую, а держим и подставляем при перерисовке.
@@ -962,21 +954,6 @@ el<HTMLButtonElement>('replay-stop').addEventListener('click', () => {
   showMenu();
 });
 
-copyLinkBtn.addEventListener('click', () => {
-  const link = inviteLink(currentRoom, miniAppBase);
-  // Внутри Telegram отдаём ссылку самому мессенджеру: там её сразу можно
-  // переслать другу, а буфер обмена в мини-приложении ненадёжен.
-  if (openInTelegram(`https://t.me/share/url?url=${encodeURIComponent(link)}`)) return;
-  navigator.clipboard
-    ?.writeText(link)
-    .then(() => {
-      copyLinkBtn.textContent = 'Ссылка скопирована ✓';
-    })
-    .catch(() => {
-      // Буфер обмена может быть недоступен — показываем ссылку, чтобы скопировать вручную.
-      overNoteEl.textContent = link;
-    });
-});
 modalBtn.addEventListener('click', () => {
   if (viewingOnly) {
     // Смотрели таблицу — партия под окном не тронута.
@@ -1037,21 +1014,12 @@ if (isTelegram()) {
   syncChrome();
 }
 
-// Ссылка-приглашение сразу ведёт в комнату друга, минуя меню.
-const invitedRoom = roomFromLocation();
-if (invitedRoom) {
-  showPlay();
-  void startDuel(invitedRoom);
-}
-// Имя бота нужно для ссылок-приглашений: без него зовём обычным адресом.
+// Имя бота говорит кабинету, что привязка Telegram вообще возможна.
 if (apiAvailable) {
   void getConfig()
-    .then((config) => {
-      miniAppBase = config.miniApp;
-      cabinet.setMiniApp(config.miniApp);
-    })
+    .then((config) => cabinet.setMiniApp(config.miniApp))
     .catch(() => {
-      // Бот не настроен — приглашения останутся ссылками на страницу.
+      // Бот не настроен — привязку Telegram кабинет просто не покажет.
     });
 }
 

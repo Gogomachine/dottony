@@ -55,7 +55,7 @@ export interface MatchmakerOptions {
   clearTimer?: (handle: NodeJS.Timeout | number) => void;
 }
 
-const DEFAULT_GHOST_AFTER_MS = 12_000;
+const DEFAULT_GHOST_AFTER_MS = 10_000;
 
 export class Matchmaker {
   private readonly waiting: Waiting[] = [];

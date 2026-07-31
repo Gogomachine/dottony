@@ -1,6 +1,6 @@
 import type { Cell } from '@doton/core';
 import type { DuelClientMessage, DuelServerMessage } from '@doton/protocol';
-import { apiBase, authToken, telegramStartParam } from './api';
+import { apiBase, authToken } from './api';
 
 /**
  * Клиент дуэли поверх WebSocket.
@@ -98,10 +98,6 @@ export class DuelConnection {
   }
 
   /**
-   * Осознанный выход: сервер засчитает поражение. Обрыв связи сюда
-   * не относится — он лечится переподключением.
-   */
-  /**
    * Матч окончен: соединение больше не нужно, но закрывать его сразу нельзя.
    * Рейтинг сервер досылает отдельным сообщением сразу после результата —
    * закрыв сокет по первому же «finished», клиент бы его не дождался.
@@ -113,6 +109,10 @@ export class DuelConnection {
     this.closeTimer = window.setTimeout(() => this.close(), graceMs);
   }
 
+  /**
+   * Осознанный выход: сервер засчитает поражение. Обрыв связи сюда
+   * не относится — он лечится переподключением.
+   */
   close(options: { keepActive?: boolean } = {}): void {
     if (!options.keepActive) this.active = false;
     clearTimeout(this.closeTimer);
@@ -125,15 +125,6 @@ export class DuelConnection {
   }
 }
 
-/**
- * Код приватной комнаты из приглашения. В Telegram он приезжает
- * параметром startapp, в браузере — обычным ?room= в адресе.
- */
-export function roomFromLocation(): string | null {
-  const room = telegramStartParam() ?? new URLSearchParams(location.search).get('room');
-  return room && room.length >= 4 ? room.slice(0, 16) : null;
-}
-
 export function makeRoomCode(): string {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code = '';
@@ -141,16 +132,4 @@ export function makeRoomCode(): string {
     code += alphabet[value % alphabet.length];
   }
   return code;
-}
-
-/**
- * Ссылка-приглашение. Если бот известен, зовём через t.me: такая ссылка
- * открывает игру внутри Telegram, где у друга уже есть аккаунт. Иначе —
- * обычный адрес страницы.
- */
-export function inviteLink(room: string, miniApp?: string | null): string {
-  if (miniApp) return `${miniApp}${miniApp.includes('?') ? '&' : '?'}startapp=${room}`;
-  const url = new URL(location.href);
-  url.search = `?room=${room}`;
-  return url.toString();
 }

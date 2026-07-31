@@ -73,7 +73,6 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 interface TelegramWebApp {
   initData: string;
-  initDataUnsafe?: { start_param?: string };
   ready(): void;
   expand?(): void;
   /** Запрет вертикальных свайпов (Bot API 7.7+). */
@@ -93,11 +92,6 @@ function telegramWebApp(): TelegramWebApp | null {
 
 export function isTelegram(): boolean {
   return telegramWebApp() !== null;
-}
-
-/** Параметр из ссылки-приглашения: t.me/бот?startapp=КОД. */
-export function telegramStartParam(): string | null {
-  return telegramWebApp()?.initDataUnsafe?.start_param ?? null;
 }
 
 /**

@@ -589,13 +589,17 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     }
 
     const chat = await store.botChatOf(friend.id);
-    const link = bot.miniAppLink(parsedBody.data.room);
-    if (!chat || !link) return reply.code(409).send({ error: 'no-telegram' });
+    if (!chat) return reply.code(409).send({ error: 'no-telegram' });
 
-    const sent = await bot.sendMessage(chat, `${user.name} зовёт тебя к прибору — дуэль в dotoscope.`, {
-      text: '🔭 Принять вызов',
-      url: link,
-    });
+    // Ссылок-приглашений нет: играют по коду комнаты, его и передаём.
+    const open = bot.miniAppLink('');
+    const sent = await bot.sendMessage(
+      chat,
+      `${user.name} зовёт тебя к прибору — дуэль в dotoscope.\n` +
+        `Код комнаты: ${parsedBody.data.room}\n` +
+        'Открой игру → Дуэль → Ввести код.',
+      open ? { text: '🔭 Открыть прибор', url: open } : undefined,
+    );
     if (!sent) return reply.code(409).send({ error: 'not-delivered' });
     return { ok: true };
   });
