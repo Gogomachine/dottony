@@ -1,39 +1,46 @@
-/** Цвета, которые нужны Canvas-рендереру (интерфейс красится через CSS-переменные). */
+/**
+ * Цвета окуляра. Стекло прибора всегда чёрное — светлеет и темнеет только
+ * корпус, а он рисуется CSS-переменными. Поэтому у канваса одна палитра на
+ * обе темы, и переключатель света её не трогает.
+ */
 export interface Theme {
-  name: 'draft' | 'graphite';
   dots: [string, string, string, string];
   board: string;
   gridLine: string;
   chainOutline: string;
 }
 
-export const THEMES: Record<Theme['name'], Theme> = {
-  draft: {
-    name: 'draft',
-    dots: ['#D9483B', '#2F7FD1', '#DFA92E', '#2F9E68'],
-    board: '#FAFBFC',
-    gridLine: 'rgba(47, 79, 110, 0.08)',
-    chainOutline: 'rgba(255, 255, 255, 0.75)',
-  },
-  graphite: {
-    name: 'graphite',
-    dots: ['#E05E51', '#4C9EE3', '#E8B44C', '#55B584'],
-    board: '#1A1D22',
-    gridLine: 'rgba(201, 146, 92, 0.09)',
-    chainOutline: 'rgba(230, 228, 223, 0.4)',
-  },
+export const SCOPE: Theme = {
+  dots: ['#E3AE45', '#3F9C79', '#D9584A', '#4589C4'],
+  board: '#0C0D0E',
+  gridLine: '#1D1E1D',
+  chainOutline: 'rgba(237, 234, 227, 0.55)',
 };
 
-const STORAGE_KEY = 'doton-theme';
+export type ThemeName = 'draft' | 'graphite';
 
-export function loadThemeName(): Theme['name'] {
-  const saved = localStorage.getItem(STORAGE_KEY);
+const THEME_KEY = 'doton-theme';
+const MARKS_KEY = 'doton-marks';
+
+export function loadThemeName(): ThemeName {
+  const saved = localStorage.getItem(THEME_KEY);
   if (saved === 'draft' || saved === 'graphite') return saved;
   return matchMedia('(prefers-color-scheme: dark)').matches ? 'graphite' : 'draft';
 }
 
-export function applyTheme(name: Theme['name']): Theme {
+export function applyTheme(name: ThemeName): void {
   document.documentElement.dataset.theme = name;
-  localStorage.setItem(STORAGE_KEY, name);
-  return THEMES[name];
+  localStorage.setItem(THEME_KEY, name);
+}
+
+/**
+ * Метки внутри точек — режим для тех, кто не различает цвета. Выбор
+ * запоминается: включать его каждый запуск было бы издевательством.
+ */
+export function loadMarks(): boolean {
+  return localStorage.getItem(MARKS_KEY) === 'on';
+}
+
+export function saveMarks(on: boolean): void {
+  localStorage.setItem(MARKS_KEY, on ? 'on' : 'off');
 }

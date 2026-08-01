@@ -57,6 +57,8 @@ export class Renderer {
   private waves: ChainWave[] = [];
   private cell = 0;
   private pad = 0;
+  /** Показывать ли фигуры внутри точек. */
+  private marks = false;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -263,6 +265,11 @@ export class Renderer {
         ctx.ellipse(center.x, y, radius * scaleX, radius * scaleY, 0, 0, Math.PI * 2);
         ctx.fill();
 
+        // Метка цвета: сама фигура важнее оттенка для тех, кто цвета
+        // различает плохо. Под линзой её не рисуем — они бы наложились.
+        if (this.marks && !content.charged) {
+          this.drawMark(content.color, center.x, y, radius * anim.scale);
+        }
         if (content.charged) {
           this.drawLens(center.x, y, radius * anim.scale);
         }
@@ -308,6 +315,44 @@ export class Renderer {
       ctx.stroke();
     }
     ctx.globalAlpha = 1;
+  }
+
+  /** Включает метки внутри точек — режим для неразличающих цвета. */
+  setMarks(on: boolean): void {
+    this.marks = on;
+  }
+
+  /**
+   * Фигура-метка внутри точки: своя на каждый из четырёх цветов. Рисуется
+   * цветом стекла, то есть «дыркой» в точке, — так она читается и на
+   * светлом жёлтом, и на тёмном синем.
+   */
+  private drawMark(color: number, x: number, y: number, radius: number): void {
+    const ctx = this.ctx;
+    ctx.fillStyle = this.theme.board;
+    const bar = (w: number, h: number): void => {
+      ctx.beginPath();
+      ctx.roundRect(x - (radius * w) / 2, y - (radius * h) / 2, radius * w, radius * h, radius * 0.1);
+      ctx.fill();
+    };
+    if (color === 0) {
+      // Отверстие.
+      ctx.beginPath();
+      ctx.arc(x, y, radius * 0.27, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (color === 1) {
+      // Кольцо.
+      ctx.strokeStyle = this.theme.board;
+      ctx.lineWidth = radius * 0.18;
+      ctx.beginPath();
+      ctx.arc(x, y, radius * 0.47, 0, Math.PI * 2);
+      ctx.stroke();
+    } else if (color === 2) {
+      bar(0.88, 0.2);
+    } else {
+      bar(0.88, 0.2);
+      bar(0.2, 0.88);
+    }
   }
 
   /**

@@ -29,7 +29,7 @@ import { ChainInput } from './game/input';
 import { Renderer } from './game/renderer';
 import { Session, SPRINT_SECONDS, type Mode } from './game/session';
 import { emblemSvg } from './emblem';
-import { applyTheme, loadThemeName, THEMES, type Theme } from './theme';
+import { applyTheme, loadMarks, loadThemeName, saveMarks, SCOPE } from './theme';
 
 function el<T extends HTMLElement>(id: string): T {
   const found = document.getElementById(id);
@@ -39,9 +39,12 @@ function el<T extends HTMLElement>(id: string): T {
 
 const canvas = el<HTMLCanvasElement>('game');
 const scoreEl = el<HTMLSpanElement>('score');
+const gainEl = el<HTMLSpanElement>('gain');
 const timeEl = el<HTMLSpanElement>('time');
-const timeFill = el<HTMLElement>('time-fill');
-const timeBar = timeFill.parentElement as HTMLElement;
+const timeFieldEl = el<HTMLSpanElement>('time-field');
+const ticksEl = el<HTMLDivElement>('ticks');
+const statEl = el<HTMLDivElement>('stat');
+const chainCountEl = el<HTMLDivElement>('chain-count');
 const seedEl = el<HTMLSpanElement>('seed');
 const overlay = el<HTMLDivElement>('game-over');
 const overTitleEl = el<HTMLHeadingElement>('over-title');
@@ -49,20 +52,21 @@ const overNoteEl = el<HTMLParagraphElement>('over-note');
 const finalScoreEl = el<HTMLSpanElement>('final-score');
 const dailyBoardEl = el<HTMLOListElement>('daily-board');
 const modalBtn = el<HTMLButtonElement>('modal-action');
-const phaseEl = el<HTMLDivElement>('phase');
-const phaseTextEl = el<HTMLSpanElement>('phase-text');
-const emblemEl = el<HTMLSpanElement>('emblem');
-const streakEl = el<HTMLSpanElement>('streak');
-const versusEl = el<HTMLDivElement>('versus');
+const miniLedEl = el<HTMLElement>('mini-led');
+const miniTextEl = el<HTMLSpanElement>('mini-text');
+const miniCdEl = el<HTMLSpanElement>('mini-cd');
+const miniBarEl = el<HTMLElement>('mini-bar');
+const vsFieldEl = el<HTMLSpanElement>('vs-field');
 const vsNameEl = el<HTMLSpanElement>('vs-name');
 const vsScoreEl = el<HTMLSpanElement>('vs-score');
-const vsGapEl = el<HTMLSpanElement>('vs-gap');
 const ratingLineEl = el<HTMLDivElement>('rating-line');
-const menuEl = el<HTMLElement>('menu');
-const playEl = el<HTMLElement>('play');
-const pauseSheet = el<HTMLDivElement>('pause-sheet');
-const pauseNoteEl = el<HTMLSpanElement>('pause-note');
-const restartBtn = el<HTMLButtonElement>('pause-restart');
+const menuEl = el<HTMLDivElement>('menu');
+const resultEl = el<HTMLDivElement>('result');
+const resultCapEl = el<HTMLSpanElement>('result-cap');
+const resultBigEl = el<HTMLSpanElement>('result-big');
+const resultSubEl = el<HTMLSpanElement>('result-sub');
+const resumeNoteEl = el<HTMLElement>('resume-note');
+const goKey = el<HTMLDivElement>('key-go');
 const duelSheet = el<HTMLDivElement>('duel-sheet');
 const rulesSheet = el<HTMLDivElement>('rules-sheet');
 const addOpponentBtn = el<HTMLButtonElement>('add-opponent');
@@ -73,28 +77,20 @@ const roomCodeEl = el<HTMLSpanElement>('room-code');
 const overEmblemEl = el<HTMLDivElement>('over-emblem');
 const boardWrap = canvas.parentElement as HTMLElement;
 
-// ---------- Объектив прибора ----------
-
-emblemEl.innerHTML = emblemSvg({ size: 38 });
-el<HTMLSpanElement>('menu-emblem').innerHTML = emblemSvg({ size: 64 });
-let focusTimer = 0;
-
-/** Прибор наводится на резкость — отклик на яркий момент партии. */
-function focusEmblem(): void {
-  emblemEl.innerHTML = emblemSvg({ size: 38, focused: true });
-  emblemEl.classList.remove('bounce');
-  void emblemEl.offsetWidth; // перезапуск CSS-анимации
-  emblemEl.classList.add('bounce');
-  clearTimeout(focusTimer);
-  focusTimer = window.setTimeout(() => {
-    emblemEl.innerHTML = emblemSvg({ size: 38 });
-  }, 900);
+/** Шкала времени: полоска делений вдоль верхнего края окуляра. */
+const TICKS = 32;
+const tickEls: HTMLElement[] = [];
+for (let i = 0; i < TICKS; i++) {
+  const tick = document.createElement('i');
+  tick.className = 'tick on';
+  ticksEl.appendChild(tick);
+  tickEls.push(tick);
 }
 
 // ---------- Состояние ----------
 
 let themeName = loadThemeName();
-let theme: Theme = applyTheme(themeName);
+applyTheme(themeName);
 let mode: Mode = 'sprint';
 
 /** Активный забег ежедневного вызова: дата и лог ходов для сервера. */
@@ -109,7 +105,7 @@ let inDuel = false;
 let duelDuration = 90;
 
 let session = newSession();
-const renderer = new Renderer(canvas, DEFAULT_CONFIG, theme);
+const renderer = new Renderer(canvas, DEFAULT_CONFIG, SCOPE);
 
 const DAILY_PLAYED_KEY = 'doton-daily-played';
 
@@ -127,65 +123,87 @@ function startGame(seed?: number): void {
   renderer.resetAnims();
   updateStreak(0);
   overlay.hidden = true;
-  seedEl.textContent = `#${session.seed.toString(16)}`;
+  resultEl.hidden = true;
+  menuEl.hidden = true;
+  setStat('Сигнал ровный');
+  seedEl.textContent = `образец #${session.seed.toString(16)}`;
   updateHud();
+  updateGoKey();
 }
 
 /** Текущее увеличение: следующая линза умножит отсчёты на столько. */
 function updateStreak(streak: number): void {
   const active = streak > 0;
-  streakEl.hidden = !active;
-  if (!active) return;
-  streakEl.textContent = `×${streak + 1}`;
-  // Перезапуск анимации, чтобы каждая новая линза «выстреливала».
-  streakEl.style.animation = 'none';
-  void streakEl.offsetWidth;
-  streakEl.style.animation = '';
+  gainEl.hidden = !active;
+  if (active) gainEl.textContent = ` ×${streak + 1}`;
+}
+
+/** Строка состояния в окуляре: что прибор делает прямо сейчас. */
+function setStat(text: string, kind: '' | 'live' | 'warn' = ''): void {
+  statEl.textContent = text;
+  statEl.className = `stat ${kind}`;
 }
 
 function updateHud(): void {
   scoreEl.textContent = String(session.score);
-  // В бесконечном режиме полоса времени только сбивает с толку: заполнена,
-  // но ничего не отсчитывает.
-  timeBar.hidden = !session.timed;
-  if (session.timed) {
-    const total = Math.ceil(session.timeLeft);
-    const minutes = Math.floor(total / 60);
-    const seconds = total % 60;
-    timeEl.textContent = `${minutes}:${String(seconds).padStart(2, '0')}`;
-    const full = session.mode === 'duel' ? duelDuration : SPRINT_SECONDS;
-    timeFill.style.width = `${(session.timeLeft / full) * 100}%`;
-  } else {
+  if (!session.timed) {
+    // Бесконечный режим: делений не зажигаем, они бы врали о запасе.
     timeEl.textContent = '∞';
-    timeFill.style.width = '100%';
+    timeFieldEl.className = 'field right';
+    for (const tick of tickEls) tick.className = 'tick';
+    return;
   }
+
+  const total = Math.ceil(session.timeLeft);
+  timeEl.textContent = `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+  const full = session.mode === 'duel' ? duelDuration : SPRINT_SECONDS;
+  const lit = Math.round((session.timeLeft / full) * TICKS);
+  // Последние десять секунд шкала краснеет — это видно боковым зрением.
+  const warn = session.timeLeft <= 10;
+  timeFieldEl.className = `field right${warn ? ' warn' : ''}`;
+  tickEls.forEach((tick, i) => {
+    tick.className = `tick${i < lit ? (warn ? ' warn' : ' on') : ''}`;
+  });
 }
 
-// ---------- Баннер фазы ----------
+// ---------- Мини-экран резонанса ----------
 
-let phaseBannerCache = '';
+let miniCache = '';
 
-function updatePhaseBanner(): void {
+/**
+ * Служебный экранчик над окуляром: идёт ли резонанс, с каким цветом и
+ * сколько ему осталось. Имён у цветов нет — светится сам цвет.
+ */
+function updateMini(): void {
   const { active, remaining, nextColor, nextIn } = session.phase();
-  let html: string;
-  let bannerClass = '';
+  const key = `${active ?? 'x'}:${Math.ceil(active !== null ? remaining : nextIn)}`;
+  if (key === miniCache) return;
+  miniCache = key;
 
   if (active !== null) {
-    html = `<span class="swatch" style="--swatch:#fff"></span> Резонанс ×${session.cfg.phaseMultiplier} — ${Math.ceil(remaining)} с`;
-    bannerClass = 'active';
-    phaseEl.style.setProperty('--phase-bg', theme.dots[active]!);
-  } else if (nextIn <= 5) {
-    const color = theme.dots[nextColor]!;
-    html = `<span class="swatch" style="--swatch:${color}"></span> Резонанс через ${Math.ceil(nextIn)} с`;
-  } else {
-    html = 'Сигнал ровный';
+    const color = SCOPE.dots[active]!;
+    miniLedEl.style.background = color;
+    miniLedEl.style.boxShadow = `0 0 7px ${color}`;
+    miniTextEl.innerHTML = `Резонанс · <b>×${session.cfg.phaseMultiplier}</b>`;
+    miniCdEl.textContent = String(Math.ceil(remaining)).padStart(2, '0');
+    miniBarEl.style.background = color;
+    miniBarEl.style.width = `${(remaining / session.cfg.phaseDuration) * 100}%`;
+    return;
   }
 
-  const cacheKey = bannerClass + html;
-  if (cacheKey === phaseBannerCache) return;
-  phaseBannerCache = cacheKey;
-  phaseTextEl.innerHTML = html;
-  phaseEl.className = `phase ${bannerClass}`;
+  miniLedEl.style.background = '';
+  miniLedEl.style.boxShadow = '';
+  miniBarEl.style.background = '';
+  miniBarEl.style.width = '0%';
+  if (nextIn <= 5) {
+    const color = SCOPE.dots[nextColor]!;
+    miniLedEl.style.background = color;
+    miniTextEl.textContent = 'Резонанс · настройка';
+    miniCdEl.textContent = String(Math.ceil(nextIn)).padStart(2, '0');
+  } else {
+    miniTextEl.textContent = session.over ? 'Резонанс · ожидание' : 'Резонанс · сигнал ровный';
+    miniCdEl.textContent = '--';
+  }
 }
 
 // ---------- Ежедневный вызов ----------
@@ -242,6 +260,7 @@ async function startDaily(): Promise<void> {
     mode = 'sprint';
     dailyRun = { date: info.date, moves: [] };
     startGame(info.seed);
+    updateGoKey();
   } catch {
     showOverModal({
       title: 'Вызов дня',
@@ -393,13 +412,13 @@ const duel = new DuelConnection(handleDuelMessage, (state) => {
 /** Связь с сервером потеряна: ходы не отправить, ввод блокируем. */
 let connectionLost = false;
 
+/** Счёт соперника — третьим полем приборной строки, только в дуэли. */
 function showVersus(name: string, opponentScore: number): void {
-  versusEl.hidden = false;
+  vsFieldEl.hidden = false;
   vsNameEl.textContent = name;
   vsScoreEl.textContent = String(opponentScore);
-  const gap = session.score - opponentScore;
-  vsGapEl.textContent = gap === 0 ? 'вровень' : gap > 0 ? `+${gap}` : String(gap);
-  vsGapEl.className = `vs-gap mono ${gap > 0 ? 'ahead' : gap < 0 ? 'behind' : ''}`;
+  // Кто впереди, видно по цвету: отставание горит акцентом.
+  vsFieldEl.className = `field${session.score < opponentScore ? ' warn' : ''}`;
 }
 
 let opponentName = 'Соперник';
@@ -451,6 +470,7 @@ function handleDuelMessage(message: DuelServerMessage): void {
       duel.markActive();
       inDuel = true;
       duelDuration = message.duration;
+      updateGoKey();
       // Честно помечаем запись: игрок должен знать, что соперник не живой.
       opponentName = message.ghost ? `${message.opponent} · запись` : message.opponent;
       opponentScore = 0;
@@ -469,6 +489,7 @@ function handleDuelMessage(message: DuelServerMessage): void {
       connectionLost = false;
       duel.markActive();
       inDuel = true;
+      updateGoKey();
       duelDuration = Math.max(1, Math.round(message.remaining));
       opponentName = message.ghost ? `${message.opponent} · запись` : message.opponent;
       opponentScore = message.opponentScore;
@@ -538,7 +559,8 @@ function endDuel(options: { awaitRating?: boolean } = {}): void {
   clearTimeout(searchHint);
   inviteNote = null;
   inDuel = false;
-  versusEl.hidden = true;
+  vsFieldEl.hidden = true;
+  updateGoKey();
   // Партия окончена вместе с матчем: иначе локальный таймер досчитает до
   // нуля и перепишет объявленный сервером результат на «Время вышло».
   session.over = true;
@@ -682,7 +704,8 @@ async function startReplay(duelId: string): Promise<void> {
   viewingOnly = false;
   dailyRun = null;
   mode = 'duel';
-  showPlay();
+  menuEl.hidden = true;
+  resultEl.hidden = true;
   session = new Session(data.seed, 'duel', DEFAULT_CONFIG, duelDuration);
   renderer.resetAnims();
   updateStreak(0);
@@ -753,7 +776,9 @@ const input = new ChainInput(
     renderer.animateMove(oldGrid, result);
     showFloatingPoints(result.points, result.multiplier, at);
     updateStreak(result.streak);
-    if (result.charged || result.exploded.length > 0) focusEmblem();
+    // Снятое показываем строкой состояния — это и есть отчёт прибора.
+    const gain = result.multiplier > 1 ? ` ×${result.multiplier}` : '';
+    setStat(`Снято ${result.removed.length + result.exploded.length} · +${result.points}${gain}`, 'live');
     updateHud();
   },
   (length: number) => {
@@ -771,40 +796,51 @@ const input = new ChainInput(
  * режиме они выпадают из картинки светлой или тёмной рамкой.
  */
 function syncChrome(): void {
-  const color = getComputedStyle(document.documentElement).getPropertyValue('--screen').trim();
+  const color = getComputedStyle(document.documentElement).getPropertyValue('--desk').trim();
   syncTelegramTheme(color);
 }
 
-el<HTMLButtonElement>('theme-toggle').addEventListener('click', () => {
+el<HTMLButtonElement>('theme-toggle').addEventListener('click', function () {
   themeName = themeName === 'draft' ? 'graphite' : 'draft';
-  theme = applyTheme(themeName);
-  renderer.setTheme(THEMES[themeName]);
+  applyTheme(themeName);
+  this.classList.toggle('on', themeName === 'graphite');
   syncChrome();
 });
 
-// ---------- Экраны ----------
-
-/**
- * Игра живёт на двух экранах: меню и партия. На поле нет ничего, кроме
- * доски и паузы, — всё остальное открывается из меню, чтобы во время
- * наблюдения ничего не отвлекало и не нажималось случайно.
- */
-function showMenu(): void {
-  if (inDuel) endDuel();
-  stopReplay();
-  void flushScore();
-  session.over = true;
-  overlay.hidden = true;
-  pauseSheet.hidden = true;
-  playEl.hidden = true;
-  menuEl.hidden = false;
+/** Итог соло-партии — крупным числом внутри окуляра. */
+function showResult(cap: string, score: number): void {
+  resultCapEl.textContent = cap;
+  resultBigEl.textContent = String(score);
+  resultSubEl.textContent = `образец #${session.seed.toString(16)}`;
+  menuEl.hidden = true;
+  resultEl.hidden = false;
+  setStat('Наблюдение завершено');
 }
 
-function showPlay(): void {
+// ---------- Меню и клавиши ----------
+
+/**
+ * Меню открывается прямо в окуляре: прибор не переключает экраны, он
+ * просто закрывает стекло заслонкой. Партия под ней остаётся на месте.
+ */
+function openMenu(): void {
+  if (canPause()) session.pause();
+  resultEl.hidden = true;
+  menuEl.hidden = false;
+  // Подпись должна говорить правду: партии может уже не быть, а в дуэли
+  // и вызове дня часы за заслонкой продолжают идти.
+  resumeNoteEl.textContent = session.over
+    ? 'образец исчерпан'
+    : canPause()
+      ? 'текущий образец'
+      : 'время идёт';
+  setStat('Панель управления');
+}
+
+function closeMenu(): void {
   menuEl.hidden = true;
-  playEl.hidden = false;
-  // Канвас был скрыт, и его размеры равнялись нулю.
-  renderer.resize();
+  session.resume();
+  if (!session.over) setStat('Наблюдение идёт', 'live');
 }
 
 function setMode(next: Mode): void {
@@ -814,18 +850,35 @@ function setMode(next: Mode): void {
   mode = next;
   dailyRun = null;
   startGame();
-  showPlay();
+}
+
+/**
+ * Главная клавиша: пока идёт партия — начать заново, после конца —
+ * повторить. В дуэли и вызове дня нового образца не выдаём: там он общий.
+ */
+function updateGoKey(): void {
+  const locked = inDuel || dailyRun !== null || replay !== null;
+  goKey.toggleAttribute('disabled', locked);
+  const label = session.over ? 'Повторить' : 'Сброс';
+  goKey.firstChild!.nodeValue = locked ? 'Наблюдать' : label;
 }
 
 const MENU_ACTIONS: Record<string, () => void> = {
+  resume: () => closeMenu(),
   profile: () => void cabinet.show('history'),
   friends: () => void cabinet.show('friends'),
   daily: () => {
-    showPlay();
+    menuEl.hidden = true;
     void startDaily();
   },
-  sprint: () => setMode('sprint'),
-  free: () => setMode('free'),
+  sprint: () => {
+    menuEl.hidden = true;
+    setMode('sprint');
+  },
+  free: () => {
+    menuEl.hidden = true;
+    setMode('free');
+  },
   duel: () => {
     duelSheet.hidden = false;
   },
@@ -834,10 +887,11 @@ const MENU_ACTIONS: Record<string, () => void> = {
   },
 };
 
-for (const button of document.querySelectorAll<HTMLButtonElement>('.menu-list button')) {
-  const action = MENU_ACTIONS[button.dataset.go ?? ''];
-  if (action) button.addEventListener('click', action);
-}
+el<HTMLUListElement>('menu-list').addEventListener('click', (event) => {
+  const item = (event.target as HTMLElement).closest('li');
+  const action = item ? MENU_ACTIONS[item.dataset.go ?? ''] : undefined;
+  if (action) action();
+});
 
 el<HTMLButtonElement>('rules-close').addEventListener('click', () => {
   rulesSheet.hidden = true;
@@ -847,13 +901,13 @@ el<HTMLButtonElement>('duel-cancel').addEventListener('click', () => {
 });
 el<HTMLButtonElement>('duel-quick').addEventListener('click', () => {
   duelSheet.hidden = true;
-  showPlay();
+  menuEl.hidden = true;
   void startDuel();
 });
 
 el<HTMLButtonElement>('invite').addEventListener('click', () => {
   duelSheet.hidden = true;
-  showPlay();
+  menuEl.hidden = true;
   // Код придумываем сразу, чтобы показать его ещё до ответа сервера.
   void startDuel(makeRoomCode());
 });
@@ -867,47 +921,54 @@ el<HTMLButtonElement>('join-code').addEventListener('click', () => {
     return;
   }
   duelSheet.hidden = true;
-  showPlay();
+  menuEl.hidden = true;
   void startDuel(room);
 });
 
-// ---------- Пауза ----------
-
 /**
  * Останавливать время можно не везде: в дуэли оно общее с соперником, а в
- * вызове дня остановка дала бы фору перед остальными. Там окно паузы
- * открывается, но часы продолжают идти — и это честно сказано.
+ * вызове дня остановка дала бы фору перед остальными.
  */
 function canPause(): boolean {
-  return !inDuel && dailyRun === null && replay === null;
+  return !inDuel && dailyRun === null && replay === null && !session.over;
 }
 
-el<HTMLButtonElement>('pause').addEventListener('click', () => {
-  if (canPause()) {
-    session.pause();
-    pauseNoteEl.textContent = 'Время остановлено';
-  } else {
-    pauseNoteEl.textContent = inDuel
-      ? 'Матч идёт: время не останавливается'
-      : 'Время идёт: попытка дня не ставится на паузу';
+el<HTMLDivElement>('key-pause').addEventListener('click', () => {
+  if (!menuEl.hidden) {
+    closeMenu();
+    return;
   }
-  // Начинать заново посреди дуэли или попытки дня нечего.
-  restartBtn.hidden = !canPause();
-  seedEl.textContent = `образец #${session.seed.toString(16)}`;
-  pauseSheet.hidden = false;
+  if (session.paused) {
+    session.resume();
+    setStat('Наблюдение идёт', 'live');
+    return;
+  }
+  if (!canPause()) {
+    setStat(inDuel ? 'Матч идёт — стоп-кадр недоступен' : 'Время идёт', 'warn');
+    return;
+  }
+  session.pause();
+  setStat('Стоп-кадр');
 });
 
-el<HTMLButtonElement>('pause-resume').addEventListener('click', () => {
-  session.resume();
-  pauseSheet.hidden = true;
+el<HTMLDivElement>('key-menu').addEventListener('click', () => {
+  if (menuEl.hidden) openMenu();
+  else closeMenu();
 });
 
-restartBtn.addEventListener('click', () => {
-  pauseSheet.hidden = true;
+goKey.addEventListener('click', () => {
+  if (goKey.hasAttribute('disabled')) return;
+  menuEl.hidden = true;
+  void flushScore();
   startGame();
 });
 
-el<HTMLButtonElement>('pause-quit').addEventListener('click', () => showMenu());
+el<HTMLButtonElement>('mark-toggle').addEventListener('click', function () {
+  const on = !loadMarks();
+  saveMarks(on);
+  renderer.setMarks(on);
+  this.classList.toggle('on', on);
+});
 
 const cabinet = new Cabinet({
   onReplay: (duelId) => void startReplay(duelId),
@@ -951,7 +1012,7 @@ addOpponentBtn.addEventListener('click', () => {
 
 el<HTMLButtonElement>('replay-stop').addEventListener('click', () => {
   stopReplay();
-  showMenu();
+  openMenu();
 });
 
 modalBtn.addEventListener('click', () => {
@@ -962,20 +1023,17 @@ modalBtn.addEventListener('click', () => {
     return;
   }
   if (waitingForOpponent) {
-    // Отменяем поиск и возвращаемся в меню.
+    // Отменяем поиск и открываем панель управления.
     endDuel();
-    showMenu();
+    overlay.hidden = true;
+    openMenu();
     return;
   }
-  if (dailyRun) {
-    // Попытка дня закончена — обратно в меню.
-    dailyRun = null;
-    showMenu();
-    return;
-  }
-  // Партия кончилась — возвращаемся в меню: оставаться на мёртвой доске
-  // незачем, а следующий режим игрок выбирает там же.
-  showMenu();
+  // Партия кончилась: закрываем окно и предлагаем панель управления —
+  // оставаться на мёртвой доске незачем.
+  dailyRun = null;
+  overlay.hidden = true;
+  openMenu();
 });
 
 new ResizeObserver(() => renderer.resize()).observe(canvas);
@@ -983,6 +1041,8 @@ new ResizeObserver(() => renderer.resize()).observe(canvas);
 // ---------- Игровой цикл ----------
 
 let lastTime = performance.now();
+/** Длина цепочки, уже показанная в углу окуляра. */
+let shownChain = 0;
 function frame(now: number): void {
   const dt = Math.min((now - lastTime) / 1000, 0.05);
   lastTime = now;
@@ -995,11 +1055,19 @@ function frame(now: number): void {
       // Итог объявляет сервер — ждём его сообщения, чтобы счёт сошёлся.
       showOverModal({ title: 'Дуэль', note: 'Время вышло, считаем результат…' });
     } else {
-      showOverModal({ title: 'Время вышло', score: session.score });
+      // Соло-итог показываем прямо в окуляре — как показание прибора.
+      showResult('Наблюдение завершено', session.score);
     }
+    updateGoKey();
   }
   if (session.timed && !session.over) updateHud();
-  updatePhaseBanner();
+  updateMini();
+
+  const chainLength = input.chain.length;
+  if (chainLength !== shownChain) {
+    shownChain = chainLength;
+    chainCountEl.textContent = `Цепь ${chainLength}`;
+  }
 
   renderer.draw(dt, session.board.grid, input.chain, input.pointer, session.phase().active);
   requestAnimationFrame(frame);
@@ -1007,7 +1075,10 @@ function frame(now: number): void {
 
 startGame();
 requestAnimationFrame(frame);
-showMenu();
+openMenu();
+renderer.setMarks(loadMarks());
+el<HTMLButtonElement>('mark-toggle').classList.toggle('on', loadMarks());
+el<HTMLButtonElement>('theme-toggle').classList.toggle('on', themeName === 'graphite');
 
 if (isTelegram()) {
   document.documentElement.classList.add('in-telegram');

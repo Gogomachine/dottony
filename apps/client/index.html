@@ -2,350 +2,769 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover" />
   <title>dotoscope — прибор для наблюдения за круглыми объектами</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20100%20100'%3E%3Ccircle%20cx='50'%20cy='50'%20r='34'%20fill='none'%20stroke='%23C9925C'%20stroke-width='9'/%3E%3Ccircle%20cx='50'%20cy='50'%20r='14'%20fill='%23C9925C'/%3E%3C/svg%3E" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20100%20100'%3E%3Ccircle%20cx='50'%20cy='50'%20r='34'%20fill='none'%20stroke='%23E8481F'%20stroke-width='9'/%3E%3Ccircle%20cx='50'%20cy='50'%20r='14'%20fill='%23E8481F'/%3E%3C/svg%3E" />
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
+    /*
+     * Шрифты лежат в проекте, а не тянутся с Google Fonts: внешний запрос
+     * при каждой загрузке — лишняя точка отказа, а в Telegram ещё и лишняя
+     * задержка. Взяты latin и cyrillic; Archivo из макета кириллицы не
+     * знает вовсе, поэтому гротеск здесь Inter.
+     */
+    @font-face {
+      font-family: 'Inter var';
+      font-style: normal;
+      font-weight: 400 800;
+      font-display: swap;
+      src: url('/fonts/inter-cyrillic.woff2') format('woff2');
+      unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+    }
+    @font-face {
+      font-family: 'Inter var';
+      font-style: normal;
+      font-weight: 400 800;
+      font-display: swap;
+      src: url('/fonts/inter-latin.woff2') format('woff2');
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+2000-206F, U+2122, U+2212;
+    }
+    @font-face {
+      font-family: 'JetBrains Mono var';
+      font-style: normal;
+      font-weight: 400 700;
+      font-display: swap;
+      src: url('/fonts/jetbrains-cyrillic.woff2') format('woff2');
+      unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+    }
+    @font-face {
+      font-family: 'JetBrains Mono var';
+      font-style: normal;
+      font-weight: 400 700;
+      font-display: swap;
+      src: url('/fonts/jetbrains-latin.woff2') format('woff2');
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+2000-206F, U+2122, U+2212;
+    }
+
     :root {
-      --screen: #edf0f3;
-      --board: #fafbfc;
-      --board-border: #d8dee6;
-      --grid-line: rgba(47, 79, 110, 0.08);
-      --ink: #232b33;
-      --muted: #9aa4af;
-      --accent: #b87b4b;
-      --control: #ffffff;
-      --control-border: #d8dee6;
+      --case: #dfddd7;
+      --case-2: #f3f2ed;
+      --silk: #17181b;
+      --silk-2: #87847c;
+      --acc: #e8481f;
+      --edge: rgba(23, 24, 27, 0.16);
+      --desk: #cbc9c3;
+      /* Окуляр всегда чёрный: это стекло прибора, а не часть корпуса. */
+      --scope: #0c0d0e;
+      --scope-line: #1d1e1d;
+      --scope-dim: #6e6b64;
+      --scope-live: #b7b3aa;
+      --scope-ink: #edeae3;
+      --sans: 'Inter var', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      --mono: 'JetBrains Mono var', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
     }
     :root[data-theme='graphite'] {
-      --screen: #202329;
-      --board: #1a1d22;
-      --board-border: #2b2f37;
-      --grid-line: rgba(201, 146, 92, 0.09);
-      --ink: #e6e4df;
-      --muted: #8b8f97;
-      --accent: #c9925c;
-      --control: #262a31;
-      --control-border: #2b2f37;
+      --case: #242422;
+      --case-2: #2e2e2b;
+      --silk: #e9e7e2;
+      --silk-2: #7e7b74;
+      --edge: rgba(255, 255, 255, 0.1);
+      --desk: #141413;
     }
 
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
     html, body { height: 100%; }
     body {
-      background: var(--screen);
-      color: var(--ink);
-      font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      background: var(--desk);
+      color: var(--silk);
+      font-family: var(--sans);
       display: flex;
+      align-items: center;
       justify-content: center;
-      -webkit-tap-highlight-color: transparent;
+      padding: 16px 12px;
       transition: background 0.25s;
-    }
-    .mono { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
-
-    /*
-     * В полноэкранном режиме поверх страницы оказываются сразу две полосы,
-     * и они складываются: системная (вырез, статус-бар, домашняя черта) и
-     * зона под плавающими кнопками самого Telegram, которая отсчитывается
-     * уже от системной. Учесть только вторую мало — шапка уезжает под
-     * «Закрыть». На старых клиентах переменных нет: работают нули, то есть
-     * обычная вёрстка.
-     */
-    .in-telegram .app {
-      padding-top: calc(
-        18px + var(--tg-safe-area-inset-top, 0px) + var(--tg-content-safe-area-inset-top, 0px)
-      );
-      padding-bottom: calc(
-        24px + var(--tg-safe-area-inset-bottom, 0px) +
-          var(--tg-content-safe-area-inset-bottom, 0px)
-      );
-    }
-    .in-telegram .replay-bar {
-      bottom: calc(
-        18px + var(--tg-safe-area-inset-bottom, 0px) +
-          var(--tg-content-safe-area-inset-bottom, 0px)
-      );
-    }
-
-    .app {
-      width: min(100vw, 460px);
-      padding: 18px 16px 24px;
-      display: flex;
-      flex-direction: column;
-      gap: 14px;
       user-select: none;
     }
+    .mono { font-family: var(--mono); }
 
-    /* ---------- Главное меню ---------- */
+    /* ---------- Корпус ---------- */
 
-    #menu {
+    .device {
+      position: relative;
+      width: 100%;
+      max-width: 390px;
+      background: var(--case);
+      border-radius: 26px;
+      padding: 12px 14px 16px;
+      border: 1px solid var(--edge);
+      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.5) inset, 0 18px 44px rgba(0, 0, 0, 0.22);
+      transition: background 0.25s;
+    }
+    /* Шум поверх корпуса: без него пластик выглядит нарисованным. */
+    .device::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: 26px;
+      pointer-events: none;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+      opacity: 0.05;
+      mix-blend-mode: multiply;
+    }
+    :root[data-theme='graphite'] .device::after { mix-blend-mode: screen; opacity: 0.06; }
+
+    /*
+     * В полноэкранном режиме Telegram кладёт поверх страницы две полосы, и
+     * они складываются: системная и зона под его плавающими кнопками.
+     */
+    .in-telegram body, body.in-telegram { padding-top: 0; }
+    .in-telegram .device {
+      margin-top: calc(
+        var(--tg-safe-area-inset-top, 0px) + var(--tg-content-safe-area-inset-top, 0px)
+      );
+      margin-bottom: calc(
+        var(--tg-safe-area-inset-bottom, 0px) + var(--tg-content-safe-area-inset-bottom, 0px)
+      );
+    }
+
+    /* ---------- Шильдик и микроклавиши ---------- */
+
+    .plate { display: flex; justify-content: space-between; align-items: center; padding: 2px 2px 10px; }
+    .plate .id {
+      font-family: var(--mono);
+      font-size: 9.5px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--silk-2);
+      line-height: 1.6;
+    }
+    .plate .id b { color: var(--silk); font-weight: 500; }
+    .micro { display: flex; gap: 6px; }
+    .mbtn {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      border: 1px solid var(--edge);
+      background: var(--case-2);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.55) inset, 0 2px 3px rgba(0, 0, 0, 0.1);
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--silk-2);
+      transition: transform 0.09s;
+    }
+    .mbtn:active { transform: translateY(1px); }
+    .mbtn.on { color: var(--acc); border-color: var(--acc); }
+
+    /* ---------- Приборная строка ---------- */
+
+    .strip { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; padding: 0 3px 10px; }
+    .field .lbl {
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--silk-2);
+      display: block;
+      margin-bottom: 1px;
+    }
+    .field .val {
+      font-family: var(--mono);
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1;
+      color: var(--silk);
+      font-variant-numeric: tabular-nums;
+    }
+    .field.right { text-align: right; }
+    .field.warn .val { color: var(--acc); }
+    .field[hidden] { display: none; }
+    /* Увеличение — рядом со счётом, оно про него. */
+    #gain {
+      font-family: var(--mono);
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--acc);
+      margin-left: 6px;
+    }
+    #gain[hidden] { display: none; }
+
+    /* ---------- Служебный экранчик ---------- */
+
+    .mini {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      background: var(--scope);
+      border-radius: 9px;
+      padding: 8px 11px 11px;
+      margin: 0 0 9px;
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 1px 0 rgba(255, 255, 255, 0.42);
+    }
+    .mini .led {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #26261f;
+      flex: 0 0 auto;
+      transition: background 0.2s, box-shadow 0.2s;
+    }
+    .mini .txt {
+      font-family: var(--mono);
+      font-size: 9.5px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #5f5d57;
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .mini .txt b { color: var(--scope-ink); font-weight: 500; }
+    .mini .cd {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: #5f5d57;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.06em;
+    }
+    .mini .bar {
+      position: absolute;
+      left: 11px;
+      right: 11px;
+      bottom: 5px;
+      height: 2px;
+      background: var(--scope-line);
+      border-radius: 1px;
+      overflow: hidden;
+    }
+    .mini .bar i { display: block; height: 100%; width: 0; background: #5f5d57; transition: width 0.12s linear; }
+
+    /* ---------- Окуляр ---------- */
+
+    .scope {
+      position: relative;
+      background: var(--scope);
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55), 0 1px 0 rgba(255, 255, 255, 0.45);
+      padding: 24px 10px 28px;
+      touch-action: none;
+    }
+    .ticks { position: absolute; top: 9px; left: 14px; right: 14px; height: 8px; display: flex; gap: 2px; }
+    .tick { flex: 1; background: #242422; transition: background 0.12s; }
+    .tick.on { background: var(--scope-dim); }
+    .tick.warn { background: var(--acc); }
+    .stat {
+      position: absolute;
+      left: 16px;
+      bottom: 9px;
+      font-family: var(--mono);
+      font-size: 9.5px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--scope-dim);
+      transition: color 0.15s;
+      max-width: 62%;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .stat.live { color: var(--scope-live); }
+    .stat.warn { color: var(--acc); }
+    .chain {
+      position: absolute;
+      right: 16px;
+      bottom: 9px;
+      font-family: var(--mono);
+      font-size: 9.5px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--scope-dim);
+    }
+    #game { display: block; width: 100%; height: auto; }
+
+    /* ---------- Слои поверх окуляра ---------- */
+
+    .layer {
+      position: absolute;
+      inset: 0;
+      background: rgba(8, 9, 10, 0.97);
       display: flex;
       flex-direction: column;
-      align-items: center;
-      gap: 34px;
-      padding-top: 6vh;
+      padding: 16px 18px 14px;
+      overflow: auto;
     }
-    #menu[hidden], #play[hidden] { display: none; }
-    #play { display: flex; flex-direction: column; gap: 14px; }
+    .layer[hidden] { display: none; }
 
-    .menu-brand { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-    .menu-brand .logo { font-size: 30px; }
-    .menu-brand .maker { font-size: 9px; }
-    #menu-emblem { margin-bottom: 6px; }
-    #menu-emblem svg { display: block; }
+    .mtitle {
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: #5f5d57;
+      margin-bottom: 6px;
+    }
+    .menu-list { list-style: none; }
+    .menu-list li {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 10px;
+      padding: 9px 0;
+      border-bottom: 1px solid #1c1d1c;
+      font-size: 14.5px;
+      font-weight: 600;
+      color: var(--scope-ink);
+      cursor: pointer;
+    }
+    .menu-list li em {
+      font-family: var(--mono);
+      font-size: 8.5px;
+      font-style: normal;
+      letter-spacing: 0.13em;
+      text-transform: uppercase;
+      color: #5f5d57;
+      text-align: right;
+    }
+    .menu-list li.hd {
+      border: 0;
+      cursor: default;
+      font-family: var(--mono);
+      font-size: 8.5px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: #5f5d57;
+      padding: 11px 0 1px;
+      font-weight: 400;
+    }
+    .menu-list li.on, .menu-list li.on em { color: var(--acc); }
+    .menu-list li:active { opacity: 0.6; }
 
-    .menu-list {
+    /* Итог соло-партии — прямо в окуляре, как показание прибора. */
+    .result { align-items: center; justify-content: center; gap: 5px; }
+    .result .cap {
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--acc);
+    }
+    .result .big {
+      font-size: 66px;
+      font-weight: 800;
+      letter-spacing: -0.05em;
+      color: var(--scope-ink);
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+    }
+    .result .sub {
+      font-family: var(--mono);
+      font-size: 9.5px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--scope-dim);
+      text-align: center;
+    }
+
+    /* ---------- Клавиши ---------- */
+
+    .keys { display: grid; grid-template-columns: 1fr 1fr 1.35fr; gap: 8px; margin-top: 12px; }
+    .key {
+      background: var(--case-2);
+      border: 1px solid var(--edge);
+      border-radius: 8px;
+      padding: 13px 6px;
+      text-align: center;
+      cursor: pointer;
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--silk);
+      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.55) inset, 0 2px 4px rgba(0, 0, 0, 0.1);
+      transition: transform 0.09s, box-shadow 0.09s, opacity 0.15s;
+    }
+    .key:active { transform: translateY(1px); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
+    .key.acc { background: var(--acc); border-color: #c63a15; color: #fff; }
+    .key[disabled] { opacity: 0.4; cursor: default; }
+    .key .sub { display: block; font-size: 8.5px; letter-spacing: 0.14em; color: var(--silk-2); margin-top: 5px; }
+    .key.acc .sub { color: rgba(255, 255, 255, 0.62); }
+
+    .foot { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-top: 14px; padding: 0 4px; }
+    .grille {
+      flex: 1;
+      height: 30px;
+      border-radius: 4px;
+      background-image: radial-gradient(currentColor 1px, transparent 1.2px);
+      background-size: 7px 7px;
+      color: var(--silk-2);
+      opacity: 0.35;
+    }
+    .brand {
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--silk-2);
+      text-align: right;
+      line-height: 1.7;
+    }
+    .brand b { color: var(--silk); font-weight: 500; }
+
+    /* ---------- Окна поверх прибора ---------- */
+
+    .overlay {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 18px 14px;
+      background: color-mix(in srgb, var(--desk) 78%, transparent);
+      backdrop-filter: blur(4px);
+      z-index: 10;
+    }
+    .overlay[hidden] { display: none; }
+    .modal {
+      width: min(100%, 360px);
+      max-height: 92vh;
+      overflow-y: auto;
+      background: var(--case);
+      border: 1px solid var(--edge);
+      border-radius: 18px;
+      padding: 18px 18px 16px;
       display: flex;
       flex-direction: column;
       gap: 12px;
-      width: min(100%, 240px);
+      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.5) inset, 0 18px 44px rgba(0, 0, 0, 0.3);
     }
-    .menu-list button {
-      padding: 13px 16px;
-      border-radius: 12px;
-      font-size: 15px;
-      font-weight: 700;
-    }
-    .menu-theme { align-self: center; }
-
-    /* ---------- Игровой экран ---------- */
-
-    .play-foot { display: flex; justify-content: center; padding-top: 10px; }
-    #pause {
-      min-width: 120px;
-      padding: 12px 18px;
-      border-radius: 12px;
-      font-size: 13px;
+    .modal h2 {
+      font-family: var(--mono);
+      font-size: 10px;
       letter-spacing: 0.2em;
-      color: var(--muted);
+      text-transform: uppercase;
+      color: var(--silk-2);
+      font-weight: 500;
     }
-
-    /* Простое окно со списком действий: пауза, правила, выбор дуэли. */
-    .sheet { gap: 10px; min-width: min(88vw, 300px); }
-    .sheet h2 { margin-bottom: 4px; }
-    .sheet button { padding: 12px 16px; border-radius: 12px; font-size: 14px; font-weight: 700; }
-    .sheet .note { font-size: 12px; color: var(--muted); }
-    .rules { text-align: left; font-size: 13px; line-height: 1.5; max-height: 62vh; overflow-y: auto; }
-    .rules h3 {
+    .modal button {
+      font-family: var(--mono);
       font-size: 11px;
       letter-spacing: 0.12em;
       text-transform: uppercase;
-      color: var(--muted);
-      margin: 12px 0 4px;
+      color: var(--silk);
+      background: var(--case-2);
+      border: 1px solid var(--edge);
+      border-radius: 8px;
+      padding: 12px 10px;
+      cursor: pointer;
+      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.55) inset;
+    }
+    .modal button:active { transform: translateY(1px); }
+    .modal button.acc { background: var(--acc); border-color: #c63a15; color: #fff; }
+    /* Итог читается как показание: заголовок над числом, по центру. */
+    #over-title { text-align: center; }
+    #final-score {
+      font-size: 52px;
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      font-variant-numeric: tabular-nums;
+      text-align: center;
+      line-height: 1;
+    }
+    #final-score[hidden] { display: none; }
+    #over-note {
+      font-family: var(--mono);
+      font-size: 10.5px;
+      letter-spacing: 0.08em;
+      line-height: 1.6;
+      color: var(--silk-2);
+      text-align: center;
+      white-space: pre-line;
+    }
+    #over-note[hidden] { display: none; }
+    #over-emblem { display: flex; justify-content: center; }
+    #over-emblem svg { display: block; }
+
+    .rating-line { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+    .rating-line[hidden] { display: none; }
+    .rating-line .delta { font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; }
+    .rating-line .delta.up { color: #2f9e68; }
+    .rating-line .delta.down { color: var(--acc); }
+    .rating-line .caption {
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--silk-2);
+    }
+
+    #room-box {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      padding: 12px;
+      border-radius: 10px;
+      background: var(--scope);
+    }
+    #room-box[hidden] { display: none; }
+    .room-label {
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: #5f5d57;
+    }
+    #room-code {
+      font-size: 30px;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      color: var(--scope-ink);
+      font-family: var(--mono);
+    }
+
+    .board-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      max-height: 38vh;
+      overflow-y: auto;
+      font-size: 13px;
+    }
+    .board-list[hidden] { display: none; }
+    .board-list li {
+      display: grid;
+      grid-template-columns: 26px 1fr auto;
+      gap: 8px;
+      padding: 6px 8px;
+      border-radius: 7px;
+      align-items: center;
+    }
+    .board-list li.me { background: color-mix(in srgb, var(--acc) 14%, transparent); font-weight: 700; }
+    .board-list .rank { font-family: var(--mono); font-size: 10px; color: var(--silk-2); }
+    .board-list .who { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
+    .board-list .who-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .board-list .who-league {
+      font-family: var(--mono);
+      font-size: 8.5px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--silk-2);
+    }
+    .board-list .pts { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+    /* ---------- Правила ---------- */
+
+    .rules { font-size: 13px; line-height: 1.55; }
+    .rules h3 {
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--silk-2);
+      margin: 14px 0 4px;
+      font-weight: 500;
     }
     .rules h3:first-child { margin-top: 0; }
     .rules p { margin-bottom: 6px; }
-    .rules b { color: var(--accent); }
+    .rules b { color: var(--acc); font-weight: 600; }
 
-    header {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    .brand { display: flex; flex-direction: column; line-height: 1.05; }
-    .logo {
-      font-size: 21px;
-      font-weight: 800;
-      letter-spacing: -0.01em;
-    }
-    /* Производитель — мелким шрифтом, как гравировка на корпусе прибора. */
-    .maker {
-      font-size: 8px;
-      font-weight: 700;
-      letter-spacing: 0.18em;
-      color: var(--muted);
-    }
-    #emblem { flex-shrink: 0; }
-    #emblem svg { display: block; }
-    #emblem.bounce { animation: emblemBounce 0.7s ease-out; }
-    @keyframes emblemBounce {
-      0% { transform: scale(1) rotate(0deg); }
-      30% { transform: scale(1.35) rotate(-10deg); }
-      60% { transform: scale(1.15) rotate(7deg); }
-      100% { transform: scale(1) rotate(0deg); }
-    }
-    header .spacer { flex: 1; }
+    /* ---------- Кабинет ---------- */
 
-    button {
-      font: inherit;
-      color: var(--ink);
-      background: var(--control);
-      border: 1px solid var(--control-border);
-      border-radius: 10px;
-      padding: 7px 12px;
-      cursor: pointer;
-      font-size: 13px;
-      font-weight: 600;
-    }
-    button.active {
-      border-color: var(--accent);
-      color: var(--accent);
-    }
-    button:active { transform: translateY(1px); }
-
-    .hud {
-      display: grid;
-      grid-template-columns: 1fr auto;
-      align-items: end;
-      gap: 10px;
-    }
-    .score-block { display: flex; flex-direction: column; gap: 2px; }
-    .score-label {
-      font-size: 11px;
-      font-weight: 700;
+    .cabinet { gap: 14px; }
+    .cab-head { display: flex; align-items: center; gap: 12px; }
+    #cab-emblem { flex-shrink: 0; }
+    #cab-emblem svg { display: block; }
+    .cab-who { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+    .cab-name { font-size: 19px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cab-login {
+      font-family: var(--mono);
+      font-size: 9px;
       letter-spacing: 0.12em;
       text-transform: uppercase;
-      color: var(--muted);
+      color: var(--silk-2);
     }
-    #score {
-      font-size: 34px;
-      font-weight: 800;
-      color: var(--accent);
-      font-variant-numeric: tabular-nums;
-      line-height: 1.1;
-    }
-    .score-row { display: flex; align-items: baseline; gap: 10px; }
-    #streak {
-      font-size: 20px;
-      font-weight: 800;
-      color: #fff;
-      background: var(--accent);
-      border-radius: 8px;
-      padding: 2px 9px;
-      animation: streakPop 0.35s ease-out;
-    }
-    #streak[hidden] { display: none; }
-    @keyframes streakPop {
-      0% { transform: scale(0.6); opacity: 0; }
-      60% { transform: scale(1.18); opacity: 1; }
-      100% { transform: scale(1); opacity: 1; }
-    }
+    #cab-rename { padding: 8px 10px; }
 
-    .timer-block { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
-    #time {
-      font-size: 17px;
-      font-weight: 700;
-      font-variant-numeric: tabular-nums;
-    }
-    .tbar[hidden] { display: none; }
-    .tbar {
-      width: 110px;
-      height: 5px;
-      border-radius: 99px;
-      background: var(--board-border);
-      overflow: hidden;
-    }
-    .tbar i {
-      display: block;
-      height: 100%;
-      border-radius: 99px;
-      background: var(--accent);
-      transition: width 0.3s linear;
-    }
-
-    .phase {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      min-height: 26px;
-      font-size: 13px;
-      font-weight: 700;
-      color: var(--muted);
-      border-radius: 10px;
-      transition: background 0.2s, color 0.2s;
-    }
-    .phase.active {
-      color: var(--phase-ink, #fff);
-      background: var(--phase-bg, var(--accent));
-    }
-    .phase .swatch {
-      display: inline-block;
-      width: 12px;
-      height: 12px;
-      border-radius: 50%;
-      background: var(--swatch, transparent);
-      vertical-align: -1px;
-    }
-
-    .versus {
-      display: grid;
-      grid-template-columns: 1fr auto auto;
-      align-items: center;
-      gap: 10px;
-      padding: 8px 12px;
-      border-radius: 10px;
-      background: var(--control);
-      border: 1px solid var(--control-border);
-    }
-    .versus[hidden] { display: none; }
-    .vs-name {
-      font-size: 12px;
-      font-weight: 700;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: var(--muted);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .vs-score { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; }
-    .vs-gap {
-      font-size: 13px;
-      font-weight: 700;
-      font-variant-numeric: tabular-nums;
-      min-width: 54px;
-      text-align: right;
-    }
-    .vs-gap.ahead { color: #2f9e68; }
-    .vs-gap.behind { color: #d9483b; }
-
-    #duel-record { font-size: 12px; color: var(--muted); }
-
-    /* Лига и рейтинг: короткая строка, по нажатию — таблица. */
-    .rank-chip {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 12px;
-      padding: 6px 10px;
-      border-radius: 99px;
-      color: var(--accent);
-      border-color: color-mix(in srgb, var(--accent) 45%, var(--control-border));
-    }
-    .rank-chip[hidden] { display: none; }
-    .rank-chip .rating { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
-    .rank-chip.provisional { color: var(--muted); border-color: var(--control-border); }
-
-    .rating-line {
+    .cab-league {
       display: flex;
       flex-direction: column;
-      gap: 2px;
-      font-size: 14px;
-      font-weight: 700;
+      gap: 5px;
+      padding: 12px 14px;
+      border-radius: 10px;
+      background: var(--case-2);
+      border: 1px solid var(--edge);
     }
-    .rating-line[hidden] { display: none; }
-    .rating-line .delta { font-size: 22px; font-variant-numeric: tabular-nums; }
-    .rating-line .delta.up { color: #2f9e68; }
-    .rating-line .delta.down { color: #d9483b; }
-    .rating-line .caption { font-size: 12px; font-weight: 600; color: var(--muted); }
+    .cab-league .league-name { font-size: 17px; font-weight: 700; color: var(--acc); }
+    .cab-league .league-note {
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--silk-2);
+    }
+    .cab-league .league-bar { height: 4px; border-radius: 2px; background: var(--edge); overflow: hidden; }
+    .cab-league .league-bar i { display: block; height: 100%; background: var(--acc); }
 
-    .board-wrap { position: relative; }
-    canvas {
-      display: block;
-      width: 100%;
-      touch-action: none;
-      border-radius: 18px;
-      border: 1px solid var(--board-border);
-      background: var(--board);
+    .totalizer { display: flex; flex-direction: column; gap: 5px; }
+    .tot-head { display: flex; align-items: baseline; justify-content: space-between; }
+    .tot-label {
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--silk-2);
     }
+    .tot-value { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .tot-bar { height: 3px; border-radius: 2px; background: var(--edge); overflow: hidden; }
+    .tot-bar i { display: block; height: 100%; background: var(--acc); }
+    .tot-next { font-family: var(--mono); font-size: 9px; letter-spacing: 0.1em; color: var(--silk-2); }
+
+    .cab-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+    .cab-stats .stat { position: static; display: flex; flex-direction: column; align-items: center; gap: 2px; max-width: none; }
+    .stat-value { font-family: var(--mono); font-size: 16px; font-weight: 700; color: var(--silk); }
+    .stat-label {
+      font-family: var(--mono);
+      font-size: 8px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--silk-2);
+      text-align: center;
+    }
+
+    .cab-tabs { display: flex; gap: 6px; }
+    .cab-tabs .tab { flex: 1; }
+    .cab-tabs .tab.active { border-color: var(--acc); color: var(--acc); }
+
+    .code-box {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      margin-bottom: 10px;
+      border-radius: 10px;
+      background: var(--scope);
+    }
+    .code-left { display: flex; flex-direction: column; flex: 1; }
+    .code-label {
+      font-family: var(--mono);
+      font-size: 8.5px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: #5f5d57;
+    }
+    .code-value { font-size: 22px; font-weight: 700; letter-spacing: 0.14em; color: var(--scope-ink); }
+    .code-box button { background: var(--case-2); }
+
+    .history {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      max-height: 32vh;
+      overflow-y: auto;
+      font-size: 13px;
+    }
+    .history[hidden] { display: none; }
+    .history li {
+      display: grid;
+      grid-template-columns: 5px 1fr auto auto;
+      align-items: center;
+      gap: 9px;
+      padding: 7px 8px;
+      border-radius: 8px;
+      background: var(--case-2);
+    }
+    .history li.playable { cursor: pointer; }
+    .history .mark { width: 5px; height: 22px; border-radius: 3px; background: var(--silk-2); }
+    .history li.win .mark { background: #2f9e68; }
+    .history li.loss .mark { background: var(--acc); }
+    .history .who { display: flex; flex-direction: column; min-width: 0; }
+    .history .who b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .history .when {
+      font-family: var(--mono);
+      font-size: 8.5px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--silk-2);
+    }
+    .history .pts { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 12px; }
+    .history .rd { font-family: var(--mono); font-size: 11px; font-weight: 700; min-width: 34px; text-align: right; }
+    .history .rd.up { color: #2f9e68; }
+    .history .rd.down { color: var(--acc); }
+    .history .vs { font-family: var(--mono); font-size: 11px; color: var(--silk-2); }
+    .history .act { font-family: var(--mono); font-size: 9px; padding: 5px 8px; border-radius: 6px; }
+    .history .empty {
+      display: block;
+      background: none;
+      padding: 6px 0;
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.06em;
+      color: var(--silk-2);
+    }
+    .cab-sub {
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--silk-2);
+      margin: 10px 0 4px;
+      font-weight: 500;
+    }
+    .cab-sub[hidden] { display: none; }
+    .cab-actions { display: flex; gap: 8px; }
+    .cab-actions button { flex: 1; }
+
+    /* ---------- Реплей ---------- */
+
+    .replay-bar {
+      position: fixed;
+      left: 50%;
+      bottom: calc(16px + var(--tg-safe-area-inset-bottom, 0px));
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 10px 8px 16px;
+      border-radius: 99px;
+      background: var(--case);
+      border: 1px solid var(--acc);
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      box-shadow: 0 12px 30px -14px rgba(0, 0, 0, 0.5);
+      z-index: 9;
+    }
+    .replay-bar[hidden] { display: none; }
+    .replay-bar button {
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      background: var(--case-2);
+      border: 1px solid var(--edge);
+      border-radius: 99px;
+      padding: 6px 12px;
+      color: var(--silk);
+      cursor: pointer;
+    }
+
     .float-label {
       position: absolute;
       pointer-events: none;
-      font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-      font-weight: 800;
-      font-size: 18px;
-      color: var(--accent);
+      font-family: var(--mono);
+      font-weight: 700;
+      font-size: 16px;
+      color: var(--scope-ink);
       transform: translate(-50%, -50%);
       animation: floatUp 0.9s ease-out forwards;
       z-index: 3;
@@ -355,356 +774,85 @@
       15% { opacity: 1; }
       100% { opacity: 0; translate: 0 -34px; }
     }
-
-    .controls {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-      flex-wrap: wrap;
-    }
-    .controls .spacer { flex: 1; }
-    #seed {
-      font-size: 12px;
-      color: var(--muted);
-    }
-
-    .overlay {
-      position: fixed;
-      inset: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: color-mix(in srgb, var(--screen) 72%, transparent);
-      backdrop-filter: blur(4px);
-      z-index: 10;
-    }
-    .overlay[hidden] { display: none; }
-    .modal {
-      background: var(--control);
-      border: 1px solid var(--control-border);
-      border-radius: 18px;
-      padding: 32px 40px;
-      text-align: center;
-      display: flex;
-      flex-direction: column;
-      gap: 14px;
-      box-shadow: 0 20px 50px -20px rgba(0, 0, 0, 0.35);
-    }
-    .modal h2 { font-size: 15px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
-    #final-score {
-      font-size: 44px;
-      font-weight: 800;
-      color: var(--accent);
-      font-variant-numeric: tabular-nums;
-    }
-    #over-note { font-size: 14px; color: var(--muted); max-width: 260px; white-space: pre-line; }
-
-    #room-box {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 8px;
-      padding: 14px 18px;
-      border-radius: 12px;
-      background: color-mix(in srgb, var(--accent) 10%, transparent);
-      border: 1px solid var(--control-border);
-    }
-    #room-box[hidden] { display: none; }
-    .room-label {
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--muted);
-    }
-    #room-code {
-      font-size: 30px;
-      font-weight: 800;
-      letter-spacing: 0.16em;
-      color: var(--accent);
-    }
-    .board-list {
-      list-style: none;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      min-width: 240px;
-      max-height: 40vh;
-      overflow-y: auto;
-      text-align: left;
-      font-size: 14px;
-    }
-    .board-list[hidden] { display: none; }
-    .board-list li {
-      display: grid;
-      grid-template-columns: 30px 1fr auto;
-      gap: 8px;
-      padding: 5px 10px;
-      border-radius: 8px;
-    }
-    .board-list li.me {
-      background: color-mix(in srgb, var(--accent) 16%, transparent);
-      font-weight: 700;
-    }
-    /* ---------- Личный кабинет ---------- */
-
-    .cabinet {
-      padding: 22px 22px 18px;
-      gap: 16px;
-      width: min(92vw, 400px);
-      text-align: left;
-    }
-    .cab-head { display: flex; align-items: center; gap: 12px; }
-    #cab-emblem { flex-shrink: 0; }
-    #cab-emblem svg { display: block; }
-    .cab-who { display: flex; flex-direction: column; flex: 1; min-width: 0; }
-    .cab-name {
-      font-size: 20px;
-      font-weight: 800;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .cab-login { font-size: 12px; color: var(--muted); }
-    #cab-rename { padding: 6px 10px; }
-
-    .cab-league {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      padding: 12px 14px;
-      border-radius: 12px;
-      background: color-mix(in srgb, var(--accent) 10%, transparent);
-      border: 1px solid var(--control-border);
-      font-size: 13px;
-      font-weight: 700;
-    }
-    .cab-league .league-name { font-size: 17px; font-weight: 800; color: var(--accent); }
-    .cab-league .league-note { font-size: 12px; font-weight: 600; color: var(--muted); }
-    .cab-league .league-bar {
-      height: 5px;
-      border-radius: 99px;
-      background: var(--board-border);
-      overflow: hidden;
-    }
-    .cab-league .league-bar i {
-      display: block;
-      height: 100%;
-      border-radius: 99px;
-      background: var(--accent);
-    }
-
-    /* Счётчик наработки — как суммирующий индикатор на корпусе прибора. */
-    .totalizer { display: flex; flex-direction: column; gap: 5px; }
-    .tot-head { display: flex; align-items: baseline; justify-content: space-between; }
-    .tot-label {
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-      color: var(--muted);
-    }
-    .tot-value { font-size: 24px; font-weight: 800; letter-spacing: 0.04em; }
-    .tot-bar { height: 4px; border-radius: 99px; background: var(--board-border); overflow: hidden; }
-    .tot-bar i { display: block; height: 100%; border-radius: 99px; background: var(--accent); }
-    .tot-next { font-size: 11px; font-weight: 600; color: var(--muted); }
-
-    .cab-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-    .cab-stats .stat { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-    .stat-value { font-size: 18px; font-weight: 800; }
-    .stat-label {
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      color: var(--muted);
-      text-align: center;
-    }
-
-    .cab-sub {
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: var(--muted);
-    }
-    .history {
-      list-style: none;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      max-height: 34vh;
-      overflow-y: auto;
-      font-size: 13px;
-    }
-    .history li {
-      display: grid;
-      grid-template-columns: 6px 1fr auto auto;
-      align-items: center;
-      gap: 9px;
-      padding: 7px 8px;
-      border-radius: 9px;
-      background: color-mix(in srgb, var(--ink) 3%, transparent);
-    }
-    /* Собственный display перебивает атрибут hidden — гасим явно. */
-    .history[hidden] { display: none; }
-    .history li.playable { cursor: pointer; }
-    .history li.playable:active { transform: translateY(1px); }
-    .history .mark { width: 6px; height: 24px; border-radius: 99px; background: var(--muted); }
-    .history li.win .mark { background: #2f9e68; }
-    .history li.loss .mark { background: #d9483b; }
-    .history .who { display: flex; flex-direction: column; min-width: 0; }
-    .history .who b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .history .when { font-size: 11px; color: var(--muted); }
-    .history .pts { font-family: ui-monospace, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
-    .history .rd { font-size: 12px; font-weight: 700; min-width: 38px; text-align: right; }
-    .history .rd.up { color: #2f9e68; }
-    .history .rd.down { color: #d9483b; }
-    .history .empty { color: var(--muted); background: none; display: block; padding: 4px 0; }
-
-    .cab-actions { display: flex; gap: 8px; }
-    .cab-actions button { flex: 1; }
-
-    .cab-tabs { display: flex; gap: 6px; }
-    .tab { flex: 1; font-size: 12px; padding: 6px 10px; }
-    .tab.active { border-color: var(--accent); color: var(--accent); }
-
-    .code-box {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 10px 12px;
-      margin-bottom: 10px;
-      border-radius: 12px;
-      background: color-mix(in srgb, var(--accent) 10%, transparent);
-      border: 1px solid var(--control-border);
-    }
-    .code-left { display: flex; flex-direction: column; flex: 1; }
-    .code-label {
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: var(--muted);
-    }
-    .code-value { font-size: 22px; font-weight: 800; letter-spacing: 0.14em; color: var(--accent); }
-
-    .history .act {
-      font-size: 12px;
-      font-weight: 700;
-      padding: 4px 9px;
-      border-radius: 8px;
-    }
-    .history .vs { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
-
-    .replay-bar {
-      position: fixed;
-      left: 50%;
-      bottom: 18px;
-      transform: translateX(-50%);
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 8px 10px 8px 16px;
-      border-radius: 99px;
-      background: var(--control);
-      border: 1px solid var(--accent);
-      box-shadow: 0 12px 30px -14px rgba(0, 0, 0, 0.5);
-      font-size: 13px;
-      font-weight: 700;
-      z-index: 9;
-    }
-    .replay-bar[hidden] { display: none; }
-
-    .board-list .rank { color: var(--muted); font-variant-numeric: tabular-nums; }
-    .board-list .who { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
-    .board-list .who-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .board-list .who-league { font-size: 11px; font-weight: 600; color: var(--muted); }
-    .board-list .pts {
-      font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-      font-variant-numeric: tabular-nums;
-    }
   </style>
 </head>
 <body>
-  <div class="app">
-    <!-- Главное меню: точка входа, из неё запускаются все режимы. -->
-    <section id="menu">
-      <div class="menu-brand">
-        <span id="menu-emblem"></span>
-        <span class="logo">dotoscope</span>
-        <span class="maker">ROUND THINGS INC</span>
-      </div>
-      <nav class="menu-list">
-        <button data-go="profile">Профиль</button>
-        <button data-go="daily">Вызов дня</button>
-        <button data-go="sprint">Спринт</button>
-        <button data-go="free">Бесконечный</button>
-        <button data-go="duel">Дуэль</button>
-        <button data-go="friends">Друзья</button>
-        <button data-go="rules">Правила</button>
-      </nav>
-      <button id="theme-toggle" class="menu-theme" title="Сменить тему">◐</button>
-    </section>
+  <div class="device">
+    <div class="plate">
+      <span class="id">Round things <b>inc.</b><br />Dotoscope · <b>model 36</b></span>
+      <span class="micro">
+        <button class="mbtn" id="mark-toggle" title="Метки цвета">◍</button>
+        <button class="mbtn" id="theme-toggle" title="Свет">◐</button>
+      </span>
+    </div>
 
-    <!-- Игровой экран: ничего лишнего, только доска и пауза. -->
-    <section id="play" hidden>
-      <header>
-        <span id="emblem"></span>
-        <span class="brand">
-          <span class="logo">dotoscope</span>
-          <span class="maker">ROUND THINGS INC</span>
-        </span>
-        <span class="spacer"></span>
-      </header>
+    <div class="strip">
+      <span class="field">
+        <span class="lbl">Отсчёты</span>
+        <span class="val"><span id="score">0</span><span id="gain" hidden></span></span>
+      </span>
+      <span class="field" id="vs-field" hidden>
+        <span class="lbl" id="vs-name">Соперник</span>
+        <span class="val" id="vs-score">0</span>
+      </span>
+      <span class="field right" id="time-field">
+        <span class="lbl">Остаток</span>
+        <span class="val" id="time">3:00</span>
+      </span>
+    </div>
 
-      <div class="hud">
-        <div class="score-block">
-          <span class="score-label">Отсчёты</span>
-          <span class="score-row">
-            <span id="score" class="mono">0</span>
-            <span id="streak" class="mono" hidden></span>
-          </span>
-        </div>
-        <div class="timer-block">
-          <span id="time" class="mono">3:00</span>
-          <div class="tbar"><i id="time-fill" style="width: 100%"></i></div>
-        </div>
-      </div>
+    <div class="mini">
+      <i class="led" id="mini-led"></i>
+      <span class="txt" id="mini-text">Резонанс · ожидание</span>
+      <span class="cd" id="mini-cd">--</span>
+      <span class="bar"><i id="mini-bar"></i></span>
+    </div>
 
-      <div id="versus" class="versus" hidden>
-        <span class="vs-name" id="vs-name">Соперник</span>
-        <span class="vs-score mono" id="vs-score">0</span>
-        <span class="vs-gap mono" id="vs-gap"></span>
-      </div>
+    <div class="scope" id="scope">
+      <div class="ticks" id="ticks"></div>
+      <canvas id="game"></canvas>
+      <div class="stat" id="stat">Сигнал ровный</div>
+      <div class="chain" id="chain-count">Цепь 0</div>
 
-      <div id="phase" class="phase"><span id="phase-text">&nbsp;</span></div>
-
-      <div class="board-wrap">
-        <canvas id="game"></canvas>
+      <div class="layer" id="menu" hidden>
+        <span class="mtitle">Панель управления</span>
+        <ul class="menu-list" id="menu-list">
+          <li data-go="resume">Продолжить<em id="resume-note">текущий образец</em></li>
+          <li class="hd">Наблюдение</li>
+          <li data-go="daily">Вызов дня<em>раз в сутки</em></li>
+          <li data-go="sprint">Спринт<em>3:00</em></li>
+          <li data-go="free">Бесконечный<em>без ограничения</em></li>
+          <li data-go="duel">Дуэль<em>90 секунд</em></li>
+          <li class="hd">Прибор</li>
+          <li data-go="profile">Профиль<em>лига и история</em></li>
+          <li data-go="friends">Друзья<em>код и вызовы</em></li>
+          <li data-go="rules">Правила<em>как это работает</em></li>
+        </ul>
       </div>
 
-      <div class="play-foot">
-        <button id="pause" title="Пауза">❚❚</button>
+      <div class="layer result" id="result" hidden>
+        <span class="cap" id="result-cap">Наблюдение завершено</span>
+        <span class="big" id="result-big">0</span>
+        <span class="sub" id="result-sub"></span>
       </div>
-    </section>
-  </div>
+    </div>
 
-  <div id="pause-sheet" class="overlay" hidden>
-    <div class="modal sheet">
-      <h2>Пауза</h2>
-      <span id="pause-note" class="note"></span>
-      <button id="pause-resume">Продолжить</button>
-      <button id="pause-restart">Заново</button>
-      <button id="pause-quit">В меню</button>
-      <span id="seed" class="note mono"></span>
+    <div class="keys">
+      <div class="key" id="key-pause">Пауза<span class="sub">Стоп-кадр</span></div>
+      <div class="key" id="key-menu">Меню<span class="sub">Режимы, профиль</span></div>
+      <div class="key acc" id="key-go">Наблюдать<span class="sub">Новый образец</span></div>
+    </div>
+
+    <div class="foot">
+      <span class="grille"></span>
+      <span class="brand"><b>4 сигнала · 36 точек</b><br /><span id="seed">образец —</span></span>
     </div>
   </div>
 
   <div id="duel-sheet" class="overlay" hidden>
-    <div class="modal sheet">
+    <div class="modal">
       <h2>Дуэль</h2>
-      <button id="duel-quick">Быстрый матч</button>
+      <button id="duel-quick" class="acc">Быстрый матч</button>
       <button id="invite">Позвать друга</button>
       <button id="join-code">Ввести код</button>
       <button id="duel-cancel">Назад</button>
@@ -712,7 +860,7 @@
   </div>
 
   <div id="rules-sheet" class="overlay" hidden>
-    <div class="modal sheet">
+    <div class="modal">
       <h2>Правила</h2>
       <div class="rules">
         <h3>Наблюдение</h3>
@@ -769,10 +917,10 @@
       </div>
 
       <div class="cab-stats">
-        <div class="stat"><span id="cab-rating" class="stat-value mono"></span><span class="stat-label">рейтинг</span></div>
-        <div class="stat"><span id="cab-rank" class="stat-value mono"></span><span class="stat-label">место</span></div>
-        <div class="stat"><span id="cab-duels" class="stat-value mono"></span><span class="stat-label">дуэли</span></div>
-        <div class="stat"><span id="cab-daily" class="stat-value mono"></span><span class="stat-label">вызов дня</span></div>
+        <div class="stat"><span id="cab-rating" class="stat-value"></span><span class="stat-label">рейтинг</span></div>
+        <div class="stat"><span id="cab-rank" class="stat-value"></span><span class="stat-label">место</span></div>
+        <div class="stat"><span id="cab-duels" class="stat-value"></span><span class="stat-label">дуэли</span></div>
+        <div class="stat"><span id="cab-daily" class="stat-value"></span><span class="stat-label">вызов дня</span></div>
       </div>
 
       <div class="cab-tabs">
@@ -820,7 +968,7 @@
       </div>
       <ol id="daily-board" class="board-list" hidden></ol>
       <button id="add-opponent" hidden></button>
-      <button id="modal-action">Понятно</button>
+      <button id="modal-action" class="acc">Понятно</button>
     </div>
   </div>
 
