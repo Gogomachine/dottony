@@ -53,7 +53,6 @@
       --silk-2: #87847c;
       --acc: #e8481f;
       --edge: rgba(23, 24, 27, 0.16);
-      --desk: #cbc9c3;
       /* Окуляр всегда чёрный: это стекло прибора, а не часть корпуса. */
       --scope: #0c0d0e;
       --scope-line: #1d1e1d;
@@ -69,19 +68,19 @@
       --silk: #e9e7e2;
       --silk-2: #7e7b74;
       --edge: rgba(255, 255, 255, 0.1);
-      --desk: #141413;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
     html, body { height: 100%; }
+    /* Корпус занимает экран целиком: прибор — не карточка на столе, а сама
+       поверхность, к которой поднесли глаз. Стола за ним больше нет. */
     body {
-      background: var(--desk);
+      background: var(--case);
       color: var(--silk);
       font-family: var(--sans);
       display: flex;
-      align-items: center;
+      align-items: stretch;
       justify-content: center;
-      padding: 16px 12px;
       transition: background 0.25s;
       user-select: none;
     }
@@ -92,43 +91,44 @@
     .device {
       position: relative;
       width: 100%;
-      max-width: 390px;
-      /* Корпус не выше экрана: если места мало, ужимается только окуляр. */
+      /* Шире 430 растягивать нечего: прибор держат в руке. */
+      max-width: 430px;
       max-height: 100%;
       display: flex;
       flex-direction: column;
+      /* Лицо прибора держит свои пропорции, а лишнюю высоту экрана забирает
+         корпус поровну сверху и снизу — фон один и тот же, шва не видно. */
+      justify-content: center;
       background: var(--case);
-      border-radius: 26px;
-      padding: 12px 14px 16px;
-      border: 1px solid var(--edge);
-      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.5) inset, 0 18px 44px rgba(0, 0, 0, 0.22);
+      padding: 14px 16px 16px;
       transition: background 0.25s;
     }
     .device > * { flex: 0 0 auto; }
-    /* Шум поверх корпуса: без него пластик выглядит нарисованным. */
-    .device::after {
+    /* Шум по всему экрану: без него пластик выглядит нарисованным. Лежит на
+       body, а не на корпусе, — корпус теперь и есть весь фон. */
+    body::after {
       content: '';
-      position: absolute;
+      position: fixed;
       inset: 0;
-      border-radius: 26px;
       pointer-events: none;
       background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
       opacity: 0.05;
       mix-blend-mode: multiply;
     }
-    :root[data-theme='graphite'] .device::after { mix-blend-mode: screen; opacity: 0.06; }
+    :root[data-theme='graphite'] body::after { mix-blend-mode: screen; opacity: 0.06; }
 
     /*
      * В полноэкранном режиме Telegram кладёт поверх страницы две полосы, и
      * они складываются: системная и зона под его плавающими кнопками.
+     * Отступ, а не поле: корпус должен уходить под полосы, а не начинаться
+     * после них, иначе по краям экрана появится чужая рамка.
      */
-    .in-telegram body, body.in-telegram { padding-top: 0; }
     .in-telegram .device {
-      margin-top: calc(
-        var(--tg-safe-area-inset-top, 0px) + var(--tg-content-safe-area-inset-top, 0px)
+      padding-top: calc(
+        14px + var(--tg-safe-area-inset-top, 0px) + var(--tg-content-safe-area-inset-top, 0px)
       );
-      margin-bottom: calc(
-        var(--tg-safe-area-inset-bottom, 0px) + var(--tg-content-safe-area-inset-bottom, 0px)
+      padding-bottom: calc(
+        16px + var(--tg-safe-area-inset-bottom, 0px) + var(--tg-content-safe-area-inset-bottom, 0px)
       );
     }
 
@@ -317,10 +317,19 @@
       background: rgba(8, 9, 10, 0.97);
       display: flex;
       flex-direction: column;
-      justify-content: center;
       padding: 14px 18px;
-      overflow: auto;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      /* Окуляр глушит жесты (там ведут цепочку) — слою прокрутку возвращаем. */
+      touch-action: pan-y;
     }
+    /*
+     * Центрирование через авто-поля, а не justify-content: если список выше
+     * стекла, поля схлопываются в ноль и он просто прокручивается. С
+     * justify-content верх списка ушёл бы за край и стал недостижим.
+     */
+    .layer > :first-child { margin-top: auto; }
+    .layer > :last-child { margin-bottom: auto; }
     .layer[hidden] { display: none; }
 
     .mtitle {
@@ -358,7 +367,7 @@
     .menu-list li:active { opacity: 0.6; }
 
     /* Итог соло-партии — прямо в окуляре, как показание прибора. */
-    .result { align-items: center; justify-content: center; gap: 5px; }
+    .result { align-items: center; gap: 5px; }
     .result .cap {
       font-family: var(--mono);
       font-size: 10px;

@@ -801,11 +801,11 @@ const input = new ChainInput(
 // ---------- Управление ----------
 
 /**
- * Держит системные полосы Telegram в цвете темы: иначе в полноэкранном
- * режиме они выпадают из картинки светлой или тёмной рамкой.
+ * Держит системные полосы Telegram в цвете корпуса: он занимает весь
+ * экран, и полосы должны быть его продолжением, а не рамкой поверх.
  */
 function syncChrome(): void {
-  const color = getComputedStyle(document.documentElement).getPropertyValue('--desk').trim();
+  const color = getComputedStyle(document.documentElement).getPropertyValue('--case').trim();
   syncTelegramTheme(color);
 }
 
