@@ -81,7 +81,6 @@ export class Cabinet {
     this.friendsTab.addEventListener('click', () => this.openTab('friends'));
     el<HTMLButtonElement>('cab-add-friend').addEventListener('click', () => void this.addByCode());
     el<HTMLButtonElement>('cab-link-tg').addEventListener('click', () => void this.linkTelegram());
-    el<HTMLButtonElement>('cab-close').addEventListener('click', () => this.hide());
     el<HTMLButtonElement>('cab-rating-board').addEventListener('click', () => {
       this.hide();
       handlers.onRatingBoard();
@@ -101,6 +100,10 @@ export class Cabinet {
     return !this.overlay.hidden;
   }
 
+  /**
+   * Своей кнопки «Закрыть» у кабинета нет: окно убирают клавишей «Меню»
+   * или щелчком мимо него — кнопка лишь повторяла бы клавишу.
+   */
   hide(): void {
     this.overlay.hidden = true;
   }
