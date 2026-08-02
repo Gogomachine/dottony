@@ -297,7 +297,8 @@
       background: rgba(8, 9, 10, 0.97);
       display: flex;
       flex-direction: column;
-      padding: 16px 18px 14px;
+      justify-content: center;
+      padding: 14px 18px;
       overflow: auto;
     }
     .layer[hidden] { display: none; }
@@ -309,28 +310,18 @@
       text-transform: uppercase;
       color: #5f5d57;
       margin-bottom: 6px;
+      text-align: center;
     }
+    /* Пункты по центру и без пояснений: список короткий и читается сразу. */
     .menu-list { list-style: none; }
     .menu-list li {
-      display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-      gap: 10px;
-      padding: 9px 0;
+      padding: 10px 0;
       border-bottom: 1px solid #1c1d1c;
-      font-size: 14.5px;
+      font-size: 15px;
       font-weight: 600;
       color: var(--scope-ink);
       cursor: pointer;
-    }
-    .menu-list li em {
-      font-family: var(--mono);
-      font-size: 8.5px;
-      font-style: normal;
-      letter-spacing: 0.13em;
-      text-transform: uppercase;
-      color: #5f5d57;
-      text-align: right;
+      text-align: center;
     }
     .menu-list li.hd {
       border: 0;
@@ -340,10 +331,10 @@
       letter-spacing: 0.2em;
       text-transform: uppercase;
       color: #5f5d57;
-      padding: 11px 0 1px;
+      padding: 12px 0 2px;
       font-weight: 400;
     }
-    .menu-list li.on, .menu-list li.on em { color: var(--acc); }
+    .menu-list li.on { color: var(--acc); }
     .menu-list li:active { opacity: 0.6; }
 
     /* Итог соло-партии — прямо в окуляре, как показание прибора. */
@@ -817,16 +808,16 @@
       <div class="layer" id="menu" hidden>
         <span class="mtitle">Панель управления</span>
         <ul class="menu-list" id="menu-list">
-          <li data-go="resume">Продолжить<em id="resume-note">текущий образец</em></li>
+          <li data-go="resume">Продолжить</li>
           <li class="hd">Наблюдение</li>
-          <li data-go="daily">Вызов дня<em>раз в сутки</em></li>
-          <li data-go="sprint">Спринт<em>3:00</em></li>
-          <li data-go="free">Бесконечный<em>без ограничения</em></li>
-          <li data-go="duel">Дуэль<em>90 секунд</em></li>
+          <li data-go="daily">Вызов дня</li>
+          <li data-go="sprint">Спринт</li>
+          <li data-go="free">Бесконечный</li>
+          <li data-go="duel">Дуэль</li>
           <li class="hd">Прибор</li>
-          <li data-go="profile">Профиль<em>лига и история</em></li>
-          <li data-go="friends">Друзья<em>код и вызовы</em></li>
-          <li data-go="rules">Правила<em>как это работает</em></li>
+          <li data-go="profile">Профиль</li>
+          <li data-go="friends">Друзья</li>
+          <li data-go="rules">Правила</li>
         </ul>
       </div>
 

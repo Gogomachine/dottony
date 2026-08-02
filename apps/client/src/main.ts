@@ -65,7 +65,6 @@ const resultEl = el<HTMLDivElement>('result');
 const resultCapEl = el<HTMLSpanElement>('result-cap');
 const resultBigEl = el<HTMLSpanElement>('result-big');
 const resultSubEl = el<HTMLSpanElement>('result-sub');
-const resumeNoteEl = el<HTMLElement>('resume-note');
 const goKey = el<HTMLDivElement>('key-go');
 const duelSheet = el<HTMLDivElement>('duel-sheet');
 const rulesSheet = el<HTMLDivElement>('rules-sheet');
@@ -125,7 +124,7 @@ function startGame(seed?: number): void {
   overlay.hidden = true;
   resultEl.hidden = true;
   menuEl.hidden = true;
-  setStat('Сигнал ровный');
+  setStat('Готов к наблюдению');
   seedEl.textContent = `образец #${session.seed.toString(16)}`;
   updateHud();
   updateGoKey();
@@ -201,7 +200,7 @@ function updateMini(): void {
     miniTextEl.textContent = 'Резонанс · настройка';
     miniCdEl.textContent = String(Math.ceil(nextIn)).padStart(2, '0');
   } else {
-    miniTextEl.textContent = session.over ? 'Резонанс · ожидание' : 'Резонанс · сигнал ровный';
+    miniTextEl.textContent = session.started ? 'Резонанс · сигнал ровный' : 'Резонанс · ожидание';
     miniCdEl.textContent = '--';
   }
 }
@@ -478,6 +477,7 @@ function handleDuelMessage(message: DuelServerMessage): void {
       mode = 'duel';
       dailyRun = null;
       startGame(message.seed);
+      session.begin();
       showVersus(opponentName, 0);
       break;
     }
@@ -496,6 +496,7 @@ function handleDuelMessage(message: DuelServerMessage): void {
       opponentCode = message.opponentCode ?? null;
       mode = 'duel';
           startGame(message.seed);
+      session.begin();
       session.restore(message.grid, message.score, message.streak);
       session.syncRemaining(message.remaining);
       updateStreak(message.streak);
@@ -707,6 +708,7 @@ async function startReplay(duelId: string): Promise<void> {
   menuEl.hidden = true;
   resultEl.hidden = true;
   session = new Session(data.seed, 'duel', DEFAULT_CONFIG, duelDuration);
+  session.begin();
   renderer.resetAnims();
   updateStreak(0);
   seedEl.textContent = `#${session.seed.toString(16)}`;
@@ -766,6 +768,8 @@ const input = new ChainInput(
     const oldGrid = session.board.grid;
     const at = input.pointer ?? renderer.center(path[path.length - 1]!);
     const elapsed = session.elapsed;
+    // Часы пускает первый ход: до него игрок разглядывает образец.
+    session.begin();
     const result = session.tryMove(path);
     if (typeof result === 'string') return;
     if (dailyRun) {
@@ -779,6 +783,7 @@ const input = new ChainInput(
     // Снятое показываем строкой состояния — это и есть отчёт прибора.
     const gain = result.multiplier > 1 ? ` ×${result.multiplier}` : '';
     setStat(`Снято ${result.removed.length + result.exploded.length} · +${result.points}${gain}`, 'live');
+    updateGoKey();
     updateHud();
   },
   (length: number) => {
@@ -829,18 +834,13 @@ function openMenu(): void {
   menuEl.hidden = false;
   // Подпись должна говорить правду: партии может уже не быть, а в дуэли
   // и вызове дня часы за заслонкой продолжают идти.
-  resumeNoteEl.textContent = session.over
-    ? 'образец исчерпан'
-    : canPause()
-      ? 'текущий образец'
-      : 'время идёт';
   setStat('Панель управления');
 }
 
 function closeMenu(): void {
   menuEl.hidden = true;
   session.resume();
-  if (!session.over) setStat('Наблюдение идёт', 'live');
+  if (!session.over) setStat(session.started ? 'Наблюдение идёт' : 'Готов к наблюдению', session.started ? 'live' : '');
 }
 
 function setMode(next: Mode): void {
@@ -859,7 +859,7 @@ function setMode(next: Mode): void {
 function updateGoKey(): void {
   const locked = inDuel || dailyRun !== null || replay !== null;
   goKey.toggleAttribute('disabled', locked);
-  const label = session.over ? 'Повторить' : 'Сброс';
+  const label = session.over ? 'Повторить' : session.started ? 'Сброс' : 'Наблюдать';
   goKey.firstChild!.nodeValue = locked ? 'Наблюдать' : label;
 }
 
@@ -930,7 +930,7 @@ el<HTMLButtonElement>('join-code').addEventListener('click', () => {
  * вызове дня остановка дала бы фору перед остальными.
  */
 function canPause(): boolean {
-  return !inDuel && dailyRun === null && replay === null && !session.over;
+  return !inDuel && dailyRun === null && replay === null && !session.over && session.started;
 }
 
 el<HTMLDivElement>('key-pause').addEventListener('click', () => {

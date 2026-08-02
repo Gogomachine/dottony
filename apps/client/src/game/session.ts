@@ -39,6 +39,12 @@ export class Session {
   private startedAt = Date.now();
   /** Момент постановки на паузу; null — партия идёт. */
   private pausedAt: number | null = null;
+  /**
+   * Партия создана, но часы ещё не пущены: ждём первого касания. Иначе
+   * время утекало бы, пока игрок разглядывает свежий образец. В дуэли
+   * так нельзя — там время общее с соперником, и его пускает сервер.
+   */
+  private startedYet = false;
   private readonly duration: number;
 
   constructor(
@@ -81,7 +87,7 @@ export class Session {
    * вкладка или заблокированный экран не останавливают партию.
    */
   tick(_dtSeconds: number, now = Date.now()): boolean {
-    if (this.over || this.pausedAt !== null) return false;
+    if (this.over || this.pausedAt !== null || !this.startedYet) return false;
     this.elapsed = (now - this.startedAt) / 1000;
     if (!this.timed) return false;
     this.timeLeft = Math.max(0, this.duration - this.elapsed);
@@ -106,6 +112,17 @@ export class Session {
       surgeStreak: streak,
     };
     this.score = score;
+  }
+
+  /** Пускает часы. Первое касание поля, а в дуэли — сообщение сервера. */
+  begin(now = Date.now()): void {
+    if (this.startedYet) return;
+    this.startedYet = true;
+    this.startedAt = now;
+  }
+
+  get started(): boolean {
+    return this.startedYet;
   }
 
   /**
