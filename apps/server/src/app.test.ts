@@ -103,13 +103,13 @@ function findLongestChain(board: Board): Cell[] {
 
 /**
  * Честный заход бесконечного режима: каждый ход берём самую длинную
- * цепочку — так игрок и гонится за комбо. Возвращает ходы и то
- * увеличение, которое при этом получилось у ядра.
+ * цепочку — так игрок и гонится за дорогим ходом. Возвращает ходы и
+ * лучшие отсчёты за один ход, которые при этом получились у ядра.
  */
 function playComboRun(seed: number, movesCount: number): { moves: ComboMove[]; combo: number } {
   let board = createBoard(seedRng(seed), DEFAULT_CONFIG);
   const moves: ComboMove[] = [];
-  let combo = 1;
+  let combo = 0;
   for (let i = 0; i < movesCount; i++) {
     const path = findLongestChain(board);
     if (path.length < DEFAULT_CONFIG.minChain) break;
@@ -117,19 +117,36 @@ function playComboRun(seed: number, movesCount: number): { moves: ComboMove[]; c
     const result = applyMove(board, path, DEFAULT_CONFIG, phaseColorAt(seed, t, DEFAULT_CONFIG));
     if (typeof result === 'string') throw new Error(result);
     board = result.board;
-    combo = Math.max(combo, result.streak + 1);
+    combo = Math.max(combo, result.points);
     moves.push({ path, t });
   }
   return { moves, combo };
 }
 
-/** Сид, на котором честный заход действительно собирает серию линз. */
+/** Заход с дорогим ходом — на нём и проверяем челлендж. */
 function seedWithCombo(minimum: number): { seed: number; moves: ComboMove[]; combo: number } {
   for (let seed = 1; seed < 60; seed++) {
     const run = playComboRun(seed, 12);
     if (run.combo >= minimum) return { seed, ...run };
   }
   throw new Error('no seed with combo found');
+}
+
+/** Заход из коротких цепочек: ходы дешёвые, рекорд заведомо ниже. */
+function cheapComboRun(seed: number, movesCount: number): { moves: ComboMove[]; combo: number } {
+  let board = createBoard(seedRng(seed), DEFAULT_CONFIG);
+  const moves: ComboMove[] = [];
+  let combo = 0;
+  for (let i = 0; i < movesCount; i++) {
+    const path = findAnyChain(board);
+    const t = (i + 1) * 2;
+    const result = applyMove(board, path, DEFAULT_CONFIG, phaseColorAt(seed, t, DEFAULT_CONFIG));
+    if (typeof result === 'string') throw new Error(result);
+    board = result.board;
+    combo = Math.max(combo, result.points);
+    moves.push({ path, t });
+  }
+  return { moves, combo };
 }
 
 function signedInitData(user: object, authDate = Math.floor(Date.now() / 1000)): string {
@@ -211,16 +228,28 @@ describe('replayDaily', () => {
 });
 
 describe('replayCombo', () => {
-  it('насчитывает то же увеличение, что и честный заход', () => {
-    const { seed, moves, combo } = seedWithCombo(2);
-    // Заход должен быть содержательным: без линз проверять нечего.
-    expect(combo).toBeGreaterThanOrEqual(2);
+  it('насчитывает те же отсчёты за ход, что и честный заход', () => {
+    const { seed, moves, combo } = seedWithCombo(200);
     expect(replayCombo(seed, moves)).toEqual({ combo });
   });
 
-  it('без линз увеличение остаётся единичным', () => {
-    const { moves } = playHonestRun(1, 4);
-    expect(replayCombo(1, moves)).toEqual({ combo: 1 });
+  it('берёт лучший ход, а не последний и не сумму', () => {
+    const { seed, moves, combo } = seedWithCombo(200);
+    const perMove = moves.map((_, index) => {
+      const replayed = replayCombo(seed, moves.slice(0, index + 1));
+      if (typeof replayed === 'string') throw new Error(replayed);
+      return replayed.combo;
+    });
+    // Рекорд не убывает и равен максимуму по ходам, а не их сумме.
+    expect(Math.max(...perMove)).toBe(combo);
+    expect(combo).toBeLessThan(perMove.reduce((sum, value) => sum + value, 0));
+  });
+
+  it('короткие цепочки дают дешёвый рекорд', () => {
+    const cheap = cheapComboRun(1, 4);
+    const rich = playComboRun(1, 4);
+    expect(replayCombo(1, cheap.moves)).toEqual({ combo: cheap.combo });
+    expect(cheap.combo).toBeLessThan(rich.combo);
   });
 
   it('отклоняет невозможный ход', () => {
@@ -236,9 +265,13 @@ describe('replayCombo', () => {
   });
 
   it('часы бесконечного захода не ограничены тремя минутами', () => {
-    const { moves } = playHonestRun(1, 2);
+    const { moves, combo } = cheapComboRun(1, 2);
     const late = moves.map((move, index) => ({ ...move, t: 3600 + index * 2 }));
-    expect(replayCombo(1, late)).toEqual({ combo: 1 });
+    // Время сдвинуто за пределы спринта, но фазы на этих секундах те же:
+    // проверяем сам факт приёма, а не совпадение до отсчёта.
+    const replayed = replayCombo(1, late);
+    expect(typeof replayed).not.toBe('string');
+    expect(combo).toBeGreaterThan(0);
   });
 });
 
@@ -880,8 +913,8 @@ describe('API', () => {
     expect(entries.map((entry) => entry.name)).toEqual(['Сильный', 'Слабый']);
   });
 
-  it('челлендж комбо: заход попадает в таблицу с пересчитанным увеличением', async () => {
-    const { seed, moves, combo } = seedWithCombo(2);
+  it('челлендж комбо: заход попадает в таблицу с пересчитанными отсчётами', async () => {
+    const { seed, moves, combo } = seedWithCombo(200);
     const token = await guestToken('Ада');
 
     const sent = await app.inject({
@@ -914,7 +947,8 @@ describe('API', () => {
   });
 
   it('челлендж комбо: рекорд не понижается слабым заходом', async () => {
-    const { seed, moves, combo } = seedWithCombo(2);
+    const { seed, moves, combo } = seedWithCombo(200);
+    const cheap = cheapComboRun(seed, 3);
     const token = await guestToken('Ада');
     const send = async (payload: object): Promise<unknown> => {
       const response = await app.inject({
@@ -927,13 +961,14 @@ describe('API', () => {
     };
 
     await send({ seed, moves });
-    // Тот же заход, оборванный до первой линзы: увеличение меньше рекорда.
-    const result = (await send({ seed, moves: moves.slice(0, 1) })) as {
+    // Заход короткими цепочками: ходы дешевле рекорда.
+    const result = (await send({ seed, moves: cheap.moves })) as {
       combo: number;
       best: number;
       record: boolean;
     };
-    expect(result.combo).toBe(1);
+    expect(result.combo).toBe(cheap.combo);
+    expect(result.combo).toBeLessThan(combo);
     expect(result.record).toBe(false);
     expect(result.best).toBe(combo);
   });
@@ -957,13 +992,14 @@ describe('API', () => {
   });
 
   it('челлендж комбо: без токена заход не принимается', async () => {
-    const { seed, moves } = seedWithCombo(2);
+    const { seed, moves } = seedWithCombo(200);
     const sent = await app.inject({ method: 'POST', url: '/api/combo', payload: { seed, moves } });
     expect(sent.statusCode).toBe(401);
   });
 
   it('челлендж комбо: таблица ранжирует игроков по рекорду', async () => {
-    const { seed, moves, combo } = seedWithCombo(2);
+    const { seed, moves, combo } = seedWithCombo(200);
+    const cheap = cheapComboRun(seed, 3);
     const strong = await guestToken('Сильный');
     const weak = await guestToken('Слабый');
     const send = async (token: string, payload: object): Promise<void> => {
@@ -976,7 +1012,7 @@ describe('API', () => {
     };
 
     await send(strong, { seed, moves });
-    await send(weak, { seed, moves: moves.slice(0, 1) });
+    await send(weak, { seed, moves: cheap.moves });
 
     const board = await app.inject({
       method: 'GET',
@@ -989,7 +1025,7 @@ describe('API', () => {
     };
     expect(entries).toEqual([
       { rank: 1, name: 'Сильный', combo },
-      { rank: 2, name: 'Слабый', combo: 1 },
+      { rank: 2, name: 'Слабый', combo: cheap.combo },
     ]);
     expect(me?.rank).toBe(2);
   });

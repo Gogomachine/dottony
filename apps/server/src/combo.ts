@@ -14,11 +14,12 @@ const MIN_MOVE_GAP = 0.1;
 export type ComboError = 'bad-timing' | 'invalid-move';
 
 /**
- * Переигрывает заход бесконечного режима и возвращает наибольшее
- * увеличение, которого игрок добился.
+ * Переигрывает заход бесконечного режима и возвращает лучшие отсчёты за
+ * один ход — цену самой дорогой цепочки захода.
  *
- * Комбо — это серия линз подряд, а она зависит от состояния поля, поэтому
- * проверить рекорд можно только переиграв заход целиком от сида. Числу
+ * Цена хода зависит от состояния поля: и от длины цепочки, и от зарядов
+ * под ней, и от серии линз с резонансом, которые её множат. Проверить
+ * рекорд поэтому можно только переиграв заход целиком от сида. Числу
  * клиента сервер не верит вовсе: в таблицу идёт то, что насчитало ядро на
  * присланных ходах.
  */
@@ -26,8 +27,7 @@ export function replayCombo(seed: number, moves: ComboMove[]): { combo: number }
   const cfg = DEFAULT_CONFIG;
   let board: Board = createBoard(seedRng(seed), cfg);
   let prevT = -Infinity;
-  // Увеличение без линз — ×1: заход без единой линзы даёт именно его.
-  let combo = 1;
+  let combo = 0;
 
   for (const move of moves) {
     if (move.t < prevT + MIN_MOVE_GAP) return 'bad-timing';
@@ -36,7 +36,7 @@ export function replayCombo(seed: number, moves: ComboMove[]): { combo: number }
     const result = applyMove(board, move.path, cfg, phaseColorAt(seed, move.t, cfg));
     if (typeof result === 'string') return 'invalid-move';
     board = result.board;
-    combo = Math.max(combo, result.streak + 1);
+    combo = Math.max(combo, result.points);
   }
 
   return { combo };

@@ -203,7 +203,7 @@ export class Cabinet {
       me.daily.best === null ? '—' : String(me.daily.best);
     // Комбо показываем вместе с местом: рекорд интересен в сравнении.
     el<HTMLSpanElement>('cab-combo').textContent =
-      me.combo.best === 0 ? '—' : `×${me.combo.best}`;
+      me.combo.best === 0 ? '—' : groupDigits(me.combo.best);
     el<HTMLSpanElement>('cab-combo-rank').textContent =
       me.combo.rank === null ? 'комбо' : `комбо · #${me.combo.rank}`;
 
