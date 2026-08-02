@@ -16,6 +16,12 @@ import {
 
 export type Mode = 'sprint' | 'free' | 'duel';
 
+/**
+ * Ошибки ядра плюс отказ самой сессии: ход в стоп-кадре ядро бы принял,
+ * но партия в этот момент стоит.
+ */
+export type SessionMoveError = MoveError | 'paused';
+
 export const SPRINT_SECONDS = 180;
 
 /**
@@ -71,8 +77,12 @@ export class Session {
     return phaseStateAt(this.seed, this.elapsed, this.cfg);
   }
 
-  tryMove(path: Cell[]): MoveResult | MoveError {
+  tryMove(path: Cell[]): MoveResult | SessionMoveError {
     if (this.over) return 'too-short';
+    // Стоп-кадр останавливает партию, а не только часы. Иначе в замершем
+    // времени можно было бы спокойно собирать цепочки: фаза не меняется,
+    // остаток не тает, а очки капают — это уже не наблюдение.
+    if (this.paused) return 'paused';
     const phaseColor = phaseColorAt(this.seed, this.elapsed, this.cfg);
     const result = applyMove(this.board, path, this.cfg, phaseColor);
     if (typeof result === 'string') return result;

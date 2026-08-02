@@ -119,6 +119,8 @@ function newSession(seed?: number): Session {
 
 function startGame(seed?: number): void {
   session = newSession(seed);
+  // Новый образец снимает стоп-кадр: партия другая, запрет от старой не её.
+  if (!replay) input.enabled = true;
   renderer.resetAnims();
   updateStreak(0);
   overlay.hidden = true;
@@ -829,7 +831,7 @@ function showResult(cap: string, score: number): void {
  * просто закрывает стекло заслонкой. Партия под ней остаётся на месте.
  */
 function openMenu(): void {
-  if (canPause()) session.pause();
+  if (canPause()) freeze();
   resultEl.hidden = true;
   menuEl.hidden = false;
   // Подпись должна говорить правду: партии может уже не быть, а в дуэли
@@ -839,7 +841,7 @@ function openMenu(): void {
 
 function closeMenu(): void {
   menuEl.hidden = true;
-  session.resume();
+  unfreeze();
   if (!session.over) setStat(session.started ? 'Наблюдение идёт' : 'Готов к наблюдению', session.started ? 'live' : '');
 }
 
@@ -933,13 +935,28 @@ function canPause(): boolean {
   return !inDuel && dailyRun === null && replay === null && !session.over && session.started;
 }
 
+/**
+ * Стоп-кадр замораживает партию целиком: часы стоят и стекло закрыто.
+ * Одних часов мало — на замершем поле цепочки собирались бы дальше.
+ */
+function freeze(): void {
+  session.pause();
+  input.enabled = false;
+}
+
+function unfreeze(): void {
+  session.resume();
+  // В реплее поле не игрока: запрет там снимает только stopReplay().
+  if (!replay) input.enabled = true;
+}
+
 el<HTMLDivElement>('key-pause').addEventListener('click', () => {
   if (!menuEl.hidden) {
     closeMenu();
     return;
   }
   if (session.paused) {
-    session.resume();
+    unfreeze();
     setStat('Наблюдение идёт', 'live');
     return;
   }
@@ -947,7 +964,7 @@ el<HTMLDivElement>('key-pause').addEventListener('click', () => {
     setStat(inDuel ? 'Матч идёт — стоп-кадр недоступен' : 'Время идёт', 'warn');
     return;
   }
-  session.pause();
+  freeze();
   setStat('Стоп-кадр');
 });
 
@@ -1103,7 +1120,7 @@ addEventListener('beforeunload', () => {
 // Read-only доступ к состоянию для e2e-тестов и отладки в консоли.
 declare global {
   interface Window {
-    __doton?: { session: () => Session; chain: () => Cell[] };
+    __doton?: { session: () => Session; chain: () => Cell[]; armed: () => boolean };
   }
 }
-window.__doton = { session: () => session, chain: () => input.chain };
+window.__doton = { session: () => session, chain: () => input.chain, armed: () => input.enabled };

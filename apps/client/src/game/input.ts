@@ -20,10 +20,21 @@ interface Point {
 export class ChainInput {
   chain: Cell[] = [];
   pointer: Point | null = null;
-  /** Во время реплея ходы делает запись, а не игрок. */
-  enabled = true;
+  private on = true;
   private dragging = false;
   private touch = false;
+
+  /** Поле принимает касания. Выключено в реплее и в стоп-кадре. */
+  get enabled(): boolean {
+    return this.on;
+  }
+
+  set enabled(value: boolean) {
+    this.on = value;
+    // Начатая цепочка не должна пережить запрет: иначе палец, поднятый уже
+    // после паузы, отправит ход, собранный до неё.
+    if (!value) this.clear();
+  }
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -45,7 +56,7 @@ export class ChainInput {
   }
 
   private readonly onDown = (e: PointerEvent): void => {
-    if (!this.enabled) return;
+    if (!this.on) return;
     this.canvas.setPointerCapture(e.pointerId);
     this.dragging = true;
     this.touch = e.pointerType !== 'mouse';
