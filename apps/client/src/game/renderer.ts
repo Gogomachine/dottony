@@ -234,9 +234,10 @@ export class Renderer {
       ctx.globalAlpha = 1;
     }
 
-    // Содержимое клеток. Точка чуть крупнее половины просвета между
-    // соседями: так она уверенно читается, но клетки не слипаются.
-    const radius = this.cell * 0.37;
+    // Содержимое клеток. Точка занимает почти всю клетку: так поле читается
+    // как плотная сетка сигналов, а не как редкие кружки. Между соседями
+    // остаётся просвет в пятую часть клетки — цепочка по нему и видна.
+    const radius = this.cell * 0.41;
     for (let r = 0; r < this.cfg.rows; r++) {
       for (let c = 0; c < this.cfg.cols; c++) {
         const content = grid[r]![c]!;
@@ -256,7 +257,9 @@ export class Renderer {
           ctx.globalAlpha = 0.25;
           ctx.fillStyle = theme.dots[content.color]!;
           ctx.beginPath();
-          ctx.ellipse(center.x, y, radius * 1.45 * scaleX, radius * 1.45 * scaleY, 0, 0, Math.PI * 2);
+          // Ореол резонанса привязан к клетке, а не к точке: с ростом точки
+          // множитель уменьшен, иначе ореолы соседей слились бы в кашу.
+          ctx.ellipse(center.x, y, radius * 1.3 * scaleX, radius * 1.3 * scaleY, 0, 0, Math.PI * 2);
           ctx.fill();
           ctx.globalAlpha = 1;
         }
