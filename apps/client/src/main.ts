@@ -952,7 +952,38 @@ function unfreeze(): void {
   if (!replay) input.enabled = true;
 }
 
+/**
+ * Закрывает открытое окно прибора, какое бы это ни было. Возвращает true,
+ * если что-то закрыла: клавише этого достаточно, чтобы считать нажатие
+ * потраченным. Окна лежат внутри окуляра и накрывают меню, поэтому без
+ * такого выхода клавиши переключали бы панель вслепую — за окном.
+ */
+function closeWindows(): boolean {
+  let closed = false;
+  for (const sheet of [duelSheet, rulesSheet]) {
+    if (sheet.hidden) continue;
+    sheet.hidden = true;
+    closed = true;
+  }
+  if (cabinet.visible) {
+    cabinet.hide();
+    closed = true;
+  }
+  if (!overlay.hidden) {
+    // Поиск соперника без своего окна шёл бы вслепую — обрываем вместе с ним.
+    if (waitingForOpponent) endDuel();
+    // Итог вызова дня закрыт — попытка засчитана, держать её незачем.
+    else if (session.over) dailyRun = null;
+    viewingOnly = false;
+    overlay.hidden = true;
+    closed = true;
+  }
+  return closed;
+}
+
 el<HTMLDivElement>('key-pause').addEventListener('click', () => {
+  // Открытое окно клавиша сперва убирает: под ним не видно, что она делает.
+  if (closeWindows()) return;
   if (!menuEl.hidden) {
     closeMenu();
     return;
@@ -970,7 +1001,15 @@ el<HTMLDivElement>('key-pause').addEventListener('click', () => {
   setStat('Стоп-кадр');
 });
 
+/**
+ * «Меню» работает всегда и всегда приводит к панели управления: если
+ * открыто окно — сперва закрывает его, а не переключает меню за ним.
+ */
 el<HTMLDivElement>('key-menu').addEventListener('click', () => {
+  if (closeWindows()) {
+    openMenu();
+    return;
+  }
   if (menuEl.hidden) openMenu();
   else closeMenu();
 });
