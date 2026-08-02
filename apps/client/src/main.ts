@@ -1038,8 +1038,9 @@ function updateGoKey(): void {
   goKey.firstChild!.nodeValue = locked ? 'Наблюдать' : label;
 }
 
+// Пункта «Продолжить» здесь нет: заслонку убирает та же клавиша, что её
+// открыла, и отдельная строка списка только повторяла бы её.
 const MENU_ACTIONS: Record<string, () => void> = {
-  resume: () => closeMenu(),
   profile: () => void cabinet.show('history'),
   friends: () => void cabinet.show('friends'),
   daily: () => {
