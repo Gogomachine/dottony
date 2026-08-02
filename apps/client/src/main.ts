@@ -1,4 +1,4 @@
-import { DEFAULT_CONFIG, type Cell } from '@doton/core';
+import { COMBO_CARRY_CHAIN, DEFAULT_CONFIG, type Cell } from '@doton/core';
 import type {
   ComboLeaderboardResponse,
   ComboMove,
@@ -114,7 +114,15 @@ let dailyStarting = false;
  * доказуемым, и это честнее, чем принимать число на слово.
  */
 let comboRun:
-  | { seed: number; moves: ComboMove[]; best: number; sent: number; full: boolean }
+  | {
+      seed: number;
+      moves: ComboMove[];
+      best: number;
+      /** Отсчёты хода, продлившего комбо; 0 — предыдущий ход его не продлевал. */
+      carried: number;
+      sent: number;
+      full: boolean;
+    }
   | null = null;
 let comboTimer = 0;
 
@@ -158,7 +166,7 @@ function startGame(seed?: number): void {
   // сам, и мерить в них рекорд серии — другая игра.
   comboRun =
     session.mode === 'free'
-      ? { seed: session.seed, moves: [], best: 0, sent: 0, full: false }
+      ? { seed: session.seed, moves: [], best: 0, carried: 0, sent: 0, full: false }
       : null;
   renderer.resetAnims();
   updateStreak(0);
@@ -732,7 +740,7 @@ document.addEventListener('visibilitychange', () => {
  * уже не в счёт. Молчать об этом нельзя — игрок должен понимать, почему
  * его серия не попала в таблицу.
  */
-function countCombo(path: Cell[], t: number, points: number): void {
+function countCombo(path: Cell[], t: number, points: number, chain: number): void {
   const run = comboRun;
   if (!run) return;
 
@@ -746,12 +754,23 @@ function countCombo(path: Cell[], t: number, points: number): void {
   }
 
   run.moves.push({ path: path.map((cell) => ({ ...cell })), t: Number(t.toFixed(3)) });
-  if (points <= run.best) return;
 
-  run.best = points;
-  updateHud();
-  setStat(`Комбо ${groupDigits(points)} — рекорд захода`, 'live');
-  scheduleCombo();
+  // Длинная цепочка продлевает комбо ровно на один ход: его отсчёты
+  // сложатся с этими. Продление одноразовое — дальше отсчёт с нуля.
+  const combo = run.carried + points;
+  const carries = chain >= COMBO_CARRY_CHAIN;
+  run.carried = carries ? points : 0;
+
+  if (combo > run.best) {
+    run.best = combo;
+    updateHud();
+    setStat(`Комбо ${groupDigits(combo)} — рекорд захода`, 'live');
+    scheduleCombo();
+    return;
+  }
+  // Продление важнее отчёта о ходе: игрок должен знать, что следующая
+  // цепочка ляжет в то же комбо.
+  if (carries) setStat(`Цепь ${chain} — следующий ход идёт в это же комбо`, 'live');
 }
 
 /**
@@ -946,7 +965,6 @@ const input = new ChainInput(
     if (dailyRun) {
       dailyRun.moves.push({ path: path.map((cell) => ({ ...cell })), t: Number(elapsed.toFixed(3)) });
     }
-    countCombo(path, elapsed, result.points);
     if (inDuel) duel.move(path, elapsed);
     countScore(result.points);
     renderer.animateMove(oldGrid, result);
@@ -957,6 +975,8 @@ const input = new ChainInput(
     setStat(`Снято ${result.removed.length + result.exploded.length} · +${result.points}${gain}`, 'live');
     updateGoKey();
     updateHud();
+    // Последним: рекорд и продление комбо должны перебивать отчёт о ходе.
+    countCombo(path, elapsed, result.points, result.removed.length);
   },
   (length: number) => {
     // Чем длиннее цепочка, тем ощутимее отклик — рука чувствует прогресс.

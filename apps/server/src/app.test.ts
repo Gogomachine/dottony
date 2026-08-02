@@ -106,9 +106,13 @@ function findLongestChain(board: Board): Cell[] {
  * цепочку — так игрок и гонится за дорогим ходом. Возвращает ходы и
  * лучшие отсчёты за один ход, которые при этом получились у ядра.
  */
-function playComboRun(seed: number, movesCount: number): { moves: ComboMove[]; combo: number } {
+function playComboRun(
+  seed: number,
+  movesCount: number,
+): { moves: ComboMove[]; combo: number; points: number[] } {
   let board = createBoard(seedRng(seed), DEFAULT_CONFIG);
   const moves: ComboMove[] = [];
+  const points: number[] = [];
   let combo = 0;
   for (let i = 0; i < movesCount; i++) {
     const path = findLongestChain(board);
@@ -118,9 +122,10 @@ function playComboRun(seed: number, movesCount: number): { moves: ComboMove[]; c
     if (typeof result === 'string') throw new Error(result);
     board = result.board;
     combo = Math.max(combo, result.points);
+    points.push(result.points);
     moves.push({ path, t });
   }
-  return { moves, combo };
+  return { moves, combo, points };
 }
 
 /** Заход с дорогим ходом — на нём и проверяем челлендж. */
@@ -243,6 +248,27 @@ describe('replayCombo', () => {
     // Рекорд не убывает и равен максимуму по ходам, а не их сумме.
     expect(Math.max(...perMove)).toBe(combo);
     expect(combo).toBeLessThan(perMove.reduce((sum, value) => sum + value, 0));
+  });
+
+  it('длинная цепочка складывает свой ход со следующим — ровно один раз', () => {
+    // Порог занижаем: цепочку в 25 точек на поле 6×6 не собрать, а
+    // механику продления проверить надо.
+    const { moves, points } = playComboRun(1, 4);
+
+    // Порог 3 берёт каждый ход: комбо становится суммой соседних пар.
+    const pairs = points.slice(1).map((value, index) => points[index]! + value);
+    expect(replayCombo(1, moves, 3)).toEqual({ combo: Math.max(...pairs) });
+
+    // Продление одноразовое: три хода подряд в одно комбо не сложатся.
+    const allThree = points.reduce((sum, value) => sum + value, 0);
+    expect(Math.max(...pairs)).toBeLessThan(allThree);
+  });
+
+  it('без длинных цепочек комбо остаётся ходом', () => {
+    const { moves, combo } = playComboRun(1, 4);
+    // Порог по умолчанию (25) на этих ходах не берётся: суммы нет.
+    expect(replayCombo(1, moves)).toEqual({ combo });
+    expect(replayCombo(1, moves, 99)).toEqual({ combo });
   });
 
   it('короткие цепочки дают дешёвый рекорд', () => {
