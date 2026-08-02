@@ -1,5 +1,7 @@
 import type {
   AuthResponse,
+  ComboLeaderboardResponse,
+  ComboMove,
   DailyInfo,
   LeaderboardResponse,
   DuelHistoryResponse,
@@ -8,6 +10,7 @@ import type {
   MoveLog,
   RatingLeaderboardResponse,
   ReplayResponse,
+  SubmitComboResponse,
   SubmitDailyResponse,
 } from '@doton/protocol';
 
@@ -160,6 +163,21 @@ export function getMe(): Promise<MeResponse> {
 
 export function getRatingBoard(): Promise<RatingLeaderboardResponse> {
   return request<RatingLeaderboardResponse>('/api/rating');
+}
+
+/**
+ * Отправляет заход бесконечного режима на проверку. Комбо считает сервер:
+ * он переигрывает ходы ядром, поэтому своё число слать незачем.
+ */
+export function submitCombo(seed: number, moves: ComboMove[]): Promise<SubmitComboResponse> {
+  return request<SubmitComboResponse>('/api/combo', {
+    method: 'POST',
+    body: JSON.stringify({ seed, moves }),
+  });
+}
+
+export function getComboBoard(): Promise<ComboLeaderboardResponse> {
+  return request<ComboLeaderboardResponse>('/api/combo/leaderboard');
 }
 
 /**

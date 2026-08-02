@@ -1,11 +1,18 @@
 import { DEFAULT_CONFIG, type Cell } from '@doton/core';
-import type { LeaderboardResponse, MoveLog, RatingLeaderboardResponse } from '@doton/protocol';
+import type {
+  ComboLeaderboardResponse,
+  ComboMove,
+  LeaderboardResponse,
+  MoveLog,
+  RatingLeaderboardResponse,
+} from '@doton/protocol';
 import type { DuelServerMessage } from '@doton/protocol';
 import {
   addFriend,
   apiAvailable,
   ensureAuth,
   getConfig,
+  getComboBoard,
   getRatingBoard,
   getReplay,
   getDaily,
@@ -19,6 +26,7 @@ import {
   localToday,
   resetAuth,
   savedName,
+  submitCombo,
   submitDaily,
   ApiError,
 } from './api';
@@ -42,6 +50,7 @@ const scoreEl = el<HTMLSpanElement>('score');
 const gainEl = el<HTMLSpanElement>('gain');
 const timeEl = el<HTMLSpanElement>('time');
 const timeFieldEl = el<HTMLSpanElement>('time-field');
+const timeLabelEl = el<HTMLSpanElement>('time-label');
 const ticksEl = el<HTMLDivElement>('ticks');
 const statEl = el<HTMLDivElement>('stat');
 const chainCountEl = el<HTMLDivElement>('chain-count');
@@ -97,6 +106,29 @@ let dailyRun: { date: string; moves: MoveLog[] } | null = null;
 let dailyStarting = false;
 
 /**
+ * Челлендж бесконечного режима — максимальное увеличение за заход.
+ *
+ * Серия линз зависит от состояния поля, поэтому доказать рекорд можно
+ * только журналом ходов: сервер переигрывает заход от сида и считает
+ * комбо сам. Журнал ограничен — с какого-то момента заход перестаёт быть
+ * доказуемым, и это честнее, чем принимать число на слово.
+ */
+let comboRun:
+  | { seed: number; moves: ComboMove[]; best: number; sent: number; full: boolean }
+  | null = null;
+let comboTimer = 0;
+
+/**
+ * Потолок журнала захода. Значение то же, что в схеме протокола, но
+ * значением его оттуда не берём: любой не-type импорт из @doton/protocol
+ * затащил бы в бандл клиента ещё и zod.
+ */
+const COMBO_MOVE_LIMIT = 1200;
+
+/** Не чаще раза в столько секунд отправляем заход на проверку. */
+const COMBO_SEND_GAP = 20_000;
+
+/**
  * Идёт ли сейчас дуэль и сколько она длится (сервер сообщает при старте).
  * Объявлено до первой сессии: newSession() читает длительность.
  */
@@ -118,9 +150,16 @@ function newSession(seed?: number): Session {
 }
 
 function startGame(seed?: number): void {
+  void sendCombo();
   session = newSession(seed);
   // Новый образец снимает стоп-кадр: партия другая, запрет от старой не её.
   if (!replay) input.enabled = true;
+  // Челлендж живёт только в бесконечном режиме: в остальных заход кончается
+  // сам, и мерить в них рекорд серии — другая игра.
+  comboRun =
+    session.mode === 'free'
+      ? { seed: session.seed, moves: [], best: 1, sent: 0, full: false }
+      : null;
   renderer.resetAnims();
   updateStreak(0);
   overlay.hidden = true;
@@ -148,13 +187,16 @@ function setStat(text: string, kind: '' | 'live' | 'warn' = ''): void {
 function updateHud(): void {
   scoreEl.textContent = String(session.score);
   if (!session.timed) {
-    // Бесконечный режим: делений не зажигаем, они бы врали о запасе.
-    timeEl.textContent = '∞';
+    // В бесконечном режиме таймера нет, и его место занимает челлендж:
+    // рекорд увеличения за заход. Делений не зажигаем — запаса не бывает.
+    timeLabelEl.textContent = comboRun ? 'Комбо' : 'Остаток';
+    timeEl.textContent = comboRun ? `×${comboRun.best}` : '∞';
     timeFieldEl.className = 'field right';
     for (const tick of tickEls) tick.className = 'tick';
     return;
   }
 
+  timeLabelEl.textContent = 'Остаток';
   const total = Math.ceil(session.timeLeft);
   timeEl.textContent = `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
   const full = session.mode === 'duel' ? duelDuration : SPRINT_SECONDS;
@@ -212,7 +254,7 @@ function updateMini(): void {
 function guestName(): string {
   const existing = savedName();
   if (existing) return existing;
-  const answer = prompt('Имя для таблицы дня:', 'Игрок') ?? 'Игрок';
+  const answer = prompt('Имя для таблиц:', 'Игрок') ?? 'Игрок';
   return answer.trim().slice(0, 24) || 'Игрок';
 }
 
@@ -670,8 +712,127 @@ async function flushScore(): Promise<void> {
 // Сворачивание — последний надёжный момент досчитать наработку: на
 // телефоне вкладку часто закрывают, не возвращаясь в неё.
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') void flushScore();
+  if (document.visibilityState !== 'hidden') return;
+  void flushScore();
+  void sendCombo();
 });
+
+// ---------- Челлендж: максимальное комбо ----------
+
+/**
+ * Записывает ход в журнал захода и следит за рекордом серии.
+ *
+ * Журнал не бесконечен, а заход — бесконечен. Когда журнал полон, заход
+ * перестаёт быть доказуемым: продолжать играть можно, но новые рекорды
+ * уже не в счёт. Молчать об этом нельзя — игрок должен понимать, почему
+ * его серия не попала в таблицу.
+ */
+function countCombo(path: Cell[], t: number, streak: number): void {
+  const run = comboRun;
+  if (!run) return;
+
+  if (run.moves.length >= COMBO_MOVE_LIMIT) {
+    if (!run.full) {
+      run.full = true;
+      void sendCombo();
+      setStat('Журнал захода полон — новый образец для нового рекорда', 'warn');
+    }
+    return;
+  }
+
+  run.moves.push({ path: path.map((cell) => ({ ...cell })), t: Number(t.toFixed(3)) });
+  const combo = streak + 1;
+  if (combo <= run.best) return;
+
+  run.best = combo;
+  updateHud();
+  setStat(`Комбо ×${combo} — рекорд захода`, 'live');
+  scheduleCombo();
+}
+
+/**
+ * Отправку рекорда придерживаем: серия линз идёт очередью, и каждый её
+ * шаг — новый рекорд. Слать заход на каждый было бы расточительно, ведь
+ * журнал уходит целиком.
+ */
+function scheduleCombo(): void {
+  if (comboTimer !== 0) return;
+  const run = comboRun;
+  if (!run) return;
+  const wait = Math.max(0, run.sent + COMBO_SEND_GAP - Date.now());
+  comboTimer = window.setTimeout(() => {
+    comboTimer = 0;
+    void sendCombo();
+  }, wait);
+}
+
+/**
+ * Отдаёт заход на проверку. Своё число не шлём вовсе: сервер переигрывает
+ * ходы ядром и сам решает, какое там комбо, — так рекорд остаётся
+ * доказанным, а не заявленным.
+ */
+async function sendCombo(): Promise<void> {
+  if (comboTimer !== 0) {
+    clearTimeout(comboTimer);
+    comboTimer = 0;
+  }
+  const run = comboRun;
+  if (!run || run.best <= 1 || run.moves.length === 0) return;
+  if (!apiAvailable) return;
+  // Рекорд идёт в общую таблицу, поэтому имя тут спросить уместно: до
+  // первой серии игрок мог ни разу не заходить на сервер.
+  if (!hasAuth()) {
+    try {
+      await ensureAuth(guestName);
+    } catch {
+      return;
+    }
+  }
+
+  run.sent = Date.now();
+  try {
+    const result = await submitCombo(run.seed, run.moves);
+    if (result.record) setStat(`Комбо ×${result.combo} · ${result.rank}-е место`, 'live');
+  } catch {
+    // Не дошло — заход не потерян: журнал на месте, отправим со следующим
+    // рекордом или при уходе из режима.
+  }
+}
+
+async function showComboBoard(): Promise<void> {
+  showOverModal({ title: 'Максимальное комбо', note: 'Загружаю таблицу…', viewing: true });
+  try {
+    const board = await getComboBoard();
+    if (board.entries.length === 0) {
+      overNoteEl.textContent =
+        'Таблица пока пуста. Собирай линзы подряд в бесконечном режиме — серия и есть комбо.';
+      return;
+    }
+    overNoteEl.textContent = board.me
+      ? `Твой рекорд ×${board.me.combo} · ${board.me.rank}-е место`
+      : 'Собери серию линз в бесконечном режиме, чтобы попасть в таблицу.';
+    renderComboBoard(board);
+  } catch {
+    overNoteEl.textContent = 'Таблица комбо недоступна. Попробуй позже.';
+  }
+}
+
+function renderComboBoard(board: ComboLeaderboardResponse): void {
+  dailyBoardEl.hidden = false;
+  dailyBoardEl.innerHTML = '';
+  const rows = [...board.entries];
+  // Своя строка нужна всегда, даже если игрок не попал в верхушку таблицы.
+  if (board.me && !rows.some((entry) => entry.rank === board.me!.rank)) rows.push(board.me);
+  for (const entry of rows) {
+    const item = document.createElement('li');
+    if (board.me && entry.rank === board.me.rank) item.className = 'me';
+    item.innerHTML =
+      `<span class="rank">${entry.rank}</span><span></span><span class="pts"></span>`;
+    (item.children[1] as HTMLElement).textContent = entry.name;
+    (item.children[2] as HTMLElement).textContent = `×${entry.combo}`;
+    dailyBoardEl.appendChild(item);
+  }
+}
 
 // ---------- Реплей ----------
 
@@ -779,6 +940,7 @@ const input = new ChainInput(
     if (dailyRun) {
       dailyRun.moves.push({ path: path.map((cell) => ({ ...cell })), t: Number(elapsed.toFixed(3)) });
     }
+    countCombo(path, elapsed, result.streak);
     if (inDuel) duel.move(path, elapsed);
     countScore(result.points);
     renderer.animateMove(oldGrid, result);
@@ -1031,6 +1193,7 @@ el<HTMLButtonElement>('mark-toggle').addEventListener('click', function () {
 const cabinet = new Cabinet({
   onReplay: (duelId) => void startReplay(duelId),
   onRatingBoard: () => void showRatingBoard(),
+  onComboBoard: () => void showComboBoard(),
   onInvite: (friendCode) => void inviteToRoom(friendCode),
 });
 

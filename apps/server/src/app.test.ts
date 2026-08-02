@@ -14,10 +14,11 @@ import {
   type Board,
   type Cell,
 } from '@doton/core';
-import type { DuelServerMessage, MoveLog } from '@doton/protocol';
+import type { ComboMove, DuelServerMessage, MoveLog } from '@doton/protocol';
 import { buildApp } from './app.js';
 import { parseStart } from './bot.js';
 import { Store } from './db.js';
+import { replayCombo } from './combo.js';
 import { dailySeed, replayDaily, todayUtc } from './daily.js';
 import { verifyTelegramInitData } from './telegram.js';
 
@@ -67,6 +68,68 @@ function playHonestRun(seed: number, movesCount: number): { moves: MoveLog[]; sc
     moves.push({ path, t });
   }
   return { moves, score };
+}
+
+/**
+ * Самая длинная цепочка на поле. Нужна челленджу комбо: заряд появляется
+ * только под цепочкой в десять точек, а без зарядов серии не бывает.
+ */
+function findLongestChain(board: Board): Cell[] {
+  const cfg = DEFAULT_CONFIG;
+  let best: Cell[] = [];
+  const walk = (path: Cell[], color: number): void => {
+    if (path.length > best.length) best = [...path];
+    const last = path[path.length - 1]!;
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        if (dr === 0 && dc === 0) continue;
+        const next: Cell = { r: last.r + dr, c: last.c + dc };
+        if (next.r < 0 || next.r >= cfg.rows || next.c < 0 || next.c >= cfg.cols) continue;
+        if (cellAt(board.grid, next)?.color !== color) continue;
+        if (path.some((cell) => cell.r === next.r && cell.c === next.c)) continue;
+        path.push(next);
+        walk(path, color);
+        path.pop();
+      }
+    }
+  };
+  for (let r = 0; r < cfg.rows; r++) {
+    for (let c = 0; c < cfg.cols; c++) {
+      walk([{ r, c }], cellAt(board.grid, { r, c })!.color);
+    }
+  }
+  return best;
+}
+
+/**
+ * Честный заход бесконечного режима: каждый ход берём самую длинную
+ * цепочку — так игрок и гонится за комбо. Возвращает ходы и то
+ * увеличение, которое при этом получилось у ядра.
+ */
+function playComboRun(seed: number, movesCount: number): { moves: ComboMove[]; combo: number } {
+  let board = createBoard(seedRng(seed), DEFAULT_CONFIG);
+  const moves: ComboMove[] = [];
+  let combo = 1;
+  for (let i = 0; i < movesCount; i++) {
+    const path = findLongestChain(board);
+    if (path.length < DEFAULT_CONFIG.minChain) break;
+    const t = (i + 1) * 2;
+    const result = applyMove(board, path, DEFAULT_CONFIG, phaseColorAt(seed, t, DEFAULT_CONFIG));
+    if (typeof result === 'string') throw new Error(result);
+    board = result.board;
+    combo = Math.max(combo, result.streak + 1);
+    moves.push({ path, t });
+  }
+  return { moves, combo };
+}
+
+/** Сид, на котором честный заход действительно собирает серию линз. */
+function seedWithCombo(minimum: number): { seed: number; moves: ComboMove[]; combo: number } {
+  for (let seed = 1; seed < 60; seed++) {
+    const run = playComboRun(seed, 12);
+    if (run.combo >= minimum) return { seed, ...run };
+  }
+  throw new Error('no seed with combo found');
 }
 
 function signedInitData(user: object, authDate = Math.floor(Date.now() / 1000)): string {
@@ -144,6 +207,38 @@ describe('replayDaily', () => {
   it('отклоняет ходы после конца партии', () => {
     const { moves } = playHonestRun(seed, 1);
     expect(replayDaily(seed, [{ ...moves[0]!, t: 500 }])).toBe('too-long');
+  });
+});
+
+describe('replayCombo', () => {
+  it('насчитывает то же увеличение, что и честный заход', () => {
+    const { seed, moves, combo } = seedWithCombo(2);
+    // Заход должен быть содержательным: без линз проверять нечего.
+    expect(combo).toBeGreaterThanOrEqual(2);
+    expect(replayCombo(seed, moves)).toEqual({ combo });
+  });
+
+  it('без линз увеличение остаётся единичным', () => {
+    const { moves } = playHonestRun(1, 4);
+    expect(replayCombo(1, moves)).toEqual({ combo: 1 });
+  });
+
+  it('отклоняет невозможный ход', () => {
+    const moves: ComboMove[] = [
+      { path: [{ r: 0, c: 0 }, { r: 5, c: 5 }, { r: 0, c: 1 }], t: 1 },
+    ];
+    expect(replayCombo(1, moves)).toBe('invalid-move');
+  });
+
+  it('отклоняет нечеловеческий темп', () => {
+    const { moves } = playHonestRun(1, 2);
+    expect(replayCombo(1, moves.map((move) => ({ ...move, t: 1 })))).toBe('bad-timing');
+  });
+
+  it('часы бесконечного захода не ограничены тремя минутами', () => {
+    const { moves } = playHonestRun(1, 2);
+    const late = moves.map((move, index) => ({ ...move, t: 3600 + index * 2 }));
+    expect(replayCombo(1, late)).toEqual({ combo: 1 });
   });
 });
 
@@ -783,6 +878,120 @@ describe('API', () => {
     const board = await app.inject({ method: 'GET', url: '/api/daily/leaderboard' });
     const { entries } = board.json() as { entries: { name: string; rank: number }[] };
     expect(entries.map((entry) => entry.name)).toEqual(['Сильный', 'Слабый']);
+  });
+
+  it('челлендж комбо: заход попадает в таблицу с пересчитанным увеличением', async () => {
+    const { seed, moves, combo } = seedWithCombo(2);
+    const token = await guestToken('Ада');
+
+    const sent = await app.inject({
+      method: 'POST',
+      url: '/api/combo',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { seed, moves },
+    });
+    expect(sent.statusCode).toBe(200);
+    expect(sent.json()).toEqual({ combo, best: combo, record: true, rank: 1 });
+
+    const me = await app.inject({
+      method: 'GET',
+      url: '/api/me',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect((me.json() as { combo: unknown }).combo).toEqual({ best: combo, rank: 1 });
+
+    const board = await app.inject({
+      method: 'GET',
+      url: '/api/combo/leaderboard',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const { entries, me: mine } = board.json() as {
+      entries: { name: string; combo: number; rank: number }[];
+      me: { rank: number; combo: number } | null;
+    };
+    expect(entries).toEqual([{ rank: 1, name: 'Ада', combo }]);
+    expect(mine).toEqual({ rank: 1, name: 'Ада', combo });
+  });
+
+  it('челлендж комбо: рекорд не понижается слабым заходом', async () => {
+    const { seed, moves, combo } = seedWithCombo(2);
+    const token = await guestToken('Ада');
+    const send = async (payload: object): Promise<unknown> => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/combo',
+        headers: { authorization: `Bearer ${token}` },
+        payload,
+      });
+      return response.json();
+    };
+
+    await send({ seed, moves });
+    // Тот же заход, оборванный до первой линзы: увеличение меньше рекорда.
+    const result = (await send({ seed, moves: moves.slice(0, 1) })) as {
+      combo: number;
+      best: number;
+      record: boolean;
+    };
+    expect(result.combo).toBe(1);
+    expect(result.record).toBe(false);
+    expect(result.best).toBe(combo);
+  });
+
+  it('челлендж комбо: подделанный лог не проходит', async () => {
+    const token = await guestToken('Мошенник');
+    const bad = await app.inject({
+      method: 'POST',
+      url: '/api/combo',
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        seed: 1,
+        moves: [{ path: [{ r: 0, c: 0 }, { r: 5, c: 5 }, { r: 0, c: 1 }], t: 1 }],
+      },
+    });
+    expect(bad.statusCode).toBe(400);
+    expect((bad.json() as { error: string }).error).toBe('invalid-move');
+
+    const board = await app.inject({ method: 'GET', url: '/api/combo/leaderboard' });
+    expect((board.json() as { entries: unknown[] }).entries).toEqual([]);
+  });
+
+  it('челлендж комбо: без токена заход не принимается', async () => {
+    const { seed, moves } = seedWithCombo(2);
+    const sent = await app.inject({ method: 'POST', url: '/api/combo', payload: { seed, moves } });
+    expect(sent.statusCode).toBe(401);
+  });
+
+  it('челлендж комбо: таблица ранжирует игроков по рекорду', async () => {
+    const { seed, moves, combo } = seedWithCombo(2);
+    const strong = await guestToken('Сильный');
+    const weak = await guestToken('Слабый');
+    const send = async (token: string, payload: object): Promise<void> => {
+      await app.inject({
+        method: 'POST',
+        url: '/api/combo',
+        headers: { authorization: `Bearer ${token}` },
+        payload,
+      });
+    };
+
+    await send(strong, { seed, moves });
+    await send(weak, { seed, moves: moves.slice(0, 1) });
+
+    const board = await app.inject({
+      method: 'GET',
+      url: '/api/combo/leaderboard',
+      headers: { authorization: `Bearer ${weak}` },
+    });
+    const { entries, me } = board.json() as {
+      entries: { name: string; rank: number; combo: number }[];
+      me: { rank: number } | null;
+    };
+    expect(entries).toEqual([
+      { rank: 1, name: 'Сильный', combo },
+      { rank: 2, name: 'Слабый', combo: 1 },
+    ]);
+    expect(me?.rank).toBe(2);
   });
 
   it('друг добавляется по коду — сразу с обеих сторон', async () => {

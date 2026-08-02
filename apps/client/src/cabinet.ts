@@ -53,6 +53,8 @@ function shortDate(iso: string): string {
 export interface CabinetHandlers {
   onReplay(duelId: string): void;
   onRatingBoard(): void;
+  /** Таблица челленджа бесконечного режима. */
+  onComboBoard(): void;
   /**
    * Позвать друга в матч: снаружи это открывает приватную комнату.
    * Код друга нужен, чтобы дослать приглашение сообщением в Telegram.
@@ -83,6 +85,10 @@ export class Cabinet {
     el<HTMLButtonElement>('cab-rating-board').addEventListener('click', () => {
       this.hide();
       handlers.onRatingBoard();
+    });
+    el<HTMLButtonElement>('cab-combo-board').addEventListener('click', () => {
+      this.hide();
+      handlers.onComboBoard();
     });
     el<HTMLButtonElement>('cab-rename').addEventListener('click', () => void this.rename());
     // Клик мимо окна закрывает кабинет — привычный жест.
@@ -195,6 +201,11 @@ export class Cabinet {
     el<HTMLSpanElement>('cab-duels').textContent = `${me.duels.won}/${me.duels.played}`;
     el<HTMLSpanElement>('cab-daily').textContent =
       me.daily.best === null ? '—' : String(me.daily.best);
+    // Комбо показываем вместе с местом: рекорд интересен в сравнении.
+    el<HTMLSpanElement>('cab-combo').textContent =
+      me.combo.best === 0 ? '—' : `×${me.combo.best}`;
+    el<HTMLSpanElement>('cab-combo-rank').textContent =
+      me.combo.rank === null ? 'комбо' : `комбо · #${me.combo.rank}`;
 
     this.leagueEl.innerHTML =
       '<span class="league-name"></span>' +

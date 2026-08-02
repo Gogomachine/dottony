@@ -11,10 +11,12 @@ import {
   GuestAuthRequestSchema,
   InviteRequestSchema,
   RenameRequestSchema,
+  SubmitComboRequestSchema,
   SubmitDailyRequestSchema,
   TelegramAuthRequestSchema,
   DateSchema,
   type AuthResponse,
+  type ComboLeaderboardResponse,
   type DailyInfo,
   type DuelServerMessage,
   type DuelHistoryEntry,
@@ -25,6 +27,7 @@ import {
   type MoveLog,
   type RatingLeaderboardResponse,
   type ReplayResponse,
+  type SubmitComboResponse,
   type SubmitDailyResponse,
 } from '@doton/protocol';
 import {
@@ -36,6 +39,7 @@ import {
   type Rating,
 } from '@doton/core';
 import { Bot, makeLinkToken, parseStart, type BotUpdate } from './bot.js';
+import { replayCombo } from './combo.js';
 import { dailySeed, replayDaily, todayUtc } from './daily.js';
 import { Store } from './db.js';
 import { DEFAULT_GHOST_SCORE, makeSyntheticGhost } from './ghost.js';
@@ -350,6 +354,60 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return response;
   });
 
+  // ---------- Челлендж комбо ----------
+
+  /**
+   * Заход бесконечного режима. Клиент присылает ходы, сервер переигрывает
+   * их ядром и сам считает комбо: в таблицу попадает только то, что
+   * подтверждено пересчётом.
+   */
+  app.post('/api/combo', async (request, reply) => {
+    const user = await requireUser(request);
+    const parsed = SubmitComboRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
+
+    const replay = replayCombo(parsed.data.seed, parsed.data.moves);
+    if (typeof replay === 'string') return reply.code(400).send({ error: replay });
+
+    const saved = await store.saveCombo(
+      user.sub,
+      replay.combo,
+      parsed.data.seed,
+      JSON.stringify(parsed.data.moves),
+    );
+    const response: SubmitComboResponse = {
+      combo: replay.combo,
+      best: saved.best,
+      record: saved.improved,
+      rank: (await store.comboRank(user.sub)) ?? 1,
+    };
+    return response;
+  });
+
+  app.get('/api/combo/leaderboard', async (request): Promise<ComboLeaderboardResponse> => {
+    const rows = await store.comboTop(LEADERBOARD_SIZE);
+    const entries = rows.map((row, index) => ({
+      rank: index + 1,
+      name: row.name,
+      combo: row.combo,
+    }));
+
+    // Авторизация не обязательна: без токена просто не будет строки «я».
+    let me: ComboLeaderboardResponse['me'] = null;
+    try {
+      const user = await requireUser(request);
+      const [best, rank] = await Promise.all([
+        store.bestCombo(user.sub),
+        store.comboRank(user.sub),
+      ]);
+      if (best > 0 && rank !== null) me = { rank, name: user.name, combo: best };
+    } catch {
+      // нет или битый токен — гость смотрит таблицу анонимно
+    }
+
+    return { entries, me };
+  });
+
   // ---------- Дуэли ----------
 
   app.get('/api/me/duels', async (request) => {
@@ -381,13 +439,15 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   /** Карточка игрока: рейтинг, лига, место и сводка по дуэлям. */
   app.get('/api/me', async (request): Promise<MeResponse> => {
     const user = await requireUser(request);
-    const [rating, rank, duels, identities, daily, total] = await Promise.all([
+    const [rating, rank, duels, identities, daily, total, combo, comboRank] = await Promise.all([
       store.ratingOf(user.sub),
       store.ratingRank(user.sub),
       store.duelRecord(user.sub),
       store.identitiesOf(user.sub),
       store.dailyRecord(user.sub),
       store.totalScore(user.sub),
+      store.bestCombo(user.sub),
+      store.comboRank(user.sub),
     ]);
     const up = nextLeague(rating.rating);
     const league = leagueOf(rating.rating);
@@ -407,6 +467,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       total,
       identities,
       daily,
+      combo: { best: combo, rank: comboRank },
     };
   });
 

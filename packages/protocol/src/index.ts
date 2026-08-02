@@ -48,6 +48,26 @@ export const AddScoreRequestSchema = z.object({
   moves: z.number().int().min(1).max(2000),
 });
 
+/**
+ * Челлендж бесконечного режима — максимальное увеличение за заход. Ходы
+ * присылаются целиком: комбо зависит от состояния поля, а его не
+ * восстановить иначе как переиграв заход от сида. Числу клиента сервер не
+ * верит вовсе — он считает комбо сам.
+ */
+export const ComboMoveSchema = z.object({
+  path: z.array(CellSchema).min(3).max(64),
+  /** Секунда захода. В бесконечном режиме партия идёт хоть сутки. */
+  t: z.number().min(0).max(86_400),
+});
+
+/** Потолок журнала захода: столько ходов клиент готов доказать. */
+export const COMBO_MOVE_LIMIT = 1200;
+
+export const SubmitComboRequestSchema = z.object({
+  seed: z.number().int().min(0).max(0xffffffff),
+  moves: z.array(ComboMoveSchema).min(1).max(COMBO_MOVE_LIMIT),
+});
+
 /** Приглашение друга в комнату: код комнаты тот же, что у приватной дуэли. */
 export const InviteRequestSchema = z.object({
   room: z.string().trim().min(4).max(16),
@@ -64,6 +84,8 @@ export type GuestAuthRequest = z.infer<typeof GuestAuthRequestSchema>;
 export type RenameRequest = z.infer<typeof RenameRequestSchema>;
 export type AddFriendRequest = z.infer<typeof AddFriendRequestSchema>;
 export type AddScoreRequest = z.infer<typeof AddScoreRequestSchema>;
+export type ComboMove = z.infer<typeof ComboMoveSchema>;
+export type SubmitComboRequest = z.infer<typeof SubmitComboRequestSchema>;
 export type TelegramAuthRequest = z.infer<typeof TelegramAuthRequestSchema>;
 
 export interface AuthResponse {
@@ -92,6 +114,28 @@ export interface LeaderboardResponse {
 export interface SubmitDailyResponse {
   score: number;
   rank: number;
+}
+
+/** Ответ на присланный заход: что насчитало ядро и куда это ставит игрока. */
+export interface SubmitComboResponse {
+  /** Комбо этого захода — по пересчёту сервера. */
+  combo: number;
+  /** Личный рекорд после захода. */
+  best: number;
+  /** Рекорд обновлён. */
+  record: boolean;
+  rank: number;
+}
+
+export interface ComboEntry {
+  rank: number;
+  name: string;
+  combo: number;
+}
+
+export interface ComboLeaderboardResponse {
+  entries: ComboEntry[];
+  me: ComboEntry | null;
 }
 
 export interface RatingEntry {
@@ -181,6 +225,8 @@ export interface MeResponse {
   identities: IdentityInfo[];
   /** Лучший результат в вызове дня и сколько дней сыграно. */
   daily: { played: number; best: number | null };
+  /** Челлендж бесконечного режима: лучшее увеличение и место в таблице. */
+  combo: { best: number; rank: number | null };
 }
 
 export interface RatingLeaderboardResponse {

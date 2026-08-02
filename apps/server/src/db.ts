@@ -113,6 +113,17 @@ export class Store {
          )`,
         `CREATE INDEX IF NOT EXISTS idx_daily_runs_date_score
            ON daily_runs (date, score DESC)`,
+        // Челлендж бесконечного режима: у игрока хранится только лучший
+        // заход. Ходы лежат рядом с числом — рекорд должен оставаться
+        // доказуемым и после того, как его засчитали.
+        `CREATE TABLE IF NOT EXISTS combo_runs (
+           user_id TEXT PRIMARY KEY REFERENCES users(id),
+           combo INTEGER NOT NULL,
+           seed INTEGER NOT NULL,
+           moves TEXT NOT NULL,
+           created_at TEXT NOT NULL DEFAULT (datetime('now'))
+         )`,
+        `CREATE INDEX IF NOT EXISTS idx_combo_runs_combo ON combo_runs (combo DESC)`,
         `CREATE TABLE IF NOT EXISTS duels (
            id TEXT PRIMARY KEY,
            seed INTEGER NOT NULL,
@@ -672,6 +683,64 @@ export class Store {
       args: [points, userId],
     });
     return { total: Number(row.total_score) + points };
+  }
+
+  /** Личный рекорд комбо; 0 — заходов ещё не было. */
+  async bestCombo(userId: string): Promise<number> {
+    const result = await this.client.execute({
+      sql: 'SELECT combo FROM combo_runs WHERE user_id = ?',
+      args: [userId],
+    });
+    return Number(result.rows[0]?.combo ?? 0);
+  }
+
+  /**
+   * Оставляет у игрока только лучший заход: таблица про рекорд, а не про
+   * количество попыток. Заход слабее прежнего просто не сохраняем.
+   */
+  async saveCombo(
+    userId: string,
+    combo: number,
+    seed: number,
+    movesJson: string,
+  ): Promise<{ best: number; improved: boolean }> {
+    const previous = await this.bestCombo(userId);
+    if (combo <= previous) return { best: previous, improved: false };
+
+    await this.client.execute({
+      sql: `INSERT INTO combo_runs (user_id, combo, seed, moves)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT (user_id) DO UPDATE
+              SET combo = excluded.combo,
+                  seed = excluded.seed,
+                  moves = excluded.moves,
+                  created_at = datetime('now')`,
+      args: [userId, combo, seed, movesJson],
+    });
+    return { best: combo, improved: true };
+  }
+
+  /** Место в таблице комбо: 1 + число рекордов строго выше. */
+  async comboRank(userId: string): Promise<number | null> {
+    const mine = await this.bestCombo(userId);
+    if (mine === 0) return null;
+    const above = await this.client.execute({
+      sql: 'SELECT COUNT(*) AS above FROM combo_runs WHERE combo > ?',
+      args: [mine],
+    });
+    return Number(above.rows[0]!.above) + 1;
+  }
+
+  /** Верхушка таблицы комбо. При равных рекордах выше тот, кто раньше. */
+  async comboTop(limit: number): Promise<{ name: string; combo: number }[]> {
+    const result = await this.client.execute({
+      sql: `SELECT u.name, r.combo
+            FROM combo_runs r JOIN users u ON u.id = r.user_id
+            ORDER BY r.combo DESC, r.created_at ASC
+            LIMIT ?`,
+      args: [limit],
+    });
+    return result.rows.map((row) => ({ name: String(row.name), combo: Number(row.combo) }));
   }
 
   /** Сводка по вызову дня: сколько дней сыграно и лучший результат. */
