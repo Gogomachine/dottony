@@ -234,8 +234,9 @@ export class Renderer {
       ctx.globalAlpha = 1;
     }
 
-    // Содержимое клеток.
-    const radius = this.cell * 0.34;
+    // Содержимое клеток. Точка чуть крупнее половины просвета между
+    // соседями: так она уверенно читается, но клетки не слипаются.
+    const radius = this.cell * 0.37;
     for (let r = 0; r < this.cfg.rows; r++) {
       for (let c = 0; c < this.cfg.cols; c++) {
         const content = grid[r]![c]!;

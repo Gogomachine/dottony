@@ -755,8 +755,10 @@ function showFloatingPoints(points: number, multiplier: number, at: { x: number;
   const label = document.createElement('span');
   label.className = 'float-label';
   label.textContent = multiplier > 1 ? `+${points} ×${multiplier}` : `+${points}`;
-  label.style.left = `${at.x}px`;
-  label.style.top = `${at.y}px`;
+  // Координаты приходят от доски, а подпись висит на окуляре: доска в нём
+  // висит по центру, так что без сдвига цифра оторвалась бы от хода.
+  label.style.left = `${at.x + canvas.offsetLeft}px`;
+  label.style.top = `${at.y + canvas.offsetTop}px`;
   boardWrap.appendChild(label);
   setTimeout(() => label.remove(), 900);
 }
@@ -1053,7 +1055,20 @@ modalBtn.addEventListener('click', () => {
   openMenu();
 });
 
-new ResizeObserver(() => renderer.resize()).observe(canvas);
+/**
+ * Держит доску квадратной и целиком внутри стекла. Ширины мало: окуляр
+ * выше доски, но на низком экране он ужимается ниже неё — тогда размер
+ * задаёт высота, иначе поле вылезло бы за край.
+ */
+function fitBoard(): void {
+  const style = getComputedStyle(boardWrap);
+  const room =
+    boardWrap.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+  canvas.style.maxWidth = `${Math.max(0, Math.round(room))}px`;
+  renderer.resize();
+}
+
+new ResizeObserver(fitBoard).observe(boardWrap);
 
 // ---------- Игровой цикл ----------
 
