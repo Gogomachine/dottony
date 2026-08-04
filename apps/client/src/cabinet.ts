@@ -53,6 +53,8 @@ function shortDate(iso: string): string {
 export interface CabinetHandlers {
   onReplay(duelId: string): void;
   onRatingBoard(): void;
+  /** Таблица рекордов спринта. */
+  onSprintBoard(): void;
   /** Таблица челленджа бесконечного режима. */
   onComboBoard(): void;
   /**
@@ -84,6 +86,10 @@ export class Cabinet {
     el<HTMLButtonElement>('cab-rating-board').addEventListener('click', () => {
       this.hide();
       handlers.onRatingBoard();
+    });
+    el<HTMLButtonElement>('cab-sprint-board').addEventListener('click', () => {
+      this.hide();
+      handlers.onSprintBoard();
     });
     el<HTMLButtonElement>('cab-combo-board').addEventListener('click', () => {
       this.hide();
@@ -202,8 +208,11 @@ export class Cabinet {
     el<HTMLSpanElement>('cab-rating').textContent = String(me.rating);
     el<HTMLSpanElement>('cab-rank').textContent = me.rank === null ? '—' : `#${me.rank}`;
     el<HTMLSpanElement>('cab-duels').textContent = `${me.duels.won}/${me.duels.played}`;
-    el<HTMLSpanElement>('cab-daily').textContent =
-      me.daily.best === null ? '—' : String(me.daily.best);
+    // Рекорд спринта — вместе с местом: он интересен в сравнении.
+    el<HTMLSpanElement>('cab-sprint').textContent =
+      me.sprint.best === 0 ? '—' : groupDigits(me.sprint.best);
+    el<HTMLSpanElement>('cab-sprint-rank').textContent =
+      me.sprint.rank === null ? 'спринт' : `спринт · #${me.sprint.rank}`;
     // Комбо показываем вместе с местом: рекорд интересен в сравнении.
     el<HTMLSpanElement>('cab-combo').textContent =
       me.combo.best === 0 ? '—' : groupDigits(me.combo.best);

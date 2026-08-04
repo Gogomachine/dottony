@@ -16,11 +16,13 @@ export const MoveLogSchema = z.object({
   t: z.number().min(0).max(600),
 });
 
-export const DateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be YYYY-MM-DD');
-
-export const SubmitDailyRequestSchema = z.object({
-  date: DateSchema,
-  moves: z.array(MoveLogSchema).max(400),
+/**
+ * Заход спринта на проверку. Сид выбирает клиент — поле у каждого своё,
+ * общего расклада тут нет; сервер лишь переигрывает по нему ходы.
+ */
+export const SubmitSprintRequestSchema = z.object({
+  seed: z.number().int().min(0).max(0xffffffff),
+  moves: z.array(MoveLogSchema).min(1).max(400),
 });
 
 export const NameSchema = z.string().trim().min(1).max(24);
@@ -41,7 +43,7 @@ export const AddFriendRequestSchema = z.object({ code: FriendCodeSchema });
 /**
  * Досыл набранного в режимах без конца партии. Ходы нужны для проверки
  * правдоподобия: сервер не видел этой партии и не может пересчитать её
- * ядром, как дуэль или вызов дня.
+ * ядром, как дуэль или спринт.
  */
 export const AddScoreRequestSchema = z.object({
   points: z.number().int().min(1).max(200_000),
@@ -79,7 +81,7 @@ export const TelegramAuthRequestSchema = z.object({
 
 export type Cell = z.infer<typeof CellSchema>;
 export type MoveLog = z.infer<typeof MoveLogSchema>;
-export type SubmitDailyRequest = z.infer<typeof SubmitDailyRequestSchema>;
+export type SubmitSprintRequest = z.infer<typeof SubmitSprintRequestSchema>;
 export type GuestAuthRequest = z.infer<typeof GuestAuthRequestSchema>;
 export type RenameRequest = z.infer<typeof RenameRequestSchema>;
 export type AddFriendRequest = z.infer<typeof AddFriendRequestSchema>;
@@ -93,27 +95,26 @@ export interface AuthResponse {
   user: { id: string; name: string };
 }
 
-export interface DailyInfo {
-  date: string;
-  seed: number;
+/** Ответ на присланный спринт: что насчитало ядро и куда это ставит игрока. */
+export interface SubmitSprintResponse {
+  /** Счёт этого захода — по пересчёту сервера. */
+  score: number;
+  /** Личный рекорд после захода. */
+  best: number;
+  /** Рекорд обновлён. */
+  record: boolean;
+  rank: number;
 }
 
-export interface LeaderboardEntry {
+export interface SprintEntry {
   rank: number;
   name: string;
   score: number;
 }
 
-export interface LeaderboardResponse {
-  date: string;
-  entries: LeaderboardEntry[];
-  /** Строка текущего игрока, если он в таблице. */
-  me: LeaderboardEntry | null;
-}
-
-export interface SubmitDailyResponse {
-  score: number;
-  rank: number;
+export interface SprintLeaderboardResponse {
+  entries: SprintEntry[];
+  me: SprintEntry | null;
 }
 
 /** Ответ на присланный заход: что насчитало ядро и куда это ставит игрока. */
@@ -223,8 +224,8 @@ export interface MeResponse {
   total: number;
   /** Способы входа: гость, Telegram, кошелёк. */
   identities: IdentityInfo[];
-  /** Лучший результат в вызове дня и сколько дней сыграно. */
-  daily: { played: number; best: number | null };
+  /** Спринт: личный рекорд за три минуты и место в таблице. */
+  sprint: { best: number; rank: number | null };
   /** Челлендж бесконечного режима: лучший ход и место в таблице. */
   combo: { best: number; rank: number | null };
 }

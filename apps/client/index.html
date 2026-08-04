@@ -755,8 +755,9 @@
       font-weight: 500;
     }
     .cab-sub[hidden] { display: none; }
-    .cab-actions { display: flex; gap: 8px; }
-    .cab-actions button { flex: 1; }
+    /* Кнопок таблиц три — в одну строку они не читаются, поэтому переносим. */
+    .cab-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .cab-actions button { flex: 1 1 44%; }
 
     /* ---------- Реплей ---------- */
 
@@ -854,7 +855,6 @@
         <span class="mtitle">Панель управления</span>
         <ul class="menu-list" id="menu-list">
           <li class="hd">Наблюдение</li>
-          <li data-go="daily">Вызов дня</li>
           <li data-go="sprint">Спринт</li>
           <li data-go="free">Бесконечный</li>
           <li data-go="duel">Дуэль</li>
@@ -905,8 +905,9 @@
               даёт ×6.</p>
 
             <h3>Режимы</h3>
-            <p><b>Вызов дня</b> — общий образец для всех на сутки, одна попытка, таблица дня.</p>
-            <p><b>Спринт</b> — три минуты на максимум отсчётов.</p>
+            <p><b>Спринт</b> — три минуты на максимум отсчётов. Попыток сколько угодно,
+              в общую таблицу идёт лучшая; счёт подтверждает сервер, переигрывая заход.
+              Стоп-кадра здесь нет: остановка часов дала бы фору.</p>
             <p><b>Бесконечный</b> — без таймера. Отсчёты копятся в наработку прибора,
               а место таймера занимает челлендж: <b>максимальное комбо</b> — лучшие
               отсчёты за один ход. Длинная цепочка, линзы под ней и резонанс
@@ -949,12 +950,13 @@
             <div class="stat"><span id="cab-rating" class="stat-value"></span><span class="stat-label">рейтинг</span></div>
             <div class="stat"><span id="cab-rank" class="stat-value"></span><span class="stat-label">место</span></div>
             <div class="stat"><span id="cab-duels" class="stat-value"></span><span class="stat-label">дуэли</span></div>
-            <div class="stat"><span id="cab-daily" class="stat-value"></span><span class="stat-label">вызов дня</span></div>
+            <div class="stat"><span id="cab-sprint" class="stat-value"></span><span id="cab-sprint-rank" class="stat-label">спринт</span></div>
             <div class="stat"><span id="cab-combo" class="stat-value"></span><span id="cab-combo-rank" class="stat-label">комбо</span></div>
           </div>
 
           <div class="cab-actions">
             <button id="cab-rating-board">Таблица рейтинга</button>
+            <button id="cab-sprint-board">Рекорды спринта</button>
             <button id="cab-combo-board">Таблица комбо</button>
           </div>
           <div class="cab-tabs">

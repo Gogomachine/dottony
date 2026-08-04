@@ -2,21 +2,20 @@ import type {
   AuthResponse,
   ComboLeaderboardResponse,
   ComboMove,
-  DailyInfo,
-  LeaderboardResponse,
   DuelHistoryResponse,
   FriendsResponse,
   MeResponse,
   MoveLog,
   RatingLeaderboardResponse,
   ReplayResponse,
+  SprintLeaderboardResponse,
   SubmitComboResponse,
-  SubmitDailyResponse,
+  SubmitSprintResponse,
 } from '@doton/protocol';
 
 /**
- * Тонкий клиент API. Без VITE_API_URL игра живёт в оффлайн-режиме:
- * ежедневный вызов играется на локальном сиде, таблицы дня нет.
+ * Тонкий клиент API. Без VITE_API_URL игра живёт офлайн: партии играются,
+ * но рекорды никуда не уходят и таблиц нет.
  */
 
 const BASE = import.meta.env.VITE_API_URL ?? '';
@@ -140,20 +139,19 @@ export function resetAuth(): void {
   localStorage.removeItem(TOKEN_KEY);
 }
 
-export function getDaily(): Promise<DailyInfo> {
-  return request<DailyInfo>('/api/daily');
-}
-
-export function submitDaily(date: string, moves: MoveLog[]): Promise<SubmitDailyResponse> {
-  return request<SubmitDailyResponse>('/api/daily/run', {
+/**
+ * Отправляет спринт на проверку. Счёт считает сервер: он переигрывает ходы
+ * ядром, поэтому своё число слать незачем.
+ */
+export function submitSprint(seed: number, moves: MoveLog[]): Promise<SubmitSprintResponse> {
+  return request<SubmitSprintResponse>('/api/sprint', {
     method: 'POST',
-    body: JSON.stringify({ date, moves }),
+    body: JSON.stringify({ seed, moves }),
   });
 }
 
-export function getLeaderboard(date?: string): Promise<LeaderboardResponse> {
-  const query = date ? `?date=${date}` : '';
-  return request<LeaderboardResponse>(`/api/daily/leaderboard${query}`);
+export function getSprintBoard(): Promise<SprintLeaderboardResponse> {
+  return request<SprintLeaderboardResponse>('/api/sprint/leaderboard');
 }
 
 /** Карточка игрока: рейтинг, лига, место, счёт дуэлей. Нужен токен. */
@@ -250,22 +248,6 @@ export async function rename(name: string): Promise<string> {
 /** Есть ли уже профиль: без токена рейтинг спрашивать бессмысленно. */
 export function hasAuth(): boolean {
   return token() !== null;
-}
-
-// ---------- Оффлайн-режим ----------
-
-export function localToday(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-/** Локальный сид дня (FNV-1a) — все оффлайн-игроки видят одно поле. */
-export function localDailySeed(date: string): number {
-  let hash = 0x811c9dc5;
-  for (const ch of `doton:${date}`) {
-    hash ^= ch.charCodeAt(0);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return hash >>> 0;
 }
 
 /**

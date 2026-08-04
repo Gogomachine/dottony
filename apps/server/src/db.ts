@@ -39,12 +39,6 @@ export interface Identity {
   externalId: string;
 }
 
-export interface RunRow {
-  date: string;
-  score: number;
-  name: string;
-}
-
 export interface FriendRow {
   id: string;
   name: string;
@@ -103,16 +97,17 @@ export class Store {
            tg_id TEXT UNIQUE,
            created_at TEXT NOT NULL DEFAULT (datetime('now'))
          )`,
-        `CREATE TABLE IF NOT EXISTS daily_runs (
-           user_id TEXT NOT NULL REFERENCES users(id),
-           date TEXT NOT NULL,
+        // Спринт: у игрока хранится только лучший заход — таблица про
+        // рекорд, а не про число попыток. Ходы лежат рядом с числом, чтобы
+        // рекорд оставался доказуемым и после того, как его засчитали.
+        `CREATE TABLE IF NOT EXISTS sprint_runs (
+           user_id TEXT PRIMARY KEY REFERENCES users(id),
            score INTEGER NOT NULL,
+           seed INTEGER NOT NULL,
            moves TEXT NOT NULL,
-           created_at TEXT NOT NULL DEFAULT (datetime('now')),
-           PRIMARY KEY (user_id, date)
+           created_at TEXT NOT NULL DEFAULT (datetime('now'))
          )`,
-        `CREATE INDEX IF NOT EXISTS idx_daily_runs_date_score
-           ON daily_runs (date, score DESC)`,
+        `CREATE INDEX IF NOT EXISTS idx_sprint_runs_score ON sprint_runs (score DESC)`,
         // Челлендж бесконечного режима: у игрока хранится только лучший
         // заход. Ходы лежат рядом с числом — рекорд должен оставаться
         // доказуемым и после того, как его засчитали.
@@ -638,8 +633,8 @@ export class Store {
   }
 
   /**
-   * Засчитывает отсчёты, которые сервер посчитал сам: результат дуэли или
-   * вызова дня. Проверять тут нечего — эти очки уже прошли через ядро.
+   * Засчитывает отсчёты, которые сервер посчитал сам: результат дуэли.
+   * Проверять тут нечего — эти очки уже прошли через ядро.
    */
   async addTotal(userId: string, points: number): Promise<void> {
     if (points <= 0) return;
@@ -743,17 +738,59 @@ export class Store {
     return result.rows.map((row) => ({ name: String(row.name), combo: Number(row.combo) }));
   }
 
-  /** Сводка по вызову дня: сколько дней сыграно и лучший результат. */
-  async dailyRecord(userId: string): Promise<{ played: number; best: number | null }> {
+  /** Личный рекорд спринта; 0 — заходов ещё не было. */
+  async bestSprint(userId: string): Promise<number> {
     const result = await this.client.execute({
-      sql: 'SELECT COUNT(*) AS played, MAX(score) AS best FROM daily_runs WHERE user_id = ?',
+      sql: 'SELECT score FROM sprint_runs WHERE user_id = ?',
       args: [userId],
     });
-    const row = result.rows[0];
-    return {
-      played: Number(row?.played ?? 0),
-      best: row?.best === null || row?.best === undefined ? null : Number(row.best),
-    };
+    return Number(result.rows[0]?.score ?? 0);
+  }
+
+  /** Оставляет у игрока только лучший спринт: заход слабее не сохраняем. */
+  async saveSprint(
+    userId: string,
+    score: number,
+    seed: number,
+    movesJson: string,
+  ): Promise<{ best: number; improved: boolean }> {
+    const previous = await this.bestSprint(userId);
+    if (score <= previous) return { best: previous, improved: false };
+
+    await this.client.execute({
+      sql: `INSERT INTO sprint_runs (user_id, score, seed, moves)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT (user_id) DO UPDATE
+              SET score = excluded.score,
+                  seed = excluded.seed,
+                  moves = excluded.moves,
+                  created_at = datetime('now')`,
+      args: [userId, score, seed, movesJson],
+    });
+    return { best: score, improved: true };
+  }
+
+  /** Место в таблице спринта: 1 + число рекордов строго выше. */
+  async sprintRank(userId: string): Promise<number | null> {
+    const mine = await this.bestSprint(userId);
+    if (mine === 0) return null;
+    const above = await this.client.execute({
+      sql: 'SELECT COUNT(*) AS above FROM sprint_runs WHERE score > ?',
+      args: [mine],
+    });
+    return Number(above.rows[0]!.above) + 1;
+  }
+
+  /** Верхушка таблицы спринта. При равном счёте выше тот, кто раньше. */
+  async sprintTop(limit: number): Promise<{ name: string; score: number }[]> {
+    const result = await this.client.execute({
+      sql: `SELECT u.name, r.score
+            FROM sprint_runs r JOIN users u ON u.id = r.user_id
+            ORDER BY r.score DESC, r.created_at ASC
+            LIMIT ?`,
+      args: [limit],
+    });
+    return result.rows.map((row) => ({ name: String(row.name), score: Number(row.score) }));
   }
 
   async createUser(id: string, name: string, identity: Identity): Promise<UserRow> {
@@ -878,52 +915,6 @@ export class Store {
       sql: 'UPDATE users SET name = ? WHERE id = ?',
       args: [name, id],
     });
-  }
-
-  async hasRun(userId: string, date: string): Promise<boolean> {
-    const result = await this.client.execute({
-      sql: 'SELECT 1 FROM daily_runs WHERE user_id = ? AND date = ?',
-      args: [userId, date],
-    });
-    return result.rows.length > 0;
-  }
-
-  async insertRun(userId: string, date: string, score: number, movesJson: string): Promise<void> {
-    await this.client.execute({
-      sql: 'INSERT INTO daily_runs (user_id, date, score, moves) VALUES (?, ?, ?, ?)',
-      args: [userId, date, score, movesJson],
-    });
-  }
-
-  /** Место в таблице дня: 1 + число результатов строго выше. */
-  async rank(date: string, score: number): Promise<number> {
-    const result = await this.client.execute({
-      sql: 'SELECT COUNT(*) AS above FROM daily_runs WHERE date = ? AND score > ?',
-      args: [date, score],
-    });
-    return Number(result.rows[0]!.above) + 1;
-  }
-
-  async top(date: string, limit: number): Promise<RunRow[]> {
-    const result = await this.client.execute({
-      sql: `SELECT r.date, r.score, u.name
-            FROM daily_runs r JOIN users u ON u.id = r.user_id
-            WHERE r.date = ?
-            ORDER BY r.score DESC, r.created_at ASC
-            LIMIT ?`,
-      args: [date, limit],
-    });
-    return result.rows as unknown as RunRow[];
-  }
-
-  async runOf(userId: string, date: string): Promise<RunRow | undefined> {
-    const result = await this.client.execute({
-      sql: `SELECT r.date, r.score, u.name
-            FROM daily_runs r JOIN users u ON u.id = r.user_id
-            WHERE r.user_id = ? AND r.date = ?`,
-      args: [userId, date],
-    });
-    return result.rows[0] as unknown as RunRow | undefined;
   }
 
   close(): void {

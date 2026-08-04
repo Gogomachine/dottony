@@ -38,8 +38,6 @@ services:
         value: production
       - key: JWT_SECRET
         generateValue: true
-      - key: DAILY_SECRET
-        generateValue: true
       # DATABASE_URL / DATABASE_AUTH_TOKEN — из Turso, добавить вручную.
       # Токен бота — секрет, поэтому значение задаётся в дашборде, а не тут:
       # sync:false лишь объявляет переменную, чтобы Render о ней спросил.

@@ -2,9 +2,9 @@ import { COMBO_CARRY_CHAIN, DEFAULT_CONFIG, type Cell } from '@doton/core';
 import type {
   ComboLeaderboardResponse,
   ComboMove,
-  LeaderboardResponse,
   MoveLog,
   RatingLeaderboardResponse,
+  SprintLeaderboardResponse,
 } from '@doton/protocol';
 import type { DuelServerMessage } from '@doton/protocol';
 import {
@@ -15,19 +15,16 @@ import {
   getComboBoard,
   getRatingBoard,
   getReplay,
-  getDaily,
-  getLeaderboard,
+  getSprintBoard,
   hasAuth,
   inviteFriend,
   isTelegram,
   postScore,
   syncTelegramTheme,
-  localDailySeed,
-  localToday,
   resetAuth,
   savedName,
   submitCombo,
-  submitDaily,
+  submitSprint,
   ApiError,
 } from './api';
 import { Cabinet } from './cabinet';
@@ -101,9 +98,12 @@ let themeName = loadThemeName();
 applyTheme(themeName);
 let mode: Mode = 'sprint';
 
-/** Активный забег ежедневного вызова: дата и лог ходов для сервера. */
-let dailyRun: { date: string; moves: MoveLog[] } | null = null;
-let dailyStarting = false;
+/**
+ * Активный спринт: сид и лог ходов. Спринт — соревновательный режим, и
+ * его рекорд доказывается тем же способом, что и комбо: сервер
+ * переигрывает заход от сида и считает счёт сам.
+ */
+let sprintRun: { seed: number; moves: MoveLog[] } | null = null;
 
 /**
  * Челлендж бесконечного режима — лучшие отсчёты за один ход.
@@ -146,8 +146,6 @@ let duelDuration = 90;
 let session = newSession();
 const renderer = new Renderer(canvas, DEFAULT_CONFIG, SCOPE);
 
-const DAILY_PLAYED_KEY = 'doton-daily-played';
-
 function newSession(seed?: number): Session {
   return new Session(
     seed ?? Math.floor(Math.random() * 0xffffffff),
@@ -168,6 +166,8 @@ function startGame(seed?: number): void {
     session.mode === 'free'
       ? { seed: session.seed, moves: [], best: 0, carried: 0, sent: 0, full: false }
       : null;
+  // Спринт пишется весь: без журнала рекорд нечем подтвердить.
+  sprintRun = session.mode === 'sprint' && !replay ? { seed: session.seed, moves: [] } : null;
   renderer.resetAnims();
   updateStreak(0);
   overlay.hidden = true;
@@ -262,7 +262,7 @@ function updateMini(): void {
   }
 }
 
-// ---------- Ежедневный вызов ----------
+// ---------- Спринт ----------
 
 function guestName(): string {
   const existing = savedName();
@@ -271,118 +271,67 @@ function guestName(): string {
   return answer.trim().slice(0, 24) || 'Игрок';
 }
 
-function playedDate(): string | null {
-  return localStorage.getItem(DAILY_PLAYED_KEY);
-}
+/**
+ * Конец спринта: отдаём заход на проверку и показываем место. Счёт на
+ * экране — свой, но в таблицу идёт только пересчитанный сервером.
+ */
+async function finishSprint(run: { seed: number; moves: MoveLog[] }, score: number): Promise<void> {
+  showResult('Наблюдение завершено', score);
+  if (!apiAvailable || run.moves.length === 0) return;
 
-async function startDaily(): Promise<void> {
-  if (dailyStarting) return;
-  dailyStarting = true;
-  // Бесплатный сервер после простоя просыпается до минуты — показываем,
-  // что игра не зависла, а ждёт ответа.
-  const waking = apiAvailable
-    ? window.setTimeout(() => {
-        showOverModal({
-          title: 'Вызов дня',
-          note: 'Бужу сервер — это занимает до минуты после простоя…',
-        });
-      }, 1200)
-    : 0;
-  try {
-    const info = apiAvailable
-      ? await getDaily()
-      : { date: localToday(), seed: localDailySeed(localToday()) };
-    clearTimeout(waking);
-
-    if (playedDate() === info.date) {
-      // Одна попытка в день: вместо игры показываем таблицу.
-      await showDailyLeaderboard(info.date);
+  // Рекорд идёт в общую таблицу, поэтому имя тут спросить уместно.
+  if (!hasAuth()) {
+    try {
+      await ensureAuth(guestName);
+    } catch {
       return;
     }
-
-    if (apiAvailable) {
-      try {
-        await ensureAuth(guestName);
-      } catch (error) {
-        if (error instanceof ApiError && error.status === 401) {
-          resetAuth();
-          await ensureAuth(guestName);
-        } else {
-          throw error;
-        }
-      }
-    }
-
-    mode = 'sprint';
-    dailyRun = { date: info.date, moves: [] };
-    startGame(info.seed);
-    updateGoKey();
-  } catch {
-    showOverModal({
-      title: 'Вызов дня',
-      note: 'Сервер не ответил. Попробуй ещё раз через минуту.',
-    });
-  } finally {
-    clearTimeout(waking);
-    dailyStarting = false;
-  }
-}
-
-async function finishDaily(run: { date: string; moves: MoveLog[] }, score: number): Promise<void> {
-  localStorage.setItem(DAILY_PLAYED_KEY, run.date);
-  showOverModal({ title: `Вызов дня · ${run.date}`, score, note: 'Отправляю результат…' });
-
-  if (!apiAvailable) {
-    overNoteEl.textContent = 'Сервер не подключён: результат остался на этом устройстве.';
-    return;
   }
 
   try {
-    const result = await submitDaily(run.date, run.moves);
-    const board = await getLeaderboard(run.date);
-    overNoteEl.textContent = `Твоё место: ${result.rank}`;
-    renderBoard(board);
+    const result = await submitSprint(run.seed, run.moves);
+    resultSubEl.textContent = result.record
+      ? `Рекорд · ${result.rank}-е место`
+      : `${result.rank}-е место · рекорд ${groupDigits(result.best)}`;
   } catch (error) {
-    overNoteEl.textContent =
-      error instanceof ApiError && error.code === 'already-played'
-        ? 'Сегодняшняя попытка уже была засчитана.'
-        : 'Не удалось отправить результат. Таблица дня недоступна.';
+    if (error instanceof ApiError && error.status === 401) {
+      resetAuth();
+      return;
+    }
+    // Сеть подвела — партия сыграна, просто без места в таблице.
   }
 }
 
-async function showDailyLeaderboard(date: string): Promise<void> {
-  showOverModal({ title: `Вызов дня · ${date}`, note: 'Ты уже играл сегодня. Таблица дня:' });
-  if (!apiAvailable) {
-    overNoteEl.textContent = 'Ты уже играл сегодня. Новый вызов — завтра!';
-    return;
-  }
+async function showSprintBoard(): Promise<void> {
+  showOverModal({ title: 'Рекорды спринта', note: 'Загружаю таблицу…', viewing: true });
   try {
-    renderBoard(await getLeaderboard(date));
+    const board = await getSprintBoard();
+    if (board.entries.length === 0) {
+      overNoteEl.textContent = 'Таблица пока пуста. Три минуты на максимум отсчётов — и ты в ней.';
+      return;
+    }
+    overNoteEl.textContent = board.me
+      ? `Твой рекорд ${groupDigits(board.me.score)} · ${board.me.rank}-е место`
+      : 'Сыграй спринт, чтобы попасть в таблицу.';
+    renderSprintBoard(board);
   } catch {
-    overNoteEl.textContent = 'Таблица дня недоступна. Попробуй позже.';
+    overNoteEl.textContent = 'Таблица спринта недоступна. Попробуй позже.';
   }
 }
 
-function renderBoard(board: LeaderboardResponse): void {
+function renderSprintBoard(board: SprintLeaderboardResponse): void {
   dailyBoardEl.hidden = false;
   dailyBoardEl.innerHTML = '';
-  const top = board.entries.slice(0, 10);
-  for (const entry of top) {
+  const rows = [...board.entries];
+  // Своя строка нужна всегда, даже если игрок не попал в верхушку таблицы.
+  if (board.me && !rows.some((entry) => entry.rank === board.me!.rank)) rows.push(board.me);
+  for (const entry of rows) {
     const item = document.createElement('li');
-    if (board.me && entry.rank === board.me.rank && entry.name === board.me.name) {
-      item.className = 'me';
-    }
-    item.innerHTML = `<span class="rank">${entry.rank}</span><span></span><span class="pts"></span>`;
+    if (board.me && entry.rank === board.me.rank) item.className = 'me';
+    item.innerHTML =
+      `<span class="rank">${entry.rank}</span><span></span><span class="pts"></span>`;
     (item.children[1] as HTMLElement).textContent = entry.name;
-    (item.children[2] as HTMLElement).textContent = String(entry.score);
-    dailyBoardEl.appendChild(item);
-  }
-  if (board.me && !top.some((entry) => entry.rank === board.me!.rank)) {
-    const item = document.createElement('li');
-    item.className = 'me';
-    item.innerHTML = `<span class="rank">${board.me.rank}</span><span></span><span class="pts"></span>`;
-    (item.children[1] as HTMLElement).textContent = board.me.name;
-    (item.children[2] as HTMLElement).textContent = String(board.me.score);
+    (item.children[2] as HTMLElement).textContent = groupDigits(entry.score);
     dailyBoardEl.appendChild(item);
   }
 }
@@ -422,8 +371,8 @@ function showOverModal(options: {
   /** Показать кнопку «добавить соперника в друзья». */
   addFriend?: { name: string; code: string };
 }): void {
-  // В модалке финиша прибор наведён на резкость за вызов дня.
-  overEmblemEl.innerHTML = emblemSvg({ size: 84, focused: options.title.startsWith('Вызов') });
+  // В модалке рекордов прибор наведён на резкость — это яркий момент.
+  overEmblemEl.innerHTML = emblemSvg({ size: 84, focused: options.title.startsWith('Рекорд') });
   overTitleEl.textContent = options.title;
   roomBoxEl.hidden = options.room === undefined;
   if (options.room !== undefined) {
@@ -447,7 +396,7 @@ function showOverModal(options: {
   viewingOnly = options.viewing ?? false;
   modalBtn.textContent = waitingForOpponent
     ? 'Отменить'
-    : viewingOnly || dailyRun || options.title.startsWith('Вызов')
+    : viewingOnly
       ? 'Закрыть'
       : 'Понятно';
   overlay.hidden = false;
@@ -532,7 +481,6 @@ function handleDuelMessage(message: DuelServerMessage): void {
       opponentScore = 0;
       opponentCode = message.opponentCode ?? null;
       mode = 'duel';
-      dailyRun = null;
       startGame(message.seed);
       session.begin();
       showVersus(opponentName, 0);
@@ -605,7 +553,7 @@ function handleDuelMessage(message: DuelServerMessage): void {
         title: 'Дуэль',
         note:
           message.error === 'unauthorized'
-            ? 'Нужен вход. Сыграй «Вызов дня» — он создаст профиль.'
+            ? 'Нужен вход. Сыграй спринт — он создаст профиль.'
             : 'Связь с сервером потеряна.',
       });
       endDuel();
@@ -693,13 +641,13 @@ function renderRatingBoard(board: RatingLeaderboardResponse): void {
  * на сервер пачками. Слать каждый ход было бы расточительно, а копить до
  * конца партии нельзя — её попросту нет.
  *
- * Дуэли и вызов дня сюда не попадают: их очки сервер считает сам.
+ * Дуэли сюда не попадают: их очки сервер считает сам.
  */
 let pendingScore = { points: 0, moves: 0 };
 let flushTimer = 0;
 
 function countScore(points: number): void {
-  if (inDuel || dailyRun || replay) return;
+  if (inDuel || replay) return;
   pendingScore.points += points;
   pendingScore.moves += 1;
   if (flushTimer !== 0) return;
@@ -891,7 +839,6 @@ async function startReplay(duelId: string): Promise<void> {
 
   overlay.hidden = true;
   viewingOnly = false;
-  dailyRun = null;
   mode = 'duel';
   menuEl.hidden = true;
   resultEl.hidden = true;
@@ -962,8 +909,8 @@ const input = new ChainInput(
     session.begin();
     const result = session.tryMove(path);
     if (typeof result === 'string') return;
-    if (dailyRun) {
-      dailyRun.moves.push({ path: path.map((cell) => ({ ...cell })), t: Number(elapsed.toFixed(3)) });
+    if (sprintRun) {
+      sprintRun.moves.push({ path: path.map((cell) => ({ ...cell })), t: Number(elapsed.toFixed(3)) });
     }
     if (inDuel) duel.move(path, elapsed);
     countScore(result.points);
@@ -1043,16 +990,15 @@ function setMode(next: Mode): void {
   stopReplay();
   void flushScore();
   mode = next;
-  dailyRun = null;
   startGame();
 }
 
 /**
  * Главная клавиша: пока идёт партия — начать заново, после конца —
- * повторить. В дуэли и вызове дня нового образца не выдаём: там он общий.
+ * повторить. В дуэли нового образца не выдаём: там он общий с соперником.
  */
 function updateGoKey(): void {
-  const locked = inDuel || dailyRun !== null || replay !== null;
+  const locked = inDuel || replay !== null;
   goKey.toggleAttribute('disabled', locked);
   const label = session.over ? 'Повторить' : session.started ? 'Сброс' : 'Наблюдать';
   goKey.firstChild!.nodeValue = locked ? 'Наблюдать' : label;
@@ -1063,10 +1009,6 @@ function updateGoKey(): void {
 const MENU_ACTIONS: Record<string, () => void> = {
   profile: () => void cabinet.show('history'),
   friends: () => void cabinet.show('friends'),
-  daily: () => {
-    menuEl.hidden = true;
-    void startDaily();
-  },
   sprint: () => {
     menuEl.hidden = true;
     setMode('sprint');
@@ -1122,11 +1064,13 @@ el<HTMLButtonElement>('join-code').addEventListener('click', () => {
 });
 
 /**
- * Останавливать время можно не везде: в дуэли оно общее с соперником, а в
- * вызове дня остановка дала бы фору перед остальными.
+ * Стоп-кадр — только для бесконечного режима. В дуэли время общее с
+ * соперником, а спринт стал соревновательным: там остановка часов дала бы
+ * фору — думай сколько хочешь, а таймер стоит. В бесконечном отнимать
+ * нечего: комбо считается за ход и от времени не зависит.
  */
 function canPause(): boolean {
-  return !inDuel && dailyRun === null && replay === null && !session.over && session.started;
+  return session.mode === 'free' && replay === null && !session.over && session.started;
 }
 
 /**
@@ -1164,8 +1108,6 @@ function closeWindows(): boolean {
   if (!overlay.hidden) {
     // Поиск соперника без своего окна шёл бы вслепую — обрываем вместе с ним.
     if (waitingForOpponent) endDuel();
-    // Итог вызова дня закрыт — попытка засчитана, держать её незачем.
-    else if (session.over) dailyRun = null;
     viewingOnly = false;
     overlay.hidden = true;
     closed = true;
@@ -1223,6 +1165,7 @@ el<HTMLButtonElement>('mark-toggle').addEventListener('click', function () {
 const cabinet = new Cabinet({
   onReplay: (duelId) => void startReplay(duelId),
   onRatingBoard: () => void showRatingBoard(),
+  onSprintBoard: () => void showSprintBoard(),
   onComboBoard: () => void showComboBoard(),
   onInvite: (friendCode) => void inviteToRoom(friendCode),
 });
@@ -1282,7 +1225,6 @@ modalBtn.addEventListener('click', () => {
   }
   // Партия кончилась: закрываем окно и предлагаем панель управления —
   // оставаться на мёртвой доске незачем.
-  dailyRun = null;
   overlay.hidden = true;
   openMenu();
 });
@@ -1313,8 +1255,8 @@ function frame(now: number): void {
 
   // Во время реплея время партии задаёт запись, а не часы.
   if (!replay && session.tick(dt)) {
-    if (dailyRun) {
-      void finishDaily(dailyRun, session.score);
+    if (sprintRun) {
+      void finishSprint(sprintRun, session.score);
     } else if (inDuel) {
       // Итог объявляет сервер — ждём его сообщения, чтобы счёт сошёлся.
       showOverModal({ title: 'Дуэль', note: 'Время вышло, считаем результат…' });

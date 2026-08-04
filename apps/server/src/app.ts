@@ -12,23 +12,21 @@ import {
   InviteRequestSchema,
   RenameRequestSchema,
   SubmitComboRequestSchema,
-  SubmitDailyRequestSchema,
+  SubmitSprintRequestSchema,
   TelegramAuthRequestSchema,
-  DateSchema,
   type AuthResponse,
   type ComboLeaderboardResponse,
-  type DailyInfo,
   type DuelServerMessage,
   type DuelHistoryEntry,
   type DuelHistoryResponse,
   type FriendsResponse,
-  type LeaderboardResponse,
   type MeResponse,
   type MoveLog,
   type RatingLeaderboardResponse,
   type ReplayResponse,
+  type SprintLeaderboardResponse,
   type SubmitComboResponse,
-  type SubmitDailyResponse,
+  type SubmitSprintResponse,
 } from '@doton/protocol';
 import {
   decayDeviation,
@@ -40,7 +38,7 @@ import {
 } from '@doton/core';
 import { Bot, makeLinkToken, parseStart, type BotUpdate } from './bot.js';
 import { replayCombo } from './combo.js';
-import { dailySeed, replayDaily, todayUtc } from './daily.js';
+import { replaySprint } from './sprint.js';
 import { Store } from './db.js';
 import { DEFAULT_GHOST_SCORE, makeSyntheticGhost } from './ghost.js';
 import { Matchmaker, type MatchResult } from './matchmaker.js';
@@ -52,8 +50,6 @@ export interface AppOptions {
   databaseUrl: string;
   databaseAuthToken?: string;
   jwtSecret: string;
-  /** Секрет сида дня: без него завтрашнее поле можно вычислить заранее. */
-  dailySecret: string;
   /** Токен бота — включает вход через Telegram. */
   telegramBotToken?: string;
   /** Короткое имя мини-приложения из BotFather, если оно задано. */
@@ -294,64 +290,60 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return issueToken(user.sub, parsed.data.name);
   });
 
-  // ---------- Ежедневный вызов ----------
+  // ---------- Спринт ----------
 
-  app.get('/api/daily', (): DailyInfo => {
-    const date = todayUtc();
-    return { date, seed: dailySeed(date, options.dailySecret) };
-  });
-
-  app.post('/api/daily/run', async (request, reply) => {
+  /**
+   * Заход спринта. Клиент присылает ходы, сервер переигрывает их ядром и
+   * сам считает счёт: в таблицу попадает только подтверждённое пересчётом.
+   *
+   * В наработку отсюда ничего не добавляем: отсчёты спринта клиент шлёт
+   * по ходу партии обычным досылом, и зачесть их дважды нельзя.
+   */
+  app.post('/api/sprint', async (request, reply) => {
     const user = await requireUser(request);
-    const parsed = SubmitDailyRequestSchema.safeParse(request.body);
+    const parsed = SubmitSprintRequestSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
 
-    const { date, moves } = parsed.data;
-    if (date !== todayUtc()) return reply.code(400).send({ error: 'not-today' });
-    if (await store.hasRun(user.sub, date)) {
-      return reply.code(409).send({ error: 'already-played' });
-    }
-
-    const replay = replayDaily(dailySeed(date, options.dailySecret), moves);
+    const replay = replaySprint(parsed.data.seed, parsed.data.moves);
     if (typeof replay === 'string') return reply.code(400).send({ error: replay });
 
-    await store.insertRun(user.sub, date, replay.score, JSON.stringify(moves));
-    // Очки уже пересчитаны ядром — засчитываем в наработку без проверок.
-    await store.addTotal(user.sub, replay.score);
-    const response: SubmitDailyResponse = {
+    const saved = await store.saveSprint(
+      user.sub,
+      replay.score,
+      parsed.data.seed,
+      JSON.stringify(parsed.data.moves),
+    );
+    const response: SubmitSprintResponse = {
       score: replay.score,
-      rank: await store.rank(date, replay.score),
+      best: saved.best,
+      record: saved.improved,
+      rank: (await store.sprintRank(user.sub)) ?? 1,
     };
     return response;
   });
 
-  app.get('/api/daily/leaderboard', async (request, reply) => {
-    const query = request.query as { date?: string };
-    const date = query.date ?? todayUtc();
-    if (!DateSchema.safeParse(date).success) {
-      return reply.code(400).send({ error: 'bad-request' });
-    }
+  app.get('/api/sprint/leaderboard', async (request): Promise<SprintLeaderboardResponse> => {
+    const rows = await store.sprintTop(LEADERBOARD_SIZE);
+    const entries = rows.map((row, index) => ({
+      rank: index + 1,
+      name: row.name,
+      score: row.score,
+    }));
 
     // Авторизация не обязательна: без токена просто не будет строки «я».
-    let me: LeaderboardResponse['me'] = null;
+    let me: SprintLeaderboardResponse['me'] = null;
     try {
       const user = await requireUser(request);
-      const run = await store.runOf(user.sub, date);
-      if (run) {
-        me = { rank: await store.rank(date, run.score), name: run.name, score: run.score };
-      }
+      const [best, rank] = await Promise.all([
+        store.bestSprint(user.sub),
+        store.sprintRank(user.sub),
+      ]);
+      if (best > 0 && rank !== null) me = { rank, name: user.name, score: best };
     } catch {
       // нет или битый токен — гость смотрит таблицу анонимно
     }
 
-    const runs = await store.top(date, LEADERBOARD_SIZE);
-    const entries = runs.map((run, index) => ({
-      rank: index + 1,
-      name: run.name,
-      score: run.score,
-    }));
-    const response: LeaderboardResponse = { date, entries, me };
-    return response;
+    return { entries, me };
   });
 
   // ---------- Челлендж комбо ----------
@@ -416,8 +408,8 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
 
   /**
-   * Досыл отсчётов из режимов без конца партии. Дуэли и вызов дня сюда не
-   * ходят: их очки сервер считает сам и засчитывает у себя.
+   * Досыл отсчётов из режимов, которые сервер не пересчитывает целиком.
+   * Дуэли сюда не ходят: их очки сервер считает сам и засчитывает у себя.
    */
   app.post('/api/me/score', async (request, reply) => {
     const user = await requireUser(request);
@@ -439,16 +431,18 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   /** Карточка игрока: рейтинг, лига, место и сводка по дуэлям. */
   app.get('/api/me', async (request): Promise<MeResponse> => {
     const user = await requireUser(request);
-    const [rating, rank, duels, identities, daily, total, combo, comboRank] = await Promise.all([
-      store.ratingOf(user.sub),
-      store.ratingRank(user.sub),
-      store.duelRecord(user.sub),
-      store.identitiesOf(user.sub),
-      store.dailyRecord(user.sub),
-      store.totalScore(user.sub),
-      store.bestCombo(user.sub),
-      store.comboRank(user.sub),
-    ]);
+    const [rating, rank, duels, identities, total, sprint, sprintRank, combo, comboRank] =
+      await Promise.all([
+        store.ratingOf(user.sub),
+        store.ratingRank(user.sub),
+        store.duelRecord(user.sub),
+        store.identitiesOf(user.sub),
+        store.totalScore(user.sub),
+        store.bestSprint(user.sub),
+        store.sprintRank(user.sub),
+        store.bestCombo(user.sub),
+        store.comboRank(user.sub),
+      ]);
     const up = nextLeague(rating.rating);
     const league = leagueOf(rating.rating);
     return {
@@ -466,7 +460,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       duels,
       total,
       identities,
-      daily,
+      sprint: { best: sprint, rank: sprintRank },
       combo: { best: combo, rank: comboRank },
     };
   });

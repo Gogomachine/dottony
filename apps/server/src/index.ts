@@ -3,13 +3,12 @@ import { buildApp } from './app.js';
 const port = Number(process.env.PORT ?? 3000);
 
 const jwtSecret = process.env.JWT_SECRET;
-const dailySecret = process.env.DAILY_SECRET;
-if (!jwtSecret || !dailySecret) {
-  // Без секретов токены и сид дня предсказуемы — в проде это дыра.
+if (!jwtSecret) {
+  // Без секрета токены предсказуемы — в проде это дыра.
   if (process.env.NODE_ENV === 'production') {
-    throw new Error('JWT_SECRET and DAILY_SECRET are required in production');
+    throw new Error('JWT_SECRET is required in production');
   }
-  console.warn('JWT_SECRET/DAILY_SECRET not set — using dev defaults');
+  console.warn('JWT_SECRET not set — using dev default');
 }
 
 /**
@@ -29,7 +28,6 @@ const app = await buildApp({
   logger: process.env.NODE_ENV === 'production',
   databaseUrl,
   jwtSecret: jwtSecret ?? 'dev-jwt-secret',
-  dailySecret: dailySecret ?? 'dev-daily-secret',
   ...(process.env.DATABASE_AUTH_TOKEN
     ? { databaseAuthToken: process.env.DATABASE_AUTH_TOKEN }
     : {}),

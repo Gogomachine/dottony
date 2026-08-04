@@ -19,10 +19,9 @@ import { buildApp } from './app.js';
 import { parseStart } from './bot.js';
 import { Store } from './db.js';
 import { replayCombo } from './combo.js';
-import { dailySeed, replayDaily, todayUtc } from './daily.js';
+import { replaySprint } from './sprint.js';
 import { verifyTelegramInitData } from './telegram.js';
 
-const DAILY_SECRET = 'test-daily';
 const BOT_TOKEN = '12345:test-bot-token';
 
 /** Любая цепочка из трёх по правилам игры (8 направлений). */
@@ -197,38 +196,30 @@ function webhookSecret(jwtSecret: string): string {
   return createHash('sha256').update(`${jwtSecret}:telegram-webhook`).digest('hex').slice(0, 32);
 }
 
-describe('dailySeed', () => {
-  it('детерминирован и зависит от даты и секрета', () => {
-    expect(dailySeed('2026-07-24', 'a')).toBe(dailySeed('2026-07-24', 'a'));
-    expect(dailySeed('2026-07-24', 'a')).not.toBe(dailySeed('2026-07-25', 'a'));
-    expect(dailySeed('2026-07-24', 'a')).not.toBe(dailySeed('2026-07-24', 'b'));
-  });
-});
-
-describe('replayDaily', () => {
-  const seed = dailySeed(todayUtc(), DAILY_SECRET);
+describe('replaySprint', () => {
+  const seed = 42;
 
   it('насчитывает те же очки, что и честная игра', () => {
     const { moves, score } = playHonestRun(seed, 5);
-    expect(replayDaily(seed, moves)).toEqual({ score });
+    expect(replaySprint(seed, moves)).toEqual({ score });
   });
 
   it('отклоняет невозможный ход', () => {
     const moves: MoveLog[] = [
       { path: [{ r: 0, c: 0 }, { r: 5, c: 5 }, { r: 0, c: 1 }], t: 1 },
     ];
-    expect(replayDaily(seed, moves)).toBe('invalid-move');
+    expect(replaySprint(seed, moves)).toBe('invalid-move');
   });
 
   it('отклоняет нечеловеческий темп', () => {
     const { moves } = playHonestRun(seed, 2);
     const rushed = moves.map((move) => ({ ...move, t: 1 }));
-    expect(replayDaily(seed, rushed)).toBe('bad-timing');
+    expect(replaySprint(seed, rushed)).toBe('bad-timing');
   });
 
   it('отклоняет ходы после конца партии', () => {
     const { moves } = playHonestRun(seed, 1);
-    expect(replayDaily(seed, [{ ...moves[0]!, t: 500 }])).toBe('too-long');
+    expect(replaySprint(seed, [{ ...moves[0]!, t: 500 }])).toBe('too-long');
   });
 });
 
@@ -394,7 +385,6 @@ describe('бот', () => {
     app = await buildApp({
       databaseUrl: ':memory:',
       jwtSecret: JWT,
-      dailySecret: DAILY_SECRET,
       telegramBotToken: BOT_TOKEN,
     });
   });
@@ -635,7 +625,6 @@ describe('бот', () => {
     const without = await buildApp({
       databaseUrl: ':memory:',
       jwtSecret: JWT,
-      dailySecret: DAILY_SECRET,
     });
     const off = await without.inject({ method: 'GET', url: '/api/health' });
     expect(off.json()).toMatchObject({ telegram: false, bot: null });
@@ -722,7 +711,6 @@ describe('API', () => {
     app = await buildApp({
       databaseUrl: ':memory:',
       jwtSecret: 'test-jwt',
-      dailySecret: DAILY_SECRET,
       telegramBotToken: BOT_TOKEN,
     });
   });
@@ -848,95 +836,120 @@ describe('API', () => {
     expect(a).toBe(b);
   });
 
-  it('полный цикл дня: сид → забег → место → таблица', async () => {
+  it('спринт: заход попадает в таблицу с пересчитанным счётом', async () => {
     const token = await guestToken('Вольт');
-
-    const daily = await app.inject({ method: 'GET', url: '/api/daily' });
-    const { date, seed } = daily.json() as { date: string; seed: number };
-    expect(date).toBe(todayUtc());
-
+    const seed = 12345;
     const { moves, score } = playHonestRun(seed, 4);
+
     const submit = await app.inject({
       method: 'POST',
-      url: '/api/daily/run',
+      url: '/api/sprint',
       headers: { authorization: `Bearer ${token}` },
-      payload: { date, moves },
+      payload: { seed, moves },
     });
     expect(submit.statusCode).toBe(200);
-    expect(submit.json()).toEqual({ score, rank: 1 });
+    expect(submit.json()).toEqual({ score, best: score, record: true, rank: 1 });
 
-    // Вторая попытка в тот же день запрещена.
-    const again = await app.inject({
-      method: 'POST',
-      url: '/api/daily/run',
+    const me = await app.inject({
+      method: 'GET',
+      url: '/api/me',
       headers: { authorization: `Bearer ${token}` },
-      payload: { date, moves },
     });
-    expect(again.statusCode).toBe(409);
+    expect((me.json() as { sprint: unknown }).sprint).toEqual({ best: score, rank: 1 });
 
     const board = await app.inject({
       method: 'GET',
-      url: '/api/daily/leaderboard',
+      url: '/api/sprint/leaderboard',
       headers: { authorization: `Bearer ${token}` },
     });
     const leaderboard = board.json() as {
       entries: { rank: number; name: string; score: number }[];
-      me: { rank: number; score: number };
+      me: { rank: number; name: string; score: number } | null;
     };
     expect(leaderboard.entries).toEqual([{ rank: 1, name: 'Вольт', score }]);
     expect(leaderboard.me).toEqual({ rank: 1, name: 'Вольт', score });
   });
 
-  it('отклоняет забег с накрученным счётом', async () => {
-    const token = await guestToken();
-    const daily = await app.inject({ method: 'GET', url: '/api/daily' });
-    const { date, seed } = daily.json() as { date: string; seed: number };
+  it('спринт: попыток сколько угодно, в таблице остаётся лучшая', async () => {
+    const token = await guestToken('Вольт');
+    const seed = 12345;
+    const strong = playHonestRun(seed, 4);
+    const weak = { moves: strong.moves.slice(0, 2) };
+    const send = async (moves: MoveLog[]): Promise<unknown> => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/sprint',
+        headers: { authorization: `Bearer ${token}` },
+        payload: { seed, moves },
+      });
+      expect(response.statusCode).toBe(200);
+      return response.json();
+    };
 
+    await send(strong.moves);
+    const second = (await send(weak.moves)) as { score: number; best: number; record: boolean };
+    expect(second.score).toBeLessThan(strong.score);
+    expect(second.record).toBe(false);
+    expect(second.best).toBe(strong.score);
+  });
+
+  it('спринт: отклоняет заход с накрученным счётом', async () => {
+    const token = await guestToken();
+    const seed = 777;
     // Ходы от другого сида на этом поле почти наверняка невалидны.
     const { moves } = playHonestRun(seed ^ 0xdeadbeef, 5);
     const submit = await app.inject({
       method: 'POST',
-      url: '/api/daily/run',
+      url: '/api/sprint',
       headers: { authorization: `Bearer ${token}` },
-      payload: { date, moves },
+      payload: { seed, moves },
     });
     expect(submit.statusCode).toBe(400);
+
+    const board = await app.inject({ method: 'GET', url: '/api/sprint/leaderboard' });
+    expect((board.json() as { entries: unknown[] }).entries).toEqual([]);
   });
 
-  it('без токена сабмит не принимается', async () => {
+  it('спринт: без токена заход не принимается', async () => {
+    const { moves } = playHonestRun(1, 2);
     const submit = await app.inject({
       method: 'POST',
-      url: '/api/daily/run',
-      payload: { date: todayUtc(), moves: [] },
+      url: '/api/sprint',
+      payload: { seed: 1, moves },
     });
     expect(submit.statusCode).toBe(401);
   });
 
-  it('ранжирует нескольких игроков', async () => {
-    const daily = await app.inject({ method: 'GET', url: '/api/daily' });
-    const { date, seed } = daily.json() as { date: string; seed: number };
-
+  it('спринт: таблица ранжирует игроков по рекорду', async () => {
+    const seed = 999;
     const strong = playHonestRun(seed, 5);
     const weak = { moves: strong.moves.slice(0, 2) };
 
     const tokenA = await guestToken('Сильный');
     const tokenB = await guestToken('Слабый');
-    await app.inject({
-      method: 'POST',
-      url: '/api/daily/run',
-      headers: { authorization: `Bearer ${tokenA}` },
-      payload: { date, moves: strong.moves },
-    });
-    await app.inject({
-      method: 'POST',
-      url: '/api/daily/run',
-      headers: { authorization: `Bearer ${tokenB}` },
-      payload: { date, moves: weak.moves },
-    });
+    for (const [token, moves] of [
+      [tokenA, strong.moves],
+      [tokenB, weak.moves],
+    ] as const) {
+      await app.inject({
+        method: 'POST',
+        url: '/api/sprint',
+        headers: { authorization: `Bearer ${token}` },
+        payload: { seed, moves },
+      });
+    }
 
-    const board = await app.inject({ method: 'GET', url: '/api/daily/leaderboard' });
-    const { entries } = board.json() as { entries: { name: string; rank: number }[] };
+    const board = await app.inject({
+      method: 'GET',
+      url: '/api/sprint/leaderboard',
+      headers: { authorization: `Bearer ${tokenB}` },
+    });
+    const { entries, me } = board.json() as {
+      entries: { name: string; rank: number }[];
+      me: { rank: number } | null;
+    };
     expect(entries.map((entry) => entry.name)).toEqual(['Сильный', 'Слабый']);
+    expect(me?.rank).toBe(2);
   });
 
   it('челлендж комбо: заход попадает в таблицу с пересчитанными отсчётами', async () => {
@@ -1227,26 +1240,35 @@ describe('API', () => {
     expect(me.json()).toMatchObject({ total: 0 });
   });
 
-  it('вызов дня добавляет в наработку проверенные очки', async () => {
+  it('спринт не трогает наработку: её досылает клиент по ходу партии', async () => {
     const token = await guestToken('Вольт');
-    const daily = await app.inject({ method: 'GET', url: '/api/daily' });
-    const { date, seed } = daily.json() as { date: string; seed: number };
+    const seed = 4242;
     const { moves, score } = playHonestRun(seed, 4);
+    const me = async (): Promise<{ total: number }> => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/me',
+        headers: { authorization: `Bearer ${token}` },
+      });
+      return response.json() as { total: number };
+    };
 
     await app.inject({
       method: 'POST',
-      url: '/api/daily/run',
+      url: '/api/sprint',
       headers: { authorization: `Bearer ${token}` },
-      payload: { date, moves },
+      payload: { seed, moves },
     });
+    // Отсчёты спринта идут обычным досылом — иначе они зачлись бы дважды.
+    expect((await me()).total).toBe(0);
 
-    const me = await app.inject({
-      method: 'GET',
-      url: '/api/me',
+    await app.inject({
+      method: 'POST',
+      url: '/api/me/score',
       headers: { authorization: `Bearer ${token}` },
+      payload: { points: score, moves: moves.length },
     });
-    // Очки прошли через ядро — досылать их клиенту незачем.
-    expect(me.json()).toMatchObject({ total: score });
+    expect((await me()).total).toBe(score);
   });
 
   it('новичок стоит на стартовом рейтинге и вне таблицы', async () => {
@@ -1280,7 +1302,6 @@ describe('рейтинг за дуэль', () => {
     app = await buildApp({
       databaseUrl: ':memory:',
       jwtSecret: 'test-jwt',
-      dailySecret: DAILY_SECRET,
       // Призрак в этих тестах только мешал бы: ждём живого соперника.
       duelGhosts: false,
     });
