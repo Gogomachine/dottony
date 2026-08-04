@@ -1007,7 +1007,7 @@ function updateGoKey(): void {
 // Пункта «Продолжить» здесь нет: заслонку убирает та же клавиша, что её
 // открыла, и отдельная строка списка только повторяла бы её.
 const MENU_ACTIONS: Record<string, () => void> = {
-  profile: () => void cabinet.show('history'),
+  profile: () => void openCabinet(),
   friends: () => void cabinet.show('friends'),
   sprint: () => {
     menuEl.hidden = true;
@@ -1115,25 +1115,39 @@ function closeWindows(): boolean {
   return closed;
 }
 
-el<HTMLDivElement>('key-pause').addEventListener('click', () => {
-  // Открытое окно клавиша сперва убирает: под ним не видно, что она делает.
-  if (closeWindows()) return;
-  if (!menuEl.hidden) {
-    closeMenu();
+/**
+ * «Профиль» — прямой путь к своим числам: рекорды, таблицы, друзья.
+ * Повторное нажатие закрывает кабинет, как и любая другая клавиша.
+ *
+ * Отдельного стоп-кадра у прибора больше нет: партию замораживает само
+ * открытие панели управления, и держать под это отдельную клавишу — значит
+ * занимать треть клавиатуры тем, что уже делает соседняя.
+ */
+el<HTMLDivElement>('key-profile').addEventListener('click', () => {
+  if (cabinet.visible) {
+    cabinet.hide();
     return;
   }
-  if (session.paused) {
-    unfreeze();
-    setStat('Наблюдение идёт', 'live');
-    return;
-  }
-  if (!canPause()) {
-    setStat(inDuel ? 'Матч идёт — стоп-кадр недоступен' : 'Время идёт', 'warn');
-    return;
-  }
-  freeze();
-  setStat('Стоп-кадр');
+  // Прочие окна сперва убираем: кабинет должен открыться поверх чистого поля.
+  closeWindows();
+  void openCabinet();
 });
+
+/**
+ * Открывает кабинет, заводя профиль, если его ещё нет: игрок нажал
+ * «Профиль» — значит, он и хочет его завести. Не вышло — кабинет всё
+ * равно откроется и честно скажет, что данных нет.
+ */
+async function openCabinet(): Promise<void> {
+  if (apiAvailable && !hasAuth()) {
+    try {
+      await ensureAuth(guestName);
+    } catch {
+      // Сервер молчит — кабинет покажет это сам.
+    }
+  }
+  await cabinet.show('history');
+}
 
 /**
  * «Меню» работает всегда и всегда приводит к панели управления: если
