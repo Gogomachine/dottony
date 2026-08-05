@@ -33,6 +33,7 @@ import { FEEL } from './game/feel';
 import { ChainInput } from './game/input';
 import { Renderer } from './game/renderer';
 import { Session, SPRINT_SECONDS, type Mode } from './game/session';
+import { brandLockup } from './brand';
 import { emblemSvg } from './emblem';
 import { applyTheme, loadMarks, loadThemeName, saveMarks, SCOPE } from './theme';
 
@@ -1296,6 +1297,7 @@ function frame(now: number): void {
 startGame();
 requestAnimationFrame(frame);
 openMenu();
+el<HTMLSpanElement>('brand').innerHTML = brandLockup(88);
 renderer.setMarks(loadMarks());
 el<HTMLButtonElement>('mark-toggle').classList.toggle('on', loadMarks());
 el<HTMLButtonElement>('theme-toggle').classList.toggle('on', themeName === 'graphite');

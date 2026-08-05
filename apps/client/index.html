@@ -144,6 +144,9 @@
       line-height: 1.6;
     }
     .plate .id b { color: var(--silk); font-weight: 500; }
+    /* Фирменный блок вместо набранного имени: знак и вывеска из файла. */
+    .brand-mark { display: block; margin-bottom: 5px; }
+    .brand-mark svg { display: block; }
     .micro { display: flex; gap: 6px; }
     .mbtn {
       width: 30px;
@@ -816,7 +819,7 @@
 <body>
   <div class="device">
     <div class="plate">
-      <span class="id">Round things <b>inc.</b><br />Dotoscope · <b>model 36</b></span>
+      <span class="id"><span id="brand" class="brand-mark"></span>Dotoscope · <b>model 36</b></span>
       <span class="micro">
         <button class="mbtn" id="mark-toggle" title="Метки цвета">◍</button>
         <button class="mbtn" id="theme-toggle" title="Свет">◐</button>
