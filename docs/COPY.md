@@ -3,7 +3,8 @@
 Все строки, которые видит игрок: подписи, кнопки, сообщения, правила, словарь.
 Собрано из `apps/client/index.html`, `apps/client/src/main.ts`,
 `apps/client/src/cabinet.ts`, `packages/core/src/rating.ts`,
-`apps/server/src/app.ts`, `apps/server/src/ghost.ts`.
+`apps/server/src/app.ts`, `apps/server/src/ghost.ts`. Эмблема — не текст, она
+живёт в `apps/client/src/emblem.ts` и в фавиконке `index.html`.
 
 **Как править.** Меняй текст прямо в этом файле — в колонке «Текст». Я перенесу
 правки в код по колонке «Где в коде». В фигурных скобках — подстановки: `{счёт}`,
