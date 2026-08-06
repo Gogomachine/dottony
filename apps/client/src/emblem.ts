@@ -9,9 +9,6 @@
  *
  * Цвет берётся из переменной темы, поэтому один знак живёт и на светлом
  * корпусе, и на чёрном стекле окуляра — отдельной версии не нужно.
- *
- * Вариант focused — прибор навёлся: в центре кольца появляется точка,
- * та самая, за которой наблюдают. Им отмечаем яркие моменты.
  */
 
 /** Двенадцать плиток кольца в системе координат 0…100. */
@@ -30,12 +27,11 @@ const TILES = [
   'M68.02 81.62L74.23 69.99L86.34 76.46L80.13 88.09Z',
 ] as const;
 
-export function emblemSvg(options: { focused?: boolean; size?: number } = {}): string {
-  const { focused = false, size = 38 } = options;
+export function emblemSvg(options: { size?: number } = {}): string {
+  const { size = 38 } = options;
   const ring = TILES.map((d) => `<path d="${d}" fill="var(--acc)"/>`).join('');
-  const core = focused ? '<circle cx="50" cy="50" r="13" fill="var(--acc)"/>' : '';
 
   return `<svg width="${size}" height="${size}" viewBox="0 0 100 100" aria-label="dotoscope">
-    ${ring}${core}
+    ${ring}
   </svg>`;
 }

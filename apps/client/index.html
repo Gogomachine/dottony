@@ -615,14 +615,66 @@
     .rules p { margin-bottom: 6px; }
     .rules b { color: var(--acc); font-weight: 600; }
 
-    /* ---------- Кабинет ---------- */
+    /* ---------- Кабинет: пропуск сотрудника ---------- */
 
-    .cabinet { gap: 14px; }
-    .cab-head { display: flex; align-items: center; gap: 12px; }
-    #cab-emblem { flex-shrink: 0; }
-    #cab-emblem svg { display: block; }
-    .cab-who { display: flex; flex-direction: column; flex: 1; min-width: 0; }
-    .cab-name { font-size: 19px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /*
+     * Профиль сделан пропуском: у прибора есть производитель, а у игрока —
+     * место в нём. Карточка узнаётся мгновенно и сама подсказывает, что
+     * тут личное дело, а не настройки.
+     */
+    .badge { padding: 0; gap: 0; overflow: hidden; border-radius: 12px; }
+    /* Планка с прорезью под шнурок — по ней пропуск и читается пропуском. */
+    .badge-top {
+      background: var(--case);
+      padding: 9px 0;
+      display: flex;
+      justify-content: center;
+      flex: 0 0 auto;
+    }
+    .badge-top .slot {
+      width: 74px;
+      height: 9px;
+      border-radius: 5px;
+      background: var(--scope);
+      opacity: 0.55;
+    }
+
+    .badge-body {
+      display: flex;
+      flex-direction: column;
+      gap: 11px;
+      padding: 14px;
+      background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20width%3D%27210%27%20height%3D%27104%27%3E%3Cg%20font-family%3D%27sans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27700%27%20fill%3D%27%23ffffff%27%20fill-opacity%3D%270.035%27%3E%3Ctext%20x%3D%27-6%27%20y%3D%2728%27%20transform%3D%27rotate%28-24%20-6%2028%29%27%3EROUND%20THINGS%3C%2Ftext%3E%3Ctext%20x%3D%2799%27%20y%3D%2780%27%20transform%3D%27rotate%28-24%2099%2080%29%27%3EROUND%20THINGS%3C%2Ftext%3E%3C%2Fg%3E%3C%2Fsvg%3E");
+      background-repeat: repeat;
+    }
+
+    .badge-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+    /* Место под фото: силуэт нарисован фоном, снимка пока нет. */
+    .photo {
+      width: 76px;
+      height: 96px;
+      flex: 0 0 auto;
+      background-color: rgba(237, 234, 227, 0.16);
+      background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%20100%20126%27%3E%3Ccircle%20cx%3D%2750%27%20cy%3D%2740%27%20r%3D%2721%27%20fill%3D%27%230e0f11%27%2F%3E%3Cpath%20d%3D%27M8%20126c0-25%2019-40%2042-40s42%2015%2042%2040z%27%20fill%3D%27%230e0f11%27%2F%3E%3C%2Fsvg%3E");
+      background-size: 100% 100%;
+      background-repeat: no-repeat;
+    }
+    .badge-brand { padding-top: 4px; }
+    .badge-brand svg { display: block; }
+
+    .badge-name {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 21px;
+      font-weight: 800;
+      font-style: italic;
+      letter-spacing: -0.01em;
+      text-transform: uppercase;
+      line-height: 1.1;
+    }
+    .badge-name span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #cab-rename { padding: 6px 9px; flex: 0 0 auto; }
     .cab-login {
       font-family: var(--mono);
       font-size: 9px;
@@ -630,43 +682,39 @@
       text-transform: uppercase;
       color: var(--silk-2);
     }
-    #cab-rename { padding: 8px 10px; }
 
-    .cab-league {
-      display: flex;
-      flex-direction: column;
-      gap: 5px;
-      padding: 12px 14px;
-      border-radius: 10px;
-      background: var(--case-2);
-      border: 1px solid var(--edge);
+    /* Допуск: лига или калибровка — строка того же назначения, что на пропуске. */
+    .cab-league { display: flex; flex-direction: column; gap: 4px; }
+    .cab-league .league-name {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--acc);
     }
-    .cab-league .league-name { font-size: 17px; font-weight: 700; color: var(--acc); }
+    .cab-league .league-bar { height: 3px; background: var(--edge); overflow: hidden; }
+    .cab-league .league-bar i { display: block; height: 100%; background: var(--acc); }
     .cab-league .league-note {
       font-family: var(--mono);
-      font-size: 9px;
+      font-size: 8.5px;
       letter-spacing: 0.1em;
       text-transform: uppercase;
       color: var(--silk-2);
     }
-    .cab-league .league-bar { height: 4px; border-radius: 2px; background: var(--edge); overflow: hidden; }
-    .cab-league .league-bar i { display: block; height: 100%; background: var(--acc); }
 
-    .totalizer { display: flex; flex-direction: column; gap: 5px; }
-    .tot-head { display: flex; align-items: baseline; justify-content: space-between; }
-    .tot-label {
-      font-family: var(--mono);
-      font-size: 9px;
-      letter-spacing: 0.16em;
-      text-transform: uppercase;
-      color: var(--silk-2);
+    /* Штрихкод сотрудника: рисуется из его же кода, поэтому у каждого свой. */
+    .barcode { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 0 2px; }
+    .barcode .bars { width: 100%; height: 46px; }
+    .barcode .code-value {
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0.42em;
+      text-indent: 0.42em;
+      color: var(--silk);
     }
-    .tot-value { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
-    .tot-bar { height: 3px; border-radius: 2px; background: var(--edge); overflow: hidden; }
-    .tot-bar i { display: block; height: 100%; background: var(--acc); }
-    .tot-next { font-family: var(--mono); font-size: 9px; letter-spacing: 0.1em; color: var(--silk-2); }
 
-    /* Показателей стало пять — раскладываем сеткой, а не жёстким рядом. */
+    /* Показателей пять — раскладываем сеткой, а не жёстким рядом. */
     .cab-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(58px, 1fr)); gap: 6px; }
     .cab-stats .stat { position: static; display: flex; flex-direction: column; align-items: center; gap: 2px; max-width: none; }
     .stat-value { font-family: var(--mono); font-size: 16px; font-weight: 700; color: var(--silk); }
@@ -679,29 +727,41 @@
       text-align: center;
     }
 
+    /* Кнопок таблиц три — в одну строку они не читаются, поэтому переносим. */
+    .cab-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .cab-actions button { flex: 1 1 44%; }
+
     .cab-tabs { display: flex; gap: 6px; }
     .cab-tabs .tab { flex: 1; }
     .cab-tabs .tab.active { border-color: var(--acc); color: var(--acc); }
 
-    .code-box {
+    /* Нижняя полоса пропуска: наработка прибора за всё время. */
+    .badge-foot {
+      background: var(--acc);
+      color: #fff;
+      padding: 10px 14px 12px;
       display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 10px 12px;
-      margin-bottom: 10px;
-      border-radius: 10px;
-      background: var(--scope);
+      flex-direction: column;
+      gap: 4px;
     }
-    .code-left { display: flex; flex-direction: column; flex: 1; }
-    .code-label {
+    .tot-head { display: flex; align-items: baseline; justify-content: space-between; }
+    .tot-label {
       font-family: var(--mono);
-      font-size: 8.5px;
+      font-size: 9px;
       letter-spacing: 0.16em;
       text-transform: uppercase;
-      color: #5f5d57;
+      color: rgba(255, 255, 255, 0.75);
     }
-    .code-value { font-size: 22px; font-weight: 700; letter-spacing: 0.14em; color: var(--scope-ink); }
-    .code-box button { background: var(--case-2); }
+    .tot-value { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .tot-bar { height: 3px; background: rgba(0, 0, 0, 0.28); overflow: hidden; }
+    .tot-bar i { display: block; height: 100%; background: #fff; }
+    .tot-next {
+      font-family: var(--mono);
+      font-size: 8.5px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.75);
+    }
 
     .history {
       list-style: none;
@@ -758,9 +818,6 @@
       font-weight: 500;
     }
     .cab-sub[hidden] { display: none; }
-    /* Кнопок таблиц три — в одну строку они не читаются, поэтому переносим. */
-    .cab-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-    .cab-actions button { flex: 1 1 44%; }
 
     /* ---------- Реплей ---------- */
 
@@ -927,20 +984,61 @@
       </div>
 
       <div id="cabinet" class="overlay" hidden>
-        <div class="modal cabinet">
-          <div class="cab-head">
-            <div id="cab-emblem"></div>
-            <div class="cab-who">
-              <span id="cab-name" class="cab-name"></span>
-              <span id="cab-login" class="cab-login"></span>
+        <div class="modal badge">
+          <!-- Пропуск сотрудника: планка с прорезью под шнурок. -->
+          <div class="badge-top"><i class="slot"></i></div>
+
+          <div class="badge-body">
+            <div class="badge-head">
+              <div class="photo" id="cab-photo"></div>
+              <div class="badge-brand"><span id="cab-brand"></span></div>
             </div>
-            <button id="cab-rename" title="Сменить имя">✎</button>
+
+            <div class="badge-name">
+              <span id="cab-name"></span>
+              <button id="cab-rename" title="Сменить имя">✎</button>
+            </div>
+            <div id="cab-league" class="cab-league"></div>
+            <span id="cab-login" class="cab-login"></span>
+            <button id="cab-link-tg" hidden>Привязать Telegram</button>
+
+            <!-- Штрихкод сотрудника: под ним его код, тот же, что дают друзьям. -->
+            <div class="barcode">
+              <svg id="cab-barcode" class="bars" viewBox="0 0 240 52" preserveAspectRatio="none"></svg>
+              <span id="cab-code" class="code-value mono">······</span>
+            </div>
+
+            <div class="cab-stats">
+              <div class="stat"><span id="cab-rating" class="stat-value"></span><span class="stat-label">рейтинг</span></div>
+              <div class="stat"><span id="cab-rank" class="stat-value"></span><span class="stat-label">место</span></div>
+              <div class="stat"><span id="cab-duels" class="stat-value"></span><span class="stat-label">дуэли</span></div>
+              <div class="stat"><span id="cab-sprint" class="stat-value"></span><span id="cab-sprint-rank" class="stat-label">спринт</span></div>
+              <div class="stat"><span id="cab-combo" class="stat-value"></span><span id="cab-combo-rank" class="stat-label">комбо</span></div>
+            </div>
+
+            <div class="cab-actions">
+              <button id="cab-rating-board">Таблица рейтинга</button>
+              <button id="cab-sprint-board">Рекорды спринта</button>
+              <button id="cab-combo-board">Таблица комбо</button>
+            </div>
+
+            <div class="cab-tabs">
+              <button id="tab-history" class="tab active">Матчи</button>
+              <button id="tab-friends" class="tab">Друзья</button>
+            </div>
+
+            <ol id="cab-history" class="history"></ol>
+
+            <div id="cab-friends" hidden>
+              <button id="cab-add-friend">Добавить друга по коду</button>
+              <ol id="friend-list" class="history"></ol>
+              <h3 id="recent-title" class="cab-sub" hidden>Недавние соперники</h3>
+              <ol id="recent-list" class="history"></ol>
+            </div>
           </div>
-          <button id="cab-link-tg" hidden>Привязать Telegram</button>
 
-          <div id="cab-league" class="cab-league"></div>
-
-          <div class="totalizer">
+          <!-- Нижняя полоса пропуска — наработка прибора за всё время. -->
+          <div class="badge-foot">
             <div class="tot-head">
               <span class="tot-label">Наработка</span>
               <span id="cab-total" class="tot-value mono">0</span>
@@ -948,40 +1046,6 @@
             <div class="tot-bar"><i id="cab-total-bar"></i></div>
             <span id="cab-total-next" class="tot-next"></span>
           </div>
-
-          <div class="cab-stats">
-            <div class="stat"><span id="cab-rating" class="stat-value"></span><span class="stat-label">рейтинг</span></div>
-            <div class="stat"><span id="cab-rank" class="stat-value"></span><span class="stat-label">место</span></div>
-            <div class="stat"><span id="cab-duels" class="stat-value"></span><span class="stat-label">дуэли</span></div>
-            <div class="stat"><span id="cab-sprint" class="stat-value"></span><span id="cab-sprint-rank" class="stat-label">спринт</span></div>
-            <div class="stat"><span id="cab-combo" class="stat-value"></span><span id="cab-combo-rank" class="stat-label">комбо</span></div>
-          </div>
-
-          <div class="cab-actions">
-            <button id="cab-rating-board">Таблица рейтинга</button>
-            <button id="cab-sprint-board">Рекорды спринта</button>
-            <button id="cab-combo-board">Таблица комбо</button>
-          </div>
-          <div class="cab-tabs">
-            <button id="tab-history" class="tab active">Матчи</button>
-            <button id="tab-friends" class="tab">Друзья</button>
-          </div>
-
-          <ol id="cab-history" class="history"></ol>
-
-          <div id="cab-friends" hidden>
-            <div class="code-box">
-              <div class="code-left">
-                <span class="code-label">Твой код</span>
-                <span id="cab-code" class="code-value mono">······</span>
-              </div>
-              <button id="cab-add-friend">Добавить</button>
-            </div>
-            <ol id="friend-list" class="history"></ol>
-            <h3 id="recent-title" class="cab-sub" hidden>Недавние соперники</h3>
-            <ol id="recent-list" class="history"></ol>
-          </div>
-
         </div>
       </div>
 

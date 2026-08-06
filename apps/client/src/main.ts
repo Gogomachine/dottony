@@ -372,8 +372,7 @@ function showOverModal(options: {
   /** Показать кнопку «добавить соперника в друзья». */
   addFriend?: { name: string; code: string };
 }): void {
-  // В модалке рекордов прибор наведён на резкость — это яркий момент.
-  overEmblemEl.innerHTML = emblemSvg({ size: 84, focused: options.title.startsWith('Рекорд') });
+  overEmblemEl.innerHTML = emblemSvg({ size: 84 });
   overTitleEl.textContent = options.title;
   roomBoxEl.hidden = options.room === undefined;
   if (options.room !== undefined) {

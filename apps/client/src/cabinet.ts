@@ -9,7 +9,7 @@ import {
   rename,
   telegramLinkUrl,
 } from './api';
-import { emblemSvg } from './emblem';
+import { brandLockup } from './brand';
 
 /**
  * Личный кабинет: кто я, какая лига, что сыграно.
@@ -78,7 +78,7 @@ export class Cabinet {
   private miniApp: string | null = null;
 
   constructor(private readonly handlers: CabinetHandlers) {
-    el<HTMLDivElement>('cab-emblem').innerHTML = emblemSvg({ size: 46 });
+    el<HTMLSpanElement>('cab-brand').innerHTML = brandLockup(96);
     this.historyTab.addEventListener('click', () => this.openTab('history'));
     this.friendsTab.addEventListener('click', () => this.openTab('friends'));
     el<HTMLButtonElement>('cab-add-friend').addEventListener('click', () => void this.addByCode());
@@ -267,8 +267,41 @@ export class Cabinet {
     note.textContent = `до ${groupDigits(next)} — ещё ${groupDigits(next - total)}`;
   }
 
+  /**
+   * Штрихкод сотрудника. Рисуется из кода друга: у каждого игрока свой и
+   * не меняется со временем. Это рисунок, а не Code 39 — сканировать его
+   * нечем и незачем, код диктуют словами. Зато он делает пропуск
+   * пропуском, а число под ним — настоящее.
+   */
+  private renderBarcode(code: string): void {
+    const box = el<HTMLElement>('cab-barcode');
+    // Ширины полос выводим из самих символов кода — отсюда и уникальность.
+    const widths: number[] = [2, 1, 1, 1, 2];
+    for (const ch of code) {
+      const n = ch.charCodeAt(0);
+      // Восемь полос на символ — штрихи выходят тонкими и частыми, как на
+      // настоящем пропуске; пяти было мало, они читались забором.
+      for (let bit = 0; bit < 8; bit++) widths.push(1 + ((n >> bit) & 1));
+      widths.push(1, 1);
+    }
+    widths.push(2, 1, 1, 1, 2);
+
+    const unit = 240 / widths.reduce((sum, w) => sum + w, 0);
+    let x = 0;
+    const bars = widths.map((w, i) => {
+      const rect =
+        i % 2 === 0
+          ? `<rect x="${(x * unit).toFixed(2)}" y="0" width="${(w * unit).toFixed(2)}" height="52" fill="var(--silk)"/>`
+          : '';
+      x += w;
+      return rect;
+    });
+    box.innerHTML = bars.join('');
+  }
+
   private renderFriends(data: FriendsResponse): void {
     el<HTMLSpanElement>('cab-code').textContent = data.code;
+    this.renderBarcode(data.code);
 
     this.friendListEl.innerHTML = '';
     if (data.friends.length === 0) {
