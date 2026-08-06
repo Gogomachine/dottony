@@ -31,6 +31,23 @@ export const GuestAuthRequestSchema = z.object({ name: NameSchema });
 
 export const RenameRequestSchema = z.object({ name: NameSchema });
 
+/**
+ * Смайлик на пропуске. Требуем хотя бы один пиктографический символ и
+ * запрещаем буквы с цифрами: иначе вместо лица игрок поставит слово, а
+ * место под фото рассчитано на один знак.
+ */
+export const AvatarSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(16)
+  .refine(
+    (value) => /\p{Extended_Pictographic}/u.test(value) && !/[\p{L}\p{N}]/u.test(value),
+    'bad-avatar',
+  );
+
+export const AvatarRequestSchema = z.object({ avatar: AvatarSchema });
+
 /** Код друга: шесть символов без похожих начертаний, регистр не важен. */
 export const FriendCodeSchema = z
   .string()
@@ -84,6 +101,7 @@ export type MoveLog = z.infer<typeof MoveLogSchema>;
 export type SubmitSprintRequest = z.infer<typeof SubmitSprintRequestSchema>;
 export type GuestAuthRequest = z.infer<typeof GuestAuthRequestSchema>;
 export type RenameRequest = z.infer<typeof RenameRequestSchema>;
+export type AvatarRequest = z.infer<typeof AvatarRequestSchema>;
 export type AddFriendRequest = z.infer<typeof AddFriendRequestSchema>;
 export type AddScoreRequest = z.infer<typeof AddScoreRequestSchema>;
 export type ComboMove = z.infer<typeof ComboMoveSchema>;
@@ -208,6 +226,8 @@ export interface FriendsResponse {
 
 export interface MeResponse {
   name: string;
+  /** Смайлик на пропуске; null — игрок его ещё не ставил. */
+  avatar: string | null;
   rating: number;
   deviation: number;
   league: string;

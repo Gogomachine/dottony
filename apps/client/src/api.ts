@@ -215,6 +215,14 @@ export function inviteFriend(code: string, room: string): Promise<void> {
   });
 }
 
+/** Ставит смайлик на пропуск. Сервер проверяет, что это правда смайлик. */
+export function setAvatar(avatar: string): Promise<{ avatar: string }> {
+  return request<{ avatar: string }>('/api/me/avatar', {
+    method: 'POST',
+    body: JSON.stringify({ avatar }),
+  });
+}
+
 export function getFriends(): Promise<FriendsResponse> {
   return request<FriendsResponse>('/api/me/friends');
 }

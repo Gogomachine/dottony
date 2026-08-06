@@ -162,6 +162,9 @@
 | `вход: {способы}` | Под именем | `cabinet.ts`, `renderProfile` |
 | `гость` / `Telegram` / `кошелёк TON` | Названия способов входа | `cabinet.ts`, `LOGIN_NAMES` |
 | `Сменить имя` | Подсказка кнопки ✎ | `index.html`, `#cab-rename` |
+| `Поставить смайлик` | Подсказка места под фото | `index.html`, `#cab-photo` |
+| `Смайлик на пропуск:` | Системное окно выбора | `cabinet.ts`, `pickAvatar` |
+| `Нужен смайлик — буквы и цифры не подойдут` | Сервер не принял | `cabinet.ts`, `pickAvatar` |
 | `Привязать Telegram` | Кнопка | `index.html` / `cabinet.ts` |
 | `Подтверди в Telegram…` | Она же после нажатия | `cabinet.ts`, `linkTelegram` |
 | `Пока недоступно` | Она же, если бот не настроен | `cabinet.ts`, `linkTelegram` |

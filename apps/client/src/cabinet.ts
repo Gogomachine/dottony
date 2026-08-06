@@ -1,6 +1,7 @@
 import type { DuelHistoryEntry, FriendsResponse, MeResponse } from '@doton/protocol';
 import {
   addFriend,
+  setAvatar,
   getFriends,
   getHistory,
   getMe,
@@ -68,6 +69,7 @@ export class Cabinet {
   private readonly overlay = el<HTMLDivElement>('cabinet');
   private readonly nameEl = el<HTMLSpanElement>('cab-name');
   private readonly loginEl = el<HTMLSpanElement>('cab-login');
+  private readonly photoEl = el<HTMLDivElement>('cab-photo');
   private readonly leagueEl = el<HTMLDivElement>('cab-league');
   private readonly historyEl = el<HTMLOListElement>('cab-history');
   private readonly friendsEl = el<HTMLDivElement>('cab-friends');
@@ -96,6 +98,7 @@ export class Cabinet {
       handlers.onComboBoard();
     });
     el<HTMLButtonElement>('cab-rename').addEventListener('click', () => void this.rename());
+    el<HTMLDivElement>('cab-photo').addEventListener('click', () => void this.pickAvatar());
     // Клик мимо окна закрывает кабинет — привычный жест.
     this.overlay.addEventListener('click', (event) => {
       if (event.target === this.overlay) this.hide();
@@ -194,8 +197,36 @@ export class Cabinet {
     }
   }
 
+  /**
+   * Смайлик вместо фотографии. Спрашиваем системным окном: на телефоне оно
+   * открывает клавиатуру смайликов, а это ровно то, что нужно.
+   */
+  private async pickAvatar(): Promise<void> {
+    const answer = prompt('Смайлик на пропуск:', this.photoEl.textContent ?? '');
+    if (answer === null) return;
+    const emoji = answer.trim();
+    if (emoji.length === 0) return;
+
+    const previous = this.photoEl.textContent ?? '';
+    this.showAvatar(emoji);
+    try {
+      await setAvatar(emoji);
+    } catch {
+      // Сервер не принял: вернём как было и скажем прямо.
+      this.showAvatar(previous);
+      this.loginEl.textContent = 'Нужен смайлик — буквы и цифры не подойдут';
+    }
+  }
+
+  /** Пустая строка возвращает силуэт: место под фото снова свободно. */
+  private showAvatar(emoji: string): void {
+    this.photoEl.textContent = emoji;
+    this.photoEl.classList.toggle('has-emoji', emoji.length > 0);
+  }
+
   private renderProfile(me: MeResponse): void {
     this.nameEl.textContent = me.name;
+    this.showAvatar(me.avatar ?? '');
     const logins = me.identities.map((identity) => LOGIN_NAMES[identity.kind] ?? identity.kind);
     this.loginEl.textContent = `вход: ${logins.join(', ')}`;
     // Кнопку привязки показываем только тем, у кого Telegram ещё не привязан.

@@ -6,6 +6,7 @@ import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import {
   AddFriendRequestSchema,
   AddScoreRequestSchema,
+  AvatarRequestSchema,
   DuelClientMessageSchema,
   FriendCodeSchema,
   GuestAuthRequestSchema,
@@ -290,6 +291,15 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return issueToken(user.sub, parsed.data.name);
   });
 
+  /** Смайлик на пропуске: единственное, что игрок рисует о себе сам. */
+  app.post('/api/me/avatar', async (request, reply) => {
+    const user = await requireUser(request);
+    const parsed = AvatarRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'bad-avatar' });
+    await store.setAvatar(user.sub, parsed.data.avatar);
+    return { avatar: parsed.data.avatar };
+  });
+
   // ---------- Спринт ----------
 
   /**
@@ -431,13 +441,14 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   /** Карточка игрока: рейтинг, лига, место и сводка по дуэлям. */
   app.get('/api/me', async (request): Promise<MeResponse> => {
     const user = await requireUser(request);
-    const [rating, rank, duels, identities, total, sprint, sprintRank, combo, comboRank] =
+    const [rating, rank, duels, identities, total, avatar, sprint, sprintRank, combo, comboRank] =
       await Promise.all([
         store.ratingOf(user.sub),
         store.ratingRank(user.sub),
         store.duelRecord(user.sub),
         store.identitiesOf(user.sub),
         store.totalScore(user.sub),
+        store.avatarOf(user.sub),
         store.bestSprint(user.sub),
         store.sprintRank(user.sub),
         store.bestCombo(user.sub),
@@ -447,6 +458,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     const league = leagueOf(rating.rating);
     return {
       name: user.name,
+      avatar,
       rating: rating.rating,
       deviation: rating.deviation,
       league: league.name,

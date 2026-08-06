@@ -192,6 +192,8 @@ export class Store {
     // проверять темп досылов из режимов, которые сервер не пересчитывает.
     await this.addColumnIfMissing('users', 'total_score', 'INTEGER NOT NULL DEFAULT 0');
     await this.addColumnIfMissing('users', 'scored_at', 'TEXT');
+    // Смайлик на пропуске — единственное, что игрок рисует о себе сам.
+    await this.addColumnIfMissing('users', 'avatar', 'TEXT');
     // Код друга: короткий, его диктуют вслух и шлют ссылкой.
     await this.addColumnIfMissing('users', 'friend_code', 'TEXT');
     await this.client.execute(
@@ -908,6 +910,23 @@ export class Store {
       kind: String(row.kind) as IdentityKind,
       linkedAt: String(row.linked_at),
     }));
+  }
+
+  /** Смайлик игрока; null — не ставил. */
+  async avatarOf(userId: string): Promise<string | null> {
+    const result = await this.client.execute({
+      sql: 'SELECT avatar FROM users WHERE id = ?',
+      args: [userId],
+    });
+    const value = result.rows[0]?.avatar;
+    return value === null || value === undefined ? null : String(value);
+  }
+
+  async setAvatar(userId: string, avatar: string): Promise<void> {
+    await this.client.execute({
+      sql: 'UPDATE users SET avatar = ? WHERE id = ?',
+      args: [avatar, userId],
+    });
   }
 
   async renameUser(id: string, name: string): Promise<void> {

@@ -622,7 +622,9 @@
      * место в нём. Карточка узнаётся мгновенно и сама подсказывает, что
      * тут личное дело, а не настройки.
      */
-    .badge { padding: 0; gap: 0; overflow: hidden; border-radius: 12px; }
+    /* Прокрутка обязана остаться: скругление углов режет только по
+       горизонтали, иначе низ пропуска становится недостижимым. */
+    .badge { padding: 0; gap: 0; overflow: hidden auto; border-radius: 12px; }
     /* Планка с прорезью под шнурок — по ней пропуск и читается пропуском. */
     .badge-top {
       background: var(--case);
@@ -658,7 +660,15 @@
       background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%20100%20126%27%3E%3Ccircle%20cx%3D%2750%27%20cy%3D%2740%27%20r%3D%2721%27%20fill%3D%27%230e0f11%27%2F%3E%3Cpath%20d%3D%27M8%20126c0-25%2019-40%2042-40s42%2015%2042%2040z%27%20fill%3D%27%230e0f11%27%2F%3E%3C%2Fsvg%3E");
       background-size: 100% 100%;
       background-repeat: no-repeat;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 46px;
+      line-height: 1;
     }
+    /* Со смайликом силуэт больше не нужен — он и есть фотография. */
+    .photo.has-emoji { background-image: none; }
     .badge-brand { padding-top: 4px; }
     .badge-brand svg { display: block; }
 
@@ -990,7 +1000,7 @@
 
           <div class="badge-body">
             <div class="badge-head">
-              <div class="photo" id="cab-photo"></div>
+              <div class="photo" id="cab-photo" title="Поставить смайлик"></div>
               <div class="badge-brand"><span id="cab-brand"></span></div>
             </div>
 

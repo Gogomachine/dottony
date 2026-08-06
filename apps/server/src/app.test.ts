@@ -836,6 +836,40 @@ describe('API', () => {
     expect(a).toBe(b);
   });
 
+  it('смайлик на пропуске сохраняется, а текст вместо него не проходит', async () => {
+    const token = await guestToken('Ада');
+    const me = async (): Promise<{ avatar: string | null }> => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/me',
+        headers: { authorization: `Bearer ${token}` },
+      });
+      return response.json() as { avatar: string | null };
+    };
+    const put = (avatar: string) =>
+      app.inject({
+        method: 'POST',
+        url: '/api/me/avatar',
+        headers: { authorization: `Bearer ${token}` },
+        payload: { avatar },
+      });
+
+    expect((await me()).avatar).toBeNull();
+
+    expect((await put('🔭')).statusCode).toBe(200);
+    expect((await me()).avatar).toBe('🔭');
+
+    // Составной смайлик — тоже смайлик: он из нескольких символов.
+    expect((await put('👨‍🚀')).statusCode).toBe(200);
+    expect((await me()).avatar).toBe('👨‍🚀');
+
+    // Место под фото рассчитано на знак, а не на слово.
+    for (const bad of ['Ада', '42', 'x🔭', '']) {
+      expect((await put(bad)).statusCode).toBe(400);
+    }
+    expect((await me()).avatar).toBe('👨‍🚀');
+  });
+
   it('спринт: заход попадает в таблицу с пересчитанным счётом', async () => {
     const token = await guestToken('Вольт');
     const seed = 12345;
