@@ -6,13 +6,7 @@ export interface Cell {
   c: number;
 }
 
-/**
- * Точка поля. charged — на месте точки лежит бомба: она взрывает 3×3 при
- * сборе и множит отсчёты хода.
- *
- * При features.wildBomb бомба **не имеет цвета**: поле color под ней
- * остаётся (его вернут падающие точки), но правила его не смотрят.
- */
+/** Точка поля; charged — несёт заряд перегрузки (взрыв 3×3 при сборе). */
 export interface DotCell {
   color: Color;
   charged: boolean;
@@ -44,16 +38,6 @@ export interface FeatureFlags {
   phases: boolean;
   /** Перегрузка: длинная цепочка оставляет заряд, взрывающий 3×3. */
   surge: boolean;
-  /**
-   * Бомба без цвета. Включённой она идёт в цепочку любого цвета, но цвет
-   * цепочки не меняет: перескочить через бомбу на другой цвет нельзя, и
-   * начать с неё цепочку тоже. Выключенной бомба ведёт себя как прежняя
-   * линза — обычная цветная точка с зарядом.
-   *
-   * Флаг — точка отката: одно значение возвращает старую механику целиком,
-   * вместе с отрисовкой.
-   */
-  wildBomb: boolean;
 }
 
 export interface GameConfig {
@@ -83,7 +67,7 @@ export const DEFAULT_CONFIG: GameConfig = {
   colors: 4,
   minChain: 3,
   chainStep: 10,
-  features: { phases: true, surge: true, wildBomb: true },
+  features: { phases: true, surge: true },
   surgeChainLength: 10,
   surgeDotValue: 10,
   phasePeriod: 45,
@@ -130,6 +114,4 @@ export type MoveError =
   | 'out-of-bounds'
   | 'not-adjacent'
   | 'color-mismatch'
-  /** Цепочку начали с бомбы: у неё нет цвета, вести её было бы некуда. */
-  | 'bomb-start'
   | 'revisit';

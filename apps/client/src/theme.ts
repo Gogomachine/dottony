@@ -8,8 +8,6 @@ export interface Theme {
   board: string;
   gridLine: string;
   chainOutline: string;
-  /** Бомба: своего цвета среди точек у неё нет — она сигнальная. */
-  bomb: string;
 }
 
 export const SCOPE: Theme = {
@@ -17,7 +15,6 @@ export const SCOPE: Theme = {
   board: '#0C0D0E',
   gridLine: '#1D1E1D',
   chainOutline: 'rgba(237, 234, 227, 0.55)',
-  bomb: '#E84B23',
 };
 
 export type ThemeName = 'draft' | 'graphite';

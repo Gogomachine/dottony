@@ -55,19 +55,6 @@ export class ChainInput {
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }
 
-  /** С бомбы цепочку не начинают: цвета у неё нет, вести некуда. */
-  private canStart(cell: Cell): boolean {
-    if (!this.cfg.features.wildBomb) return true;
-    return cellAt(this.getBoard().grid, cell)?.charged !== true;
-  }
-
-  private start(cell: Cell): void {
-    if (!this.canStart(cell)) return;
-    this.chain.push(cell);
-    this.renderer.pulse(cell);
-    this.onExtend(1);
-  }
-
   private readonly onDown = (e: PointerEvent): void => {
     if (!this.on) return;
     this.canvas.setPointerCapture(e.pointerId);
@@ -77,7 +64,11 @@ export class ChainInput {
     const point = this.toLocal(e);
     this.pointer = point;
     const cell = this.renderer.hitTest(point.x, point.y, this.touch);
-    if (cell) this.start(cell);
+    if (cell) {
+      this.chain.push(cell);
+      this.renderer.pulse(cell);
+      this.onExtend(1);
+    }
   };
 
   private readonly onMove = (e: PointerEvent): void => {
@@ -88,7 +79,11 @@ export class ChainInput {
     if (this.chain.length === 0) {
       // Цепочка ещё не начата: разрешаем подхватить точку по ходу движения.
       const cell = this.renderer.hitTest(to.x, to.y, this.touch);
-      if (cell) this.start(cell);
+      if (cell) {
+        this.chain.push(cell);
+        this.renderer.pulse(cell);
+        this.onExtend(1);
+      }
       return;
     }
 
@@ -122,11 +117,7 @@ export class ChainInput {
 
     const board = this.getBoard();
     if (!areNeighbors(last, cell)) return;
-    // Бомба входит в цепочку любого цвета, но цвет цепочки не меняет:
-    // те же правила, что и в ядре, иначе палец вёл бы недопустимый ход.
-    const content = cellAt(board.grid, cell);
-    const wild = this.cfg.features.wildBomb && content?.charged === true;
-    if (!wild && content?.color !== cellAt(board.grid, this.chain[0]!)?.color) return;
+    if (cellAt(board.grid, cell)?.color !== cellAt(board.grid, this.chain[0]!)?.color) return;
     if (this.chain.some((taken) => sameCell(taken, cell))) return;
 
     this.chain.push(cell);

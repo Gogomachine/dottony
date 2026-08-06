@@ -18,13 +18,7 @@ const cfg = DEFAULT_CONFIG;
 /** Конфиг с выключенными фичами — для тестов чистых цепочек. */
 const bare: GameConfig = {
   ...DEFAULT_CONFIG,
-  features: { phases: false, surge: false, wildBomb: false },
-};
-
-/** Прежняя механика: бомба — обычная цветная точка с зарядом. */
-const lens: GameConfig = {
-  ...DEFAULT_CONFIG,
-  features: { ...DEFAULT_CONFIG.features, wildBomb: false },
+  features: { phases: false, surge: false },
 };
 
 function boardFrom(rows: string[], charged: Cell[] = []): Board {
@@ -276,71 +270,17 @@ describe('перегрузка', () => {
     expect(third.multiplier).toBe(4);
   });
 
-  it('две бомбы в одной цепочке дают сразу ×3', () => {
+  it('два заряда в одной цепочке дают сразу ×3', () => {
     const board = boardFrom(ROWS, [{ r: 3, c: 0 }, { r: 4, c: 1 }]);
-    // Начинаем с обычной точки: с бомбы цепочку не начинают.
     const path: Cell[] = [
-      { r: 5, c: 0 },
-      { r: 4, c: 1 },
       { r: 3, c: 0 },
+      { r: 4, c: 0 },
+      { r: 4, c: 1 },
+      { r: 5, c: 1 },
     ];
     const result = mustApply(board, path, cfg);
     expect(result.surges).toBe(2);
     expect(result.multiplier).toBe(3);
-  });
-
-  // Бомба лежит на (2,1) — под ней ноль, а цепочку ведём по единицам:
-  // только так видно, что цвет под бомбой правила не смотрят.
-  const wildBoard = (): Board => boardFrom(ROWS, [{ r: 2, c: 1 }]);
-
-  it('бомба идёт в цепочку чужого цвета', () => {
-    const path: Cell[] = [
-      { r: 3, c: 0 },
-      { r: 2, c: 1 },
-      { r: 3, c: 1 },
-    ];
-    const result = mustApply(wildBoard(), path, cfg);
-    // Цвет хода — цвет первой точки; бомба его не меняет.
-    expect(result.color).toBe(1);
-    expect(result.surges).toBe(1);
-  });
-
-  it('через бомбу нельзя перескочить на другой цвет', () => {
-    // (3,0) — единица, (2,1) — бомба, (2,0) — ноль: цвет менять нельзя.
-    const path: Cell[] = [
-      { r: 3, c: 0 },
-      { r: 2, c: 1 },
-      { r: 2, c: 0 },
-    ];
-    expect(applyMove(wildBoard(), path, cfg)).toBe('color-mismatch');
-  });
-
-  it('с бомбы цепочку не начинают', () => {
-    const path: Cell[] = [
-      { r: 2, c: 1 },
-      { r: 2, c: 0 },
-      { r: 1, c: 0 },
-    ];
-    expect(applyMove(wildBoard(), path, cfg)).toBe('bomb-start');
-  });
-
-  it('выключенный wildBomb возвращает прежнюю линзу', () => {
-    // Та же цепочка через бомбу чужого цвета больше не проходит…
-    const through: Cell[] = [
-      { r: 3, c: 0 },
-      { r: 2, c: 1 },
-      { r: 3, c: 1 },
-    ];
-    expect(applyMove(wildBoard(), through, lens)).toBe('color-mismatch');
-
-    // …зато с заряженной точки можно начать, как было раньше.
-    const fromCharge: Cell[] = [
-      { r: 2, c: 1 },
-      { r: 2, c: 0 },
-      { r: 1, c: 0 },
-    ];
-    const result = mustApply(wildBoard(), fromCharge, lens);
-    expect(result.surges).toBe(1);
   });
 
   it('цепочка без заряда обрывает серию', () => {

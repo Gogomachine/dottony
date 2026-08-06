@@ -37,18 +37,16 @@ interface ChainWave {
 
 const GHOST_LIFE = FEEL.ghostLife;
 const SHOCK_LIFE = 0.5;
-/** Метка отшлифованной линзы, в долях радиуса точки (старая механика). */
+/** Метка отшлифованной линзы, в долях радиуса точки. */
 const LENS_RING = 0.62;
 const LENS_CORE = 0.2;
-/** Сторона бомбы — радиус точки, то есть вдвое меньше её поперечника. */
-const BOMB_SIDE = 1;
 
 function newAnim(): DotAnim {
   return { offset: 0, velocity: 0, delay: 0, scale: 1, scaleVelocity: 0, squash: 0 };
 }
 
 /**
- * Canvas-рендер поля: точки, бомбы, линия цепочки, падение.
+ * Canvas-рендер поля: точки, линзы, линия цепочки, падение.
  * Свечение — только как ответ на действие (стайлгайд «Цепи»).
  */
 export class Renderer {
@@ -133,11 +131,7 @@ export class Renderer {
 
     for (const cell of gone) {
       const content = oldGrid[cell.r]![cell.c]!;
-      // След бомбы — сигнальный, а не цветной: цвета у неё нет.
-      const fill =
-        this.cfg.features.wildBomb && content.charged
-          ? this.theme.bomb
-          : this.theme.dots[content.color]!;
+      const fill = this.theme.dots[content.color]!;
       const center = this.center(cell);
       this.ghosts.push({ x: center.x, y: center.y, fill, age: 0 });
 
@@ -240,7 +234,6 @@ export class Renderer {
       ctx.globalAlpha = 1;
     }
 
-    const bombs = this.cfg.features.wildBomb;
     // Содержимое клеток. Точка занимает почти всю клетку: так поле читается
     // как плотная сетка сигналов, а не как редкие кружки. Между соседями
     // остаётся просвет в пятую часть клетки — цепочка по нему и видна.
@@ -257,15 +250,6 @@ export class Renderer {
         const squash = anim.squash;
         const scaleX = anim.scale * (1 + squash * 0.5);
         const scaleY = anim.scale * (1 - squash * 0.5);
-
-        // Бомба цвета не имеет: рисуем сигнальный квадрат вместо кружка и
-        // ни фазу, ни метку цвета к ней не применяем — ей они не про что.
-        if (bombs && content.charged) {
-          const side = radius * BOMB_SIDE * anim.scale;
-          ctx.fillStyle = theme.bomb;
-          ctx.fillRect(center.x - side / 2, y - side / 2, side, side);
-          continue;
-        }
 
         // Точки других цветов намеренно не приглушаем: подсвечивать все
         // подходящие точки — значит искать цепочку за игрока.
