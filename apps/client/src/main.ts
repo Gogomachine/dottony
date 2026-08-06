@@ -180,7 +180,7 @@ function startGame(seed?: number): void {
   updateGoKey();
 }
 
-/** Текущее увеличение: следующая линза умножит отсчёты на столько. */
+/** Текущее увеличение: следующая бомба умножит отсчёты на столько. */
 function updateStreak(streak: number): void {
   const active = streak > 0;
   gainEl.hidden = !active;

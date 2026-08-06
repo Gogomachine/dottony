@@ -21,6 +21,9 @@ export function validatePath(board: Board, path: Cell[], cfg: GameConfig): Cell[
 
   const first = cellAt(board.grid, path[0]!);
   if (first === undefined) return 'out-of-bounds';
+  // Цвет цепочки задаёт первая точка — и только она. С бомбы не начинают:
+  // цвета у неё нет, и продолжать было бы нечем.
+  if (cfg.features.wildBomb && first.charged) return 'bomb-start';
   const color = first.color;
 
   const seen = new Set<string>([cellKey(path[0]!)]);
@@ -29,7 +32,10 @@ export function validatePath(board: Board, path: Cell[], cfg: GameConfig): Cell[
     const cell = path[i]!;
     const content = cellAt(board.grid, cell);
     if (content === undefined) return 'out-of-bounds';
-    if (content.color !== color) return 'color-mismatch';
+    // Бомба входит в цепочку любого цвета, но цвет цепочки остаётся
+    // прежним: перескочить через неё на другой цвет нельзя.
+    const wild = cfg.features.wildBomb && content.charged;
+    if (!wild && content.color !== color) return 'color-mismatch';
     if (!areNeighbors(path[i - 1]!, cell)) return 'not-adjacent';
     if (seen.has(cellKey(cell))) return 'revisit';
     seen.add(cellKey(cell));
