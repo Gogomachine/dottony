@@ -80,7 +80,7 @@ export class Cabinet {
   private miniApp: string | null = null;
 
   constructor(private readonly handlers: CabinetHandlers) {
-    el<HTMLSpanElement>('cab-brand').innerHTML = brandLockup(96);
+    el<HTMLSpanElement>('cab-brand').innerHTML = brandLockup(116);
     this.historyTab.addEventListener('click', () => this.openTab('history'));
     this.friendsTab.addEventListener('click', () => this.openTab('friends'));
     el<HTMLButtonElement>('cab-add-friend').addEventListener('click', () => void this.addByCode());

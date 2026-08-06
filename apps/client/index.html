@@ -667,8 +667,10 @@
       font-size: 46px;
       line-height: 1;
     }
-    /* Со смайликом силуэт больше не нужен — он и есть фотография. */
-    .photo.has-emoji { background-image: none; }
+    /* Со смайликом рамка не нужна: он и есть фотография, а серый прямоугольник
+       под ним только спорил бы с ней. Размер места сохраняем — иначе шапка
+       пропуска дёргалась бы при выборе. */
+    .photo.has-emoji { background: none; }
     .badge-brand { padding-top: 4px; }
     .badge-brand svg { display: block; }
 
