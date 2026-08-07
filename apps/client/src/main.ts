@@ -32,7 +32,9 @@ import { DuelConnection, makeRoomCode } from './duel';
 import { FEEL } from './game/feel';
 import { ChainInput } from './game/input';
 import { Renderer } from './game/renderer';
+import { miniState, type MiniState } from './game/mini';
 import { Session, SPRINT_SECONDS, type Mode } from './game/session';
+import { Tutorial } from './tutorial';
 import { brandLockup } from './brand';
 import { emblemSvg } from './emblem';
 import { applyTheme, loadMarks, loadThemeName, saveMarks, SCOPE } from './theme';
@@ -83,6 +85,12 @@ const replayTextEl = el<HTMLSpanElement>('replay-text');
 const roomBoxEl = el<HTMLDivElement>('room-box');
 const roomCodeEl = el<HTMLSpanElement>('room-code');
 const overEmblemEl = el<HTMLDivElement>('over-emblem');
+const keysEl = el<HTMLDivElement>('keys');
+const tutEl = el<HTMLDivElement>('tut');
+const tutStepEl = el<HTMLSpanElement>('tut-step');
+const tutTitleEl = el<HTMLElement>('tut-title');
+const tutTextEl = el<HTMLParagraphElement>('tut-text');
+const fingerEl = el<HTMLElement>('finger');
 const boardWrap = canvas.parentElement as HTMLElement;
 
 /** Шкала времени: полоска делений вдоль верхнего края окуляра. */
@@ -247,53 +255,32 @@ function tintScope(color: string | null): void {
  * и красит резонанс. Пока окно открыто, экранчик показывает лидера, а
  * кайма окуляра — цвет, которым фаза загорится.
  */
+function showMini(state: MiniState): void {
+  const color = state.color === null ? null : SCOPE.dots[state.color]!;
+  miniLedEl.style.background = color ?? '';
+  miniLedEl.style.boxShadow = color === null ? '' : `0 0 7px ${color}`;
+  miniTextEl.innerHTML = state.text;
+  miniCdEl.textContent = state.cd;
+  miniBarEl.style.background = color ?? '';
+  miniBarEl.style.width = `${Math.max(0, Math.min(1, state.fill)) * 100}%`;
+}
+
 function updateMini(): void {
-  const { active, remaining, nextIn } = session.phase();
+  const phase = session.phase();
   const window = session.claimWindow();
   const leader = window.open ? session.leader() : null;
   const key =
-    active !== null
-      ? `p${active}:${Math.ceil(remaining)}`
+    phase.active !== null
+      ? `p${phase.active}:${Math.ceil(phase.remaining)}`
       : window.open
         ? `c${leader ? `${leader.color}:${leader.length}:${leader.mine ? 1 : 0}` : 'free'}:${Math.ceil(window.remaining)}`
-        : `w${Math.ceil(nextIn)}`;
+        : `w${Math.ceil(phase.nextIn)}`;
   if (key === miniCache) return;
   miniCache = key;
 
-  if (active !== null) {
-    const color = SCOPE.dots[active]!;
-    miniLedEl.style.background = color;
-    miniLedEl.style.boxShadow = `0 0 7px ${color}`;
-    miniTextEl.innerHTML = `Резонанс · <b>×${session.cfg.phaseMultiplier}</b>`;
-    miniCdEl.textContent = String(Math.ceil(remaining)).padStart(2, '0');
-    miniBarEl.style.background = color;
-    miniBarEl.style.width = `${(remaining / session.cfg.phaseDuration) * 100}%`;
-    tintScope(color);
-    return;
-  }
-
-  if (window.open) {
-    const color = leader === null ? null : SCOPE.dots[leader.color]!;
-    miniLedEl.style.background = color ?? '';
-    miniLedEl.style.boxShadow = color === null ? '' : `0 0 7px ${color}`;
-    miniTextEl.innerHTML =
-      leader === null
-        ? 'Заявка · <b>свободна</b>'
-        : `Заявка · <b>${leader.length}</b> · ${leader.mine ? 'твоя' : 'его'}`;
-    miniCdEl.textContent = String(Math.ceil(window.remaining)).padStart(2, '0');
-    miniBarEl.style.background = color ?? '';
-    miniBarEl.style.width = `${(window.remaining / session.cfg.claimWindow) * 100}%`;
-    tintScope(color);
-    return;
-  }
-
-  miniLedEl.style.background = '';
-  miniLedEl.style.boxShadow = '';
-  miniBarEl.style.background = '';
-  miniBarEl.style.width = '0%';
-  miniTextEl.textContent = session.started ? 'Резонанс · сигнал ровный' : 'Резонанс · ожидание';
-  miniCdEl.textContent = '--';
-  tintScope(null);
+  const state = miniState(phase, window, leader, session.cfg, session.started);
+  showMini(state);
+  tintScope(state.color === null ? null : SCOPE.dots[state.color]!);
 }
 
 /**
@@ -309,11 +296,117 @@ function announceClaim(mine: boolean, length: number, outbid: boolean): void {
     return;
   }
   setStat(outbid ? `Заявку перебили · ${length}` : `Цвет заявлен · ${length}`, 'warn');
+  flashMini();
+  if (outbid && navigator.vibrate) navigator.vibrate(FEEL.hapticMax);
+}
+
+/** Вспышка экранчика — знак, что цвет ушёл к сопернику. */
+function flashMini(): void {
   miniEl.classList.remove('flash');
   // Перезапуск анимации: без перерисовки класс вернётся тем же кадром.
   void miniEl.offsetWidth;
   miniEl.classList.add('flash');
-  if (outbid && navigator.vibrate) navigator.vibrate(FEEL.hapticMax);
+}
+
+// ---------- Обучение ----------
+
+/**
+ * Обучение пишет в те же приборы, что и партия: свой рендер и свои
+ * подписи ему не нужны, иначе показ разошёлся бы с игрой.
+ */
+const tutorial = new Tutorial(renderer, {
+  score: (value, streak) => {
+    scoreEl.textContent = groupDigits(value);
+    updateStreak(streak);
+  },
+  time: (label, value) => {
+    timeLabelEl.textContent = label;
+    timeEl.textContent = value;
+    timeFieldEl.className = 'field right';
+  },
+  ticks: (left) => {
+    const lit = Math.round(left * TICKS);
+    tickEls.forEach((tick, i) => {
+      tick.className = `tick${i < lit ? ' on' : ''}`;
+    });
+  },
+  versus: (name, score) => showVersus(name, score),
+  hideVersus: () => {
+    vsFieldEl.hidden = true;
+  },
+  stat: (text, kind) => setStat(text, kind),
+  mini: (state) => showMini(state),
+  tint: (color) => tintScope(color === null ? null : SCOPE.dots[color]!),
+  flash: () => flashMini(),
+  chain: (length) => {
+    shownChain = length;
+    chainCountEl.textContent = `Цепь ${length}`;
+  },
+  points: (points, multiplier, at) => showFloatingPoints(points, multiplier, at),
+  finger: (at) => {
+    fingerEl.hidden = at === null;
+    if (!at) return;
+    fingerEl.style.left = `${at.x + canvas.offsetLeft}px`;
+    fingerEl.style.top = `${at.y + canvas.offsetTop}px`;
+  },
+  caption: (step, total, title, text) => {
+    tutStepEl.textContent = `${step} / ${total}`;
+    tutTitleEl.textContent = title;
+    tutTextEl.textContent = text;
+  },
+  finish: () => stopTutorial(),
+});
+
+function startTutorial(): void {
+  // Дуэль и реплей идут по чужим часам — их обучение прерывает целиком,
+  // иначе показ вернулся бы в матч, который за это время кончился.
+  if (inDuel) endDuel();
+  stopReplay();
+  menuEl.hidden = true;
+  overlay.hidden = true;
+  duelSheet.hidden = true;
+  rulesSheet.hidden = true;
+  // Партия под обучением не идёт: показ ведёт своё поле и свои часы.
+  session.pause();
+  input.enabled = false;
+  keysEl.hidden = true;
+  tutEl.hidden = false;
+  miniCache = '';
+  tutorial.start();
+}
+
+/** Возврат к прибору: показ кончился или его закрыли кнопкой. */
+function stopTutorial(): void {
+  tutorial.stop();
+  tutEl.hidden = true;
+  keysEl.hidden = false;
+  fingerEl.hidden = true;
+  vsFieldEl.hidden = !inDuel;
+  miniCache = '';
+  seenTutorial();
+  // Обучение не тронуло партию, но поле показывало чужое — начинаем заново.
+  startGame();
+  session.resume();
+  openMenu();
+}
+
+/** Обучение показывают один раз: дальше оно живёт в панели управления. */
+const TUTORIAL_KEY = 'doton.tutorial.v1';
+
+function seenTutorial(): void {
+  try {
+    localStorage.setItem(TUTORIAL_KEY, '1');
+  } catch {
+    // Приватный режим — просто покажем обучение ещё раз.
+  }
+}
+
+function firstVisit(): boolean {
+  try {
+    return localStorage.getItem(TUTORIAL_KEY) === null;
+  } catch {
+    return false;
+  }
 }
 
 // ---------- Спринт ----------
@@ -1103,6 +1196,7 @@ const MENU_ACTIONS: Record<string, () => void> = {
   rules: () => {
     rulesSheet.hidden = false;
   },
+  tutorial: () => startTutorial(),
 };
 
 el<HTMLUListElement>('menu-list').addEventListener('click', (event) => {
@@ -1110,6 +1204,8 @@ el<HTMLUListElement>('menu-list').addEventListener('click', (event) => {
   const action = item ? MENU_ACTIONS[item.dataset.go ?? ''] : undefined;
   if (action) action();
 });
+
+el<HTMLButtonElement>('tut-skip').addEventListener('click', () => stopTutorial());
 
 el<HTMLButtonElement>('rules-close').addEventListener('click', () => {
   rulesSheet.hidden = true;
@@ -1347,6 +1443,15 @@ function frame(now: number): void {
   const dt = Math.min((now - lastTime) / 1000, 0.05);
   lastTime = now;
 
+  // Обучение забирает кадр целиком: у него своё поле, свои часы и свой
+  // палец, а партия под ним стоит.
+  if (tutorial.active) {
+    tutorial.update(dt);
+    renderer.draw(dt, tutorial.board.grid, tutorial.chain, tutorial.pointer, tutorial.phaseColor);
+    requestAnimationFrame(frame);
+    return;
+  }
+
   // Во время реплея время партии задаёт запись, а не часы.
   if (!replay && session.tick(dt)) {
     if (sprintRun) {
@@ -1375,7 +1480,10 @@ function frame(now: number): void {
 
 startGame();
 requestAnimationFrame(frame);
-openMenu();
+// Первый запуск встречает показом, а не пустой панелью: правила проще
+// увидеть, чем прочитать. Дальше обучение живёт пунктом меню.
+if (firstVisit()) startTutorial();
+else openMenu();
 el<HTMLSpanElement>('brand').innerHTML = brandLockup(88);
 renderer.setMarks(loadMarks());
 el<HTMLButtonElement>('mark-toggle').classList.toggle('on', loadMarks());

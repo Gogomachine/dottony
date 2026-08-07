@@ -424,6 +424,8 @@
     /* ---------- Клавиши ---------- */
 
     .keys { display: grid; grid-template-columns: 1fr 1fr 1.35fr; gap: 8px; margin-top: 12px; }
+    /* Ряд клавиш скрывает обучение; без этого display: grid перебил бы hidden. */
+    .keys[hidden] { display: none; }
     .key {
       background: var(--case-2);
       border: 1px solid var(--edge);
@@ -444,6 +446,70 @@
     .key[disabled] { opacity: 0.4; cursor: default; }
     .key .sub { display: block; font-size: 8.5px; letter-spacing: 0.14em; color: var(--silk-2); margin-top: 5px; }
     .key.acc .sub { color: rgba(255, 255, 255, 0.62); }
+
+    /* ---------- Обучение ---------- */
+
+    .tut {
+      margin-top: 12px;
+      background: var(--case-2);
+      border: 1px solid var(--edge);
+      border-radius: 8px;
+      padding: 11px 13px 13px;
+      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.55) inset, 0 2px 4px rgba(0, 0, 0, 0.1);
+      /* Ровно столько же, сколько занимает ряд клавиш: корпус не дёргается. */
+      min-height: 74px;
+    }
+    .tut[hidden] { display: none; }
+    .tut-head { display: flex; align-items: center; gap: 9px; }
+    .tut-step {
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 0.14em;
+      color: var(--silk-2);
+      border: 1px solid var(--edge);
+      border-radius: 4px;
+      padding: 2px 5px;
+    }
+    .tut-title {
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--acc);
+      flex: 1;
+    }
+    .tut-skip {
+      background: none;
+      border: 1px solid var(--edge);
+      border-radius: 4px;
+      padding: 4px 8px;
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--silk-2);
+      cursor: pointer;
+    }
+    .tut-text {
+      margin: 7px 0 0;
+      font-size: 12.5px;
+      line-height: 1.45;
+      color: var(--silk);
+    }
+
+    /* Палец сценария: кольцо, которое ведёт цепочку вместо руки игрока. */
+    .finger {
+      position: absolute;
+      width: 26px;
+      height: 26px;
+      margin: -13px 0 0 -13px;
+      border-radius: 50%;
+      border: 2px solid rgba(255, 255, 255, 0.75);
+      background: rgba(255, 255, 255, 0.14);
+      pointer-events: none;
+      transition: opacity 0.15s;
+    }
+    .finger[hidden] { display: none; }
 
     .foot { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-top: 14px; padding: 0 4px; }
     .grille {
@@ -947,6 +1013,7 @@
       <div class="ticks" id="ticks"></div>
       <canvas id="game"></canvas>
       <div class="stat" id="stat">Сигнал ровный</div>
+      <i class="finger" id="finger" hidden></i>
       <div class="chain" id="chain-count">Цепь 0</div>
 
       <div class="layer" id="menu" hidden>
@@ -960,6 +1027,7 @@
           <li data-go="profile">Профиль</li>
           <li data-go="friends">Друзья</li>
           <li data-go="rules">Правила</li>
+          <li data-go="tutorial">Обучение</li>
         </ul>
       </div>
 
@@ -1118,10 +1186,20 @@
       </div>
     </div>
 
-    <div class="keys">
+    <div class="keys" id="keys">
       <div class="key" id="key-profile">Профиль<span class="sub">Рекорды, друзья</span></div>
       <div class="key" id="key-menu">Меню<span class="sub">Режимы, правила</span></div>
       <div class="key acc" id="key-go">Наблюдать<span class="sub">Новый образец</span></div>
+    </div>
+
+    <!-- Подпись обучения занимает место клавиш: высота корпуса не скачет. -->
+    <div class="tut" id="tut" hidden>
+      <div class="tut-head">
+        <span class="tut-step" id="tut-step">1 / 6</span>
+        <b class="tut-title" id="tut-title">Цепочка</b>
+        <button class="tut-skip" id="tut-skip">Пропустить</button>
+      </div>
+      <p class="tut-text" id="tut-text"></p>
     </div>
 
     <div class="foot">
