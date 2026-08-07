@@ -154,15 +154,18 @@ export interface League {
 }
 
 /**
- * Лиги — приборы возрастающей разрешающей силы: от лупы до обсерватории.
- * Границы подобраны так, чтобы новичок стартовал в середине «Лупы».
+ * Лиги — карьера при приборе: от ученика до того, кто с ним уже сросся.
+ * Границы подобраны так, чтобы новичок стартовал в середине первой лиги.
+ *
+ * Ключи неизменны и не зависят от названий: они уходят в вёрстку и в
+ * тесты, а имя лиги — вещь сменная.
  */
 export const LEAGUES: League[] = [
-  { key: 'loupe', name: 'Лупа', from: 0 },
-  { key: 'binocular', name: 'Бинокль', from: 1600 },
-  { key: 'microscope', name: 'Микроскоп', from: 1750 },
-  { key: 'telescope', name: 'Телескоп', from: 1900 },
-  { key: 'observatory', name: 'Обсерватория', from: 2100 },
+  { key: 'apprentice', name: 'Ученик алхимика', from: 0 },
+  { key: 'junior', name: 'Младший научный сотрудник', from: 1600 },
+  { key: 'assistant', name: 'Лаборант', from: 1750 },
+  { key: 'scientist', name: 'Учёный', from: 1900 },
+  { key: 'freeman', name: 'Гордон Фримен', from: 2100 },
 ];
 
 export function leagueOf(rating: number): League {

@@ -1317,12 +1317,12 @@ describe('API', () => {
     expect(me.json()).toMatchObject({
       name: 'Новичок',
       rating: 1500,
-      league: 'Лупа',
+      league: 'Ученик алхимика',
       // До калибровки в таблице не показываемся.
       rank: null,
       placement: { played: 0, required: 5 },
       duels: { played: 0, won: 0 },
-      next: { league: 'Бинокль', gap: 100 },
+      next: { league: 'Младший научный сотрудник', gap: 100 },
     });
 
     const board = await app.inject({ method: 'GET', url: '/api/rating' });

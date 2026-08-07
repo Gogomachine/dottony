@@ -74,7 +74,7 @@ describe('updateRating', () => {
     const opponent = { rating: 1700, deviation: 80, volatility: 0.06 };
     for (let i = 0; i < 10; i++) rating = updateRating(rating, opponent, 'win');
     expect(rating.rating).toBeGreaterThan(1600);
-    expect(leagueOf(rating.rating).key).not.toBe('loupe');
+    expect(leagueOf(rating.rating).key).not.toBe('apprentice');
   });
 });
 
@@ -96,27 +96,27 @@ describe('decayDeviation', () => {
 
 describe('лиги', () => {
   it('новичок стартует в первой лиге', () => {
-    expect(leagueOf(DEFAULT_RATING).key).toBe('loupe');
+    expect(leagueOf(DEFAULT_RATING).key).toBe('apprentice');
   });
 
   it('границы лиг идут по возрастанию и покрывают шкалу', () => {
     for (let i = 1; i < LEAGUES.length; i++) {
       expect(LEAGUES[i]!.from).toBeGreaterThan(LEAGUES[i - 1]!.from);
     }
-    expect(leagueOf(0).key).toBe('loupe');
+    expect(leagueOf(0).key).toBe('apprentice');
     expect(leagueOf(99_999).key).toBe(LEAGUES[LEAGUES.length - 1]!.key);
   });
 
   it('на границе игрок уже в новой лиге', () => {
-    const binocular = LEAGUES.find((league) => league.key === 'binocular')!;
-    expect(leagueOf(binocular.from).key).toBe('binocular');
-    expect(leagueOf(binocular.from - 1).key).toBe('loupe');
+    const junior = LEAGUES.find((league) => league.key === 'junior')!;
+    expect(leagueOf(junior.from).key).toBe('junior');
+    expect(leagueOf(junior.from - 1).key).toBe('apprentice');
   });
 
   it('подсказывает следующую лигу и разрыв до неё', () => {
     const next = nextLeague(1550);
     expect(next).toMatchObject({ gap: 50 });
-    expect(next!.league.key).toBe('binocular');
+    expect(next!.league.key).toBe('junior');
     expect(nextLeague(99_999)).toBeNull();
   });
 });
