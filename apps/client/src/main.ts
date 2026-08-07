@@ -1,4 +1,4 @@
-import { COMBO_CARRY_CHAIN, DEFAULT_CONFIG, type Cell } from '@doton/core';
+import { COMBO_CARRY_CHAIN, DEFAULT_CONFIG, type Cell, type Color } from '@doton/core';
 import type {
   ComboLeaderboardResponse,
   ComboMove,
@@ -59,6 +59,8 @@ const overNoteEl = el<HTMLParagraphElement>('over-note');
 const finalScoreEl = el<HTMLSpanElement>('final-score');
 const dailyBoardEl = el<HTMLOListElement>('daily-board');
 const modalBtn = el<HTMLButtonElement>('modal-action');
+const scopeEl = el<HTMLDivElement>('scope');
+const miniEl = el<HTMLDivElement>('mini');
 const miniLedEl = el<HTMLElement>('mini-led');
 const miniTextEl = el<HTMLSpanElement>('mini-text');
 const miniCdEl = el<HTMLSpanElement>('mini-cd');
@@ -227,13 +229,34 @@ function updateHud(): void {
 
 let miniCache = '';
 
+/** Кайма окуляра в цвете заявки; null — гасим. */
+function tintScope(color: string | null): void {
+  if (color === null) {
+    scopeEl.classList.remove('claimed');
+    return;
+  }
+  scopeEl.style.setProperty('--claim', color);
+  scopeEl.classList.add('claimed');
+}
+
 /**
  * Служебный экранчик над окуляром: идёт ли резонанс, с каким цветом и
  * сколько ему осталось. Имён у цветов нет — светится сам цвет.
+ *
+ * Перед фазой то же место занимает окно заявки: чья цепочка длиннее, тот
+ * и красит резонанс. Пока окно открыто, экранчик показывает лидера, а
+ * кайма окуляра — цвет, которым фаза загорится.
  */
 function updateMini(): void {
-  const { active, remaining, nextColor, nextIn } = session.phase();
-  const key = `${active ?? 'x'}:${Math.ceil(active !== null ? remaining : nextIn)}`;
+  const { active, remaining, nextIn } = session.phase();
+  const window = session.claimWindow();
+  const leader = window.open ? session.leader() : null;
+  const key =
+    active !== null
+      ? `p${active}:${Math.ceil(remaining)}`
+      : window.open
+        ? `c${leader ? `${leader.color}:${leader.length}:${leader.mine ? 1 : 0}` : 'free'}:${Math.ceil(window.remaining)}`
+        : `w${Math.ceil(nextIn)}`;
   if (key === miniCache) return;
   miniCache = key;
 
@@ -245,6 +268,22 @@ function updateMini(): void {
     miniCdEl.textContent = String(Math.ceil(remaining)).padStart(2, '0');
     miniBarEl.style.background = color;
     miniBarEl.style.width = `${(remaining / session.cfg.phaseDuration) * 100}%`;
+    tintScope(color);
+    return;
+  }
+
+  if (window.open) {
+    const color = leader === null ? null : SCOPE.dots[leader.color]!;
+    miniLedEl.style.background = color ?? '';
+    miniLedEl.style.boxShadow = color === null ? '' : `0 0 7px ${color}`;
+    miniTextEl.innerHTML =
+      leader === null
+        ? 'Заявка · <b>свободна</b>'
+        : `Заявка · <b>${leader.length}</b> · ${leader.mine ? 'твоя' : 'его'}`;
+    miniCdEl.textContent = String(Math.ceil(window.remaining)).padStart(2, '0');
+    miniBarEl.style.background = color ?? '';
+    miniBarEl.style.width = `${(window.remaining / session.cfg.claimWindow) * 100}%`;
+    tintScope(color);
     return;
   }
 
@@ -252,15 +291,29 @@ function updateMini(): void {
   miniLedEl.style.boxShadow = '';
   miniBarEl.style.background = '';
   miniBarEl.style.width = '0%';
-  if (nextIn <= 5) {
-    const color = SCOPE.dots[nextColor]!;
-    miniLedEl.style.background = color;
-    miniTextEl.textContent = 'Резонанс · настройка';
-    miniCdEl.textContent = String(Math.ceil(nextIn)).padStart(2, '0');
-  } else {
-    miniTextEl.textContent = session.started ? 'Резонанс · сигнал ровный' : 'Резонанс · ожидание';
-    miniCdEl.textContent = '--';
+  miniTextEl.textContent = session.started ? 'Резонанс · сигнал ровный' : 'Резонанс · ожидание';
+  miniCdEl.textContent = '--';
+  tintScope(null);
+}
+
+/**
+ * Заявка объявлена. Своя — короткий отчёт, чужая — вспышка экранчика:
+ * это тот самый момент, когда действие соперника видно на своём приборе.
+ * Перебили — только если цвет забрали у тебя; на свободное окно это слово
+ * было бы неправдой.
+ */
+function announceClaim(mine: boolean, length: number, outbid: boolean): void {
+  miniCache = '';
+  if (mine) {
+    setStat(`Заявка · цепь ${length}`, 'live');
+    return;
   }
+  setStat(outbid ? `Заявку перебили · ${length}` : `Цвет заявлен · ${length}`, 'warn');
+  miniEl.classList.remove('flash');
+  // Перезапуск анимации: без перерисовки класс вернётся тем же кадром.
+  void miniEl.offsetWidth;
+  miniEl.classList.add('flash');
+  if (outbid && navigator.vibrate) navigator.vibrate(FEEL.hapticMax);
 }
 
 // ---------- Спринт ----------
@@ -503,6 +556,10 @@ function handleDuelMessage(message: DuelServerMessage): void {
           startGame(message.seed);
       session.begin();
       session.restore(message.grid, message.score, message.streak);
+      // Заявки матча общие: вернувшийся должен увидеть тот же цвет фазы.
+      session.setClaims(
+        message.claims.map((claim) => ({ ...claim, color: claim.color as Color })),
+      );
       session.syncRemaining(message.remaining);
       updateStreak(message.streak);
       updateHud();
@@ -527,6 +584,20 @@ function handleDuelMessage(message: DuelServerMessage): void {
       opponentScore = message.score;
       showVersus(opponentName, opponentScore);
       break;
+
+    case 'claim': {
+      // Заявки в дуэли объявляет сервер — и свои тоже: окно решают его
+      // часы, а ход у самой границы окна иначе разошёлся бы с ним.
+      const before = session.leader();
+      const { cycle, color, length, t } = message;
+      session.addClaim({ cycle, color: color as Color, length, t }, message.mine);
+      const after = session.leader();
+      // Молчим, если заявка проиграла: на приборе ничего не изменилось.
+      if (after !== null && after !== before) {
+        announceClaim(message.mine, length, !message.mine && before?.mine === true);
+      }
+      break;
+    }
 
     case 'finished': {
       const title =
@@ -843,6 +914,9 @@ async function startReplay(duelId: string): Promise<void> {
   menuEl.hidden = true;
   resultEl.hidden = true;
   session = new Session(data.seed, 'duel', DEFAULT_CONFIG, duelDuration);
+  // Цвет фаз решали оба игрока, а ходы в записи только свои: без заявок
+  // реплей насчитал бы другие очки.
+  session.setClaims(data.claims.map((claim) => ({ ...claim, color: claim.color as Color })));
   session.begin();
   renderer.resetAnims();
   updateStreak(0);
@@ -907,6 +981,7 @@ const input = new ChainInput(
     const elapsed = session.elapsed;
     // Часы пускает первый ход: до него игрок разглядывает образец.
     session.begin();
+    const claimBefore = session.leader();
     const result = session.tryMove(path);
     if (typeof result === 'string') return;
     if (sprintRun) {
@@ -922,6 +997,11 @@ const input = new ChainInput(
     setStat(`Снято ${result.removed.length + result.exploded.length} · +${result.points}${gain}`, 'live');
     updateGoKey();
     updateHud();
+    // Своя заявка в одиночных режимах: в дуэли её объявит сервер.
+    const claimAfter = session.leader();
+    if (claimAfter !== null && claimAfter !== claimBefore) {
+      announceClaim(true, claimAfter.length, false);
+    }
     // Последним: рекорд и продление комбо должны перебивать отчёт о ходе.
     countCombo(path, elapsed, result.points, result.removed.length);
   },

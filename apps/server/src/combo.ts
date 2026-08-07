@@ -1,11 +1,13 @@
 import {
   applyMove,
+  claimFrom,
   createBoard,
   phaseColorAt,
   seedRng,
   COMBO_CARRY_CHAIN,
   DEFAULT_CONFIG,
   type Board,
+  type Claim,
 } from '@doton/core';
 import type { ComboMove } from '@doton/protocol';
 
@@ -40,6 +42,9 @@ export function replayCombo(
   let board: Board = createBoard(seedRng(seed), cfg);
   let prevT = -Infinity;
   let combo = 0;
+  // Заявки на цвет: в одиночном заходе их подаёт сам игрок, поэтому цвет
+  // фазы восстанавливается из журнала ходов ровно как на клиенте.
+  const claims: Claim[] = [];
   /** Отсчёты хода, продлившего комбо; 0 — предыдущий ход его не продлевал. */
   let carried = 0;
 
@@ -47,9 +52,11 @@ export function replayCombo(
     if (move.t < prevT + MIN_MOVE_GAP) return 'bad-timing';
     prevT = move.t;
 
-    const result = applyMove(board, move.path, cfg, phaseColorAt(seed, move.t, cfg));
+    const result = applyMove(board, move.path, cfg, phaseColorAt(seed, move.t, cfg, claims));
     if (typeof result === 'string') return 'invalid-move';
     board = result.board;
+    const claim = claimFrom(result.color, move.path.length, move.t, cfg);
+    if (claim) claims.push(claim);
 
     combo = Math.max(combo, carried + result.points);
     carried = result.removed.length >= carryChain ? result.points : 0;

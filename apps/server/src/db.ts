@@ -196,6 +196,10 @@ export class Store {
     await this.addColumnIfMissing('users', 'avatar', 'TEXT');
     // Код друга: короткий, его диктуют вслух и шлют ссылкой.
     await this.addColumnIfMissing('users', 'friend_code', 'TEXT');
+    // Заявки на цвет резонанса: общие для матча, поэтому лежат на дуэли,
+    // а не на игроке. Без них реплей взял бы цвет фазы из сида и разошёлся
+    // бы со счётом. У матчей, сыгранных до заявок, колонка пуста.
+    await this.addColumnIfMissing('duels', 'claims', 'TEXT');
     await this.client.execute(
       'CREATE UNIQUE INDEX IF NOT EXISTS idx_users_friend_code ON users (friend_code)',
     );
@@ -269,10 +273,14 @@ export class Store {
       outcome?: string;
       ghost?: boolean;
     }[],
+    claims: unknown = [],
   ): Promise<void> {
     await this.client.batch(
       [
-        { sql: 'INSERT INTO duels (id, seed) VALUES (?, ?)', args: [id, seed] },
+        {
+          sql: 'INSERT INTO duels (id, seed, claims) VALUES (?, ?, ?)',
+          args: [id, seed, JSON.stringify(claims)],
+        },
         ...players.map((player) => ({
           sql: `INSERT INTO duel_players
                   (duel_id, user_id, name, score, log, moves, outcome, ghost)
@@ -333,9 +341,18 @@ export class Store {
   async duelReplay(
     duelId: string,
     userId: string,
-  ): Promise<{ seed: number; moves: string; score: number; opponentName: string | null } | undefined> {
+  ): Promise<
+    | {
+        seed: number;
+        moves: string;
+        score: number;
+        opponentName: string | null;
+        claims: string | null;
+      }
+    | undefined
+  > {
     const result = await this.client.execute({
-      sql: `SELECT d.seed, mine.moves, mine.score,
+      sql: `SELECT d.seed, d.claims, mine.moves, mine.score,
                    COALESCE(theirs.name, u.name) AS opponent_name
             FROM duel_players mine
             JOIN duels d ON d.id = mine.duel_id
@@ -352,6 +369,7 @@ export class Store {
       moves: String(row.moves),
       score: Number(row.score),
       opponentName: row.opponent_name === null ? null : String(row.opponent_name),
+      claims: row.claims === null || row.claims === undefined ? null : String(row.claims),
     };
   }
 

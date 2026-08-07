@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import {
   applyMove,
+  claimFrom,
   createBoard,
   phaseColorAt,
   seedRng,
   DEFAULT_CONFIG,
   type Board,
   type Cell,
+  type Claim,
 } from '@doton/core';
 import {
   DUEL_SECONDS,
@@ -24,6 +26,11 @@ import {
 
 /** Минимальный интервал между ходами: человек физически не жмёт чаще. */
 const MIN_MOVE_GAP = 0.1;
+
+/** Заявка на цвет фазы вместе с тем, кто её подал. */
+export interface DuelClaim extends Claim {
+  by: string;
+}
 
 export interface DuelPlayer {
   id: string;
@@ -72,6 +79,11 @@ export class Duel {
   readonly seed: number;
   readonly startedAt: number;
   private readonly players = new Map<string, PlayerState>();
+  /**
+   * Заявки на цвет резонанса от обоих игроков. Живут на матче, а не на
+   * игроке: фаза у дуэлянтов одна, и решают её оба сразу.
+   */
+  private readonly claims: DuelClaim[] = [];
   private finished = false;
 
   constructor(
@@ -148,7 +160,7 @@ export class Duel {
     const elapsed = this.elapsed(now);
     if (elapsed < state.lastMoveAt + MIN_MOVE_GAP) return { ok: false, reason: 'too-fast' };
 
-    const phase = phaseColorAt(this.seed, elapsed, DEFAULT_CONFIG);
+    const phase = phaseColorAt(this.seed, elapsed, DEFAULT_CONFIG, this.claims);
     const result = applyMove(state.board, path, DEFAULT_CONFIG, phase);
     if (typeof result === 'string') return { ok: false, reason: result };
 
@@ -162,6 +174,23 @@ export class Duel {
       path: path.map((cell) => ({ r: cell.r, c: cell.c })),
       t: Number(elapsed.toFixed(2)),
     });
+
+    // Заявка на цвет: окно решают серверные часы, поэтому её объявляем
+    // отсюда — и обоим сразу. Своя заявка приходит игроку тем же путём,
+    // что и чужая, иначе у границы окна клиент разошёлся бы с сервером.
+    const claim = claimFrom(
+      result.color,
+      path.length,
+      Number(elapsed.toFixed(3)),
+      DEFAULT_CONFIG,
+    );
+    if (claim) {
+      this.claims.push({ ...claim, by: playerId });
+      for (const [id, other] of this.players) {
+        if (other.ghost) continue;
+        other.player.send({ type: 'claim', ...claim, mine: id === playerId });
+      }
+    }
 
     const opponent = this.opponentOf(playerId);
     if (opponent && !opponent.ghost) {
@@ -203,6 +232,7 @@ export class Duel {
       ...(opponent.ghost || !opponent.player.code ? {} : { opponentCode: opponent.player.code }),
       remaining: Math.max(0, DUEL_SECONDS - this.elapsed(now)),
       streak: state.board.surgeStreak,
+      claims: this.claims.map(({ by, ...claim }) => ({ ...claim, mine: by === playerId })),
     };
   }
 
@@ -218,6 +248,14 @@ export class Duel {
   /** Ходы игрока — материал для реплея. */
   movesOf(playerId: string): MoveLog[] {
     return this.players.get(playerId)?.moves ?? [];
+  }
+
+  /**
+   * Заявки матча — материал для реплея. Без них запись не воспроизвести:
+   * цвет фазы решали оба игрока, а ходы сохраняются только свои.
+   */
+  claimLog(): DuelClaim[] {
+    return this.claims;
   }
 
   /** Начисляет призраку очередную порцию очков и показывает их сопернику. */

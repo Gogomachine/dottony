@@ -191,12 +191,27 @@ export interface DuelHistoryResponse {
   entries: DuelHistoryEntry[];
 }
 
+/**
+ * Заявка на цвет резонанса: цепочка, взявшая фазу цикла. В реплее без неё
+ * не обойтись — цвет фазы решали оба игрока, а ходы записаны только свои.
+ */
+export interface ClaimLog {
+  cycle: number;
+  color: number;
+  length: number;
+  t: number;
+  /** Заявка того, чей это реплей. */
+  mine: boolean;
+}
+
 /** Данные для прокрутки матча: поле восстанавливается из сида. */
 export interface ReplayResponse {
   seed: number;
   moves: MoveLog[];
   score: number;
   opponent: string | null;
+  /** Заявки обоих игроков; пусто у матчей, сыгранных до этой механики. */
+  claims: ClaimLog[];
 }
 
 export interface FriendEntry {
@@ -315,6 +330,8 @@ export interface DuelSnapshot {
   remaining: number;
   /** Серия зарядов, чтобы множитель не сбросился. */
   streak: number;
+  /** Заявки на цвет резонанса: вернувшийся должен видеть тот же цвет. */
+  claims: ClaimLog[];
 }
 
 /** Сообщения сервера. Поле board приходит только своё — чужое не раскрываем. */
@@ -338,6 +355,12 @@ export type DuelServerMessage =
   /** Ход отклонён — клиент рассинхронизировался, поле стоит перечитать. */
   | { type: 'rejected'; reason: string }
   | { type: 'opponent'; score: number }
+  /**
+   * Заявка на цвет ближайшего резонанса — своя или соперника. Свои заявки
+   * клиент тоже узнаёт отсюда, а не считает сам: окно решают серверные
+   * часы, и заявка у самой границы окна иначе разошлась бы с сервером.
+   */
+  | { type: 'claim'; cycle: number; color: number; length: number; t: number; mine: boolean }
   | {
       type: 'finished';
       score: number;

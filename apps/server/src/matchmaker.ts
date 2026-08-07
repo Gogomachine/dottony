@@ -1,7 +1,14 @@
 import { randomInt } from 'node:crypto';
 import { DUEL_SECONDS, type MoveLog } from '@doton/protocol';
 import type { Cell } from '@doton/core';
-import { Duel, type DuelOutcome, type DuelPlayer, type MoveOutcome, type ScorePoint } from './duel.js';
+import {
+  Duel,
+  type DuelClaim,
+  type DuelOutcome,
+  type DuelPlayer,
+  type MoveOutcome,
+  type ScorePoint,
+} from './duel.js';
 import { ghostSchedule, type Ghost } from './ghost.js';
 
 /**
@@ -30,6 +37,8 @@ export interface MatchResult {
    */
   outcomes: DuelOutcome[];
   rated: boolean;
+  /** Заявки на цвет резонанса — общие для матча, нужны реплею. */
+  claims: DuelClaim[];
 }
 
 interface Waiting {
@@ -243,6 +252,7 @@ export class Matchmaker {
       })),
       outcomes,
       rated,
+      claims: duel.claimLog(),
     });
   }
 

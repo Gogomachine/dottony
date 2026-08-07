@@ -2,8 +2,8 @@ export * from './types.js';
 export { seedRng, nextInt } from './rng.js';
 export { createBoard, collapse, cellAt, dot } from './board.js';
 export { areNeighbors, validatePath, applyMove, chainPoints } from './move.js';
-export { phaseColorAt, phaseStateAt } from './phase.js';
-export type { PhaseState } from './phase.js';
+export { phaseColorAt, phaseStateAt, claimWindowAt, claimFrom, bestClaim } from './phase.js';
+export type { PhaseState, Claim, ClaimWindow } from './phase.js';
 export {
   newRating,
   updateRating,

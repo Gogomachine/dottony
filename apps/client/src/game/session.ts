@@ -1,5 +1,8 @@
 import {
   applyMove,
+  bestClaim,
+  claimFrom,
+  claimWindowAt,
   createBoard,
   phaseColorAt,
   phaseStateAt,
@@ -7,6 +10,8 @@ import {
   DEFAULT_CONFIG,
   type Board,
   type Cell,
+  type Claim,
+  type ClaimWindow,
   type GameConfig,
   type MoveError,
   type MoveResult,
@@ -24,6 +29,11 @@ export type SessionMoveError = MoveError | 'paused';
 
 export const SPRINT_SECONDS = 180;
 
+/** Заявка с пометкой, чья она: правилу это безразлично, показу — нет. */
+export interface SessionClaim extends Claim {
+  mine: boolean;
+}
+
 /**
  * Состояние одной партии. Правила целиком в @doton/core —
  * сессия только держит поле, счёт и время.
@@ -36,6 +46,12 @@ export class Session {
   timeLeft: number;
   /** Секунды с начала партии — ритм фаз «нагрузки сети». */
   elapsed = 0;
+  /**
+   * Заявки на цвет: свои — от собственных ходов, чужие приходят по сети.
+   * Держим их списком, а не одним цветом на цикл, потому что победителя
+   * решает сравнение, и заявка соперника может прийти после твоей.
+   */
+  private readonly claims: SessionClaim[] = [];
   over = false;
   /**
    * Момент старта по стенным часам. Время партии считаем от него, а не
@@ -74,7 +90,31 @@ export class Session {
   }
 
   phase(): PhaseState {
-    return phaseStateAt(this.seed, this.elapsed, this.cfg);
+    return phaseStateAt(this.seed, this.elapsed, this.cfg, this.claims);
+  }
+
+  /** Идёт ли сейчас окно заявки и сколько его осталось. */
+  claimWindow(): ClaimWindow {
+    return claimWindowAt(this.elapsed, this.cfg);
+  }
+
+  /** Кто ведёт в заявке на ближайшую фазу; null — заявок не было. */
+  leader(): SessionClaim | null {
+    return bestClaim(this.claims, this.claimWindow().cycle);
+  }
+
+  /**
+   * Заявка, объявленная сервером, — своя или соперника. Поля она не
+   * трогает: меняет только цвет будущей фазы, общий у обоих.
+   */
+  addClaim(claim: Claim, mine: boolean): void {
+    this.claims.push({ ...claim, mine });
+  }
+
+  /** Замещает список заявок целиком: возвращение в матч и реплей. */
+  setClaims(claims: SessionClaim[]): void {
+    this.claims.length = 0;
+    this.claims.push(...claims);
   }
 
   tryMove(path: Cell[]): MoveResult | SessionMoveError {
@@ -83,11 +123,20 @@ export class Session {
     // времени можно было бы спокойно собирать цепочки: фаза не меняется,
     // остаток не тает, а очки капают — это уже не наблюдение.
     if (this.paused) return 'paused';
-    const phaseColor = phaseColorAt(this.seed, this.elapsed, this.cfg);
+    const phaseColor = phaseColorAt(this.seed, this.elapsed, this.cfg, this.claims);
     const result = applyMove(this.board, path, this.cfg, phaseColor);
     if (typeof result === 'string') return result;
     this.board = result.board;
     this.score += result.points;
+    // Заявку на цвет в дуэли объявляет сервер: окно там решают его часы,
+    // и ход у самой границы окна иначе разошёлся бы с сервером. В
+    // одиночных режимах считать некому — считаем сами.
+    if (this.mode !== 'duel') {
+      // Время округляем как в журнале ходов: сервер переигрывает заход по
+      // журналу и должен попасть в то же окно, что и клиент.
+      const claim = claimFrom(result.color, path.length, Number(this.elapsed.toFixed(3)), this.cfg);
+      if (claim) this.claims.push({ ...claim, mine: true });
+    }
     return result;
   }
 

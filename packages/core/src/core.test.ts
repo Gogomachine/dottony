@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { cellAt, collapse, createBoard, dot } from './board.js';
 import { applyMove, areNeighbors, chainPoints, validatePath } from './move.js';
-import { phaseColorAt, phaseStateAt } from './phase.js';
+import {
+  bestClaim,
+  claimFrom,
+  claimWindowAt,
+  phaseColorAt,
+  phaseStateAt,
+  type Claim,
+} from './phase.js';
 import { nextInt, seedRng } from './rng.js';
 import {
   DEFAULT_CONFIG,
@@ -18,7 +25,7 @@ const cfg = DEFAULT_CONFIG;
 /** Конфиг с выключенными фичами — для тестов чистых цепочек. */
 const bare: GameConfig = {
   ...DEFAULT_CONFIG,
-  features: { phases: false, surge: false },
+  features: { phases: false, surge: false, claim: false },
 };
 
 function boardFrom(rows: string[], charged: Cell[] = []): Board {
@@ -363,6 +370,78 @@ describe('нагрузка сети (фазы)', () => {
     expect(state.active).toBeNull();
     expect(state.nextIn).toBe(cfg.phasePeriod - 5);
     expect(state.nextColor).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('заявка цвета', () => {
+  /** Цвет, которого фаза этого цикла точно не получила бы сама. */
+  function otherThanSeed(seed: number, cycle: number): Color {
+    const own = phaseColorAt(seed, cycle * cfg.phasePeriod + 1, cfg)!;
+    return (((own + 1) % cfg.colors) as Color);
+  }
+
+  it('окно открыто последние claimWindow секунд перед фазой', () => {
+    const opensAt = cfg.phasePeriod - cfg.claimWindow;
+    expect(claimWindowAt(opensAt - 0.1, cfg).open).toBe(false);
+    const open = claimWindowAt(opensAt + 0.1, cfg);
+    expect(open.open).toBe(true);
+    // Окно решает фазу следующего цикла, а не своего.
+    expect(open.cycle).toBe(1);
+    expect(open.remaining).toBeCloseTo(cfg.claimWindow - 0.1, 5);
+    // Сразу после начала фазы окно уже закрыто.
+    expect(claimWindowAt(cfg.phasePeriod + 1, cfg).open).toBe(false);
+  });
+
+  it('заявкой становится только длинная цепочка внутри окна', () => {
+    const inside = cfg.phasePeriod - 2;
+    expect(claimFrom(1, cfg.claimChainLength - 1, inside, cfg)).toBeNull();
+    expect(claimFrom(1, cfg.claimChainLength, 1, cfg)).toBeNull();
+    const claim = claimFrom(1, cfg.claimChainLength, inside, cfg);
+    expect(claim).toEqual({ cycle: 1, color: 1, length: cfg.claimChainLength, t: inside });
+  });
+
+  it('заявка красит фазу вместо сида', () => {
+    const seed = 77;
+    const color = otherThanSeed(seed, 1);
+    const claims: Claim[] = [{ cycle: 1, color, length: 6, t: cfg.phasePeriod - 3 }];
+    expect(phaseColorAt(seed, cfg.phasePeriod + 1, cfg, claims)).toBe(color);
+    // Следующий цикл заявку не наследует: за него надо биться заново.
+    expect(phaseColorAt(seed, cfg.phasePeriod * 2 + 1, cfg, claims)).toBe(
+      phaseColorAt(seed, cfg.phasePeriod * 2 + 1, cfg),
+    );
+  });
+
+  it('побеждает длинная заявка, при равной длине — ранняя', () => {
+    const claims: Claim[] = [
+      { cycle: 1, color: 0, length: 6, t: 38 },
+      { cycle: 1, color: 1, length: 9, t: 41 },
+      { cycle: 1, color: 2, length: 9, t: 43 },
+      { cycle: 2, color: 3, length: 20, t: 84 },
+    ];
+    expect(bestClaim(claims, 1)?.color).toBe(1);
+    expect(bestClaim(claims, 2)?.color).toBe(3);
+    expect(bestClaim(claims, 3)).toBeNull();
+  });
+
+  it('заявка видна в nextColor ещё до начала фазы', () => {
+    const seed = 12;
+    const color = otherThanSeed(seed, 1);
+    const t = cfg.phasePeriod - 4;
+    const claims: Claim[] = [{ cycle: 1, color, length: 7, t: cfg.phasePeriod - 5 }];
+    expect(phaseStateAt(seed, t, cfg, claims).nextColor).toBe(color);
+    expect(phaseStateAt(seed, t, cfg).nextColor).not.toBe(color);
+  });
+
+  it('выключенный флаг возвращает цвет из сида и закрывает окно', () => {
+    const off: GameConfig = { ...cfg, features: { ...cfg.features, claim: false } };
+    const seed = 31;
+    const color = otherThanSeed(seed, 1);
+    const claims: Claim[] = [{ cycle: 1, color, length: 9, t: cfg.phasePeriod - 2 }];
+    expect(claimWindowAt(cfg.phasePeriod - 2, off).open).toBe(false);
+    expect(claimFrom(color, 9, cfg.phasePeriod - 2, off)).toBeNull();
+    expect(phaseColorAt(seed, cfg.phasePeriod + 1, off, claims)).toBe(
+      phaseColorAt(seed, cfg.phasePeriod + 1, cfg),
+    );
   });
 });
 

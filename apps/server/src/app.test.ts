@@ -13,6 +13,7 @@ import {
   DEFAULT_CONFIG,
   type Board,
   type Cell,
+  type Color,
 } from '@doton/core';
 import type { ComboMove, DuelServerMessage, MoveLog } from '@doton/protocol';
 import { buildApp } from './app.js';
@@ -1659,5 +1660,98 @@ describe('рейтинг за дуэль', () => {
       });
       expect(me.json()).toMatchObject({ rating: 1500, placement: { played: 0, required: 5 } });
     }
+  });
+});
+
+describe('заявка на цвет в одиночном заходе', () => {
+  const cfg = DEFAULT_CONFIG;
+
+  /** Цепочка заданной длины и цвета: поиск в глубину по соседям. */
+  function findChain(board: Board, length: number, color: number): Cell[] | null {
+    const dirs = [-1, 0, 1];
+    const path: Cell[] = [];
+    const taken = new Set<string>();
+    const key = (cell: Cell): string => `${cell.r},${cell.c}`;
+    const walk = (cell: Cell): boolean => {
+      path.push(cell);
+      taken.add(key(cell));
+      if (path.length === length) return true;
+      for (const dr of dirs) {
+        for (const dc of dirs) {
+          if (dr === 0 && dc === 0) continue;
+          const next: Cell = { r: cell.r + dr, c: cell.c + dc };
+          if (taken.has(key(next))) continue;
+          if (cellAt(board.grid, next)?.color !== color) continue;
+          if (walk(next)) return true;
+        }
+      }
+      path.pop();
+      taken.delete(key(cell));
+      return false;
+    };
+    for (let r = 0; r < cfg.rows; r++) {
+      for (let c = 0; c < cfg.cols; c++) {
+        if (cellAt(board.grid, { r, c })?.color !== color) continue;
+        if (walk({ r, c })) return path;
+        path.length = 0;
+        taken.clear();
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Заход из двух ходов: заявка в окне и цепочка того же цвета уже в фазе.
+   * Цвет подобран так, чтобы сид его сам не выбрал — иначе проверять нечего.
+   */
+  function claimRun(): { seed: number; moves: MoveLog[]; claimed: number; plain: number } {
+    const claimT = cfg.phasePeriod - cfg.claimWindow / 2;
+    const phaseT = cfg.phasePeriod + 1;
+    for (let seed = 1; seed < 400; seed++) {
+      const board = createBoard(seedRng(seed), cfg);
+      const own = phaseColorAt(seed, phaseT, cfg)!;
+      for (let color = 0; color < cfg.colors; color++) {
+        if (color === own) continue;
+        const first = findChain(board, cfg.claimChainLength, color);
+        if (!first) continue;
+        const after = applyMove(board, first, cfg, phaseColorAt(seed, claimT, cfg));
+        if (typeof after === 'string') continue;
+        const second = findChain(after.board, 3, color);
+        if (!second) continue;
+        const claimed = applyMove(after.board, second, cfg, color as Color);
+        const plain = applyMove(after.board, second, cfg, own);
+        if (typeof claimed === 'string' || typeof plain === 'string') continue;
+        return {
+          seed,
+          moves: [
+            { path: first, t: claimT },
+            { path: second, t: phaseT },
+          ],
+          claimed: after.points + claimed.points,
+          plain: after.points + plain.points,
+        };
+      }
+    }
+    throw new Error('no run found');
+  }
+
+  it('цвет фазы берётся из заявки, а не из сида', () => {
+    const { seed, moves, claimed, plain } = claimRun();
+    // Заявка подняла ход в фазе: сид дал бы другой цвет и меньше очков.
+    expect(claimed).toBeGreaterThan(plain);
+    expect(replaySprint(seed, moves)).toEqual({ score: claimed });
+  });
+
+  it('комбо считается по тому же цвету фазы', () => {
+    const { seed, moves } = claimRun();
+    const best = Math.max(
+      ...moves.map((_, index) => {
+        const upto = replaySprint(seed, moves.slice(0, index + 1));
+        const before = index === 0 ? { score: 0 } : replaySprint(seed, moves.slice(0, index));
+        if (typeof upto === 'string' || typeof before === 'string') throw new Error('replay');
+        return upto.score - before.score;
+      }),
+    );
+    expect(replayCombo(seed, moves)).toEqual({ combo: best });
   });
 });

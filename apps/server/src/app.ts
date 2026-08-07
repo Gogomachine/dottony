@@ -24,6 +24,7 @@ import {
   type MeResponse,
   type MoveLog,
   type RatingLeaderboardResponse,
+  type ClaimLog,
   type ReplayResponse,
   type SprintLeaderboardResponse,
   type SubmitComboResponse,
@@ -175,7 +176,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       // Матч без единого живого игрока сохранять незачем.
       if (players.every((player) => player.ghost)) return;
       void store
-        .saveDuel(result.duelId, result.seed, players)
+        .saveDuel(result.duelId, result.seed, players, result.claims)
         .then(() =>
           Promise.all(
             players
@@ -717,11 +718,24 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     } catch {
       return reply.code(404).send({ error: 'no-replay' });
     }
+    // Заявки решали цвет фаз: без них реплей насчитал бы другие очки.
+    // У матчей до этой механики колонка пуста — там цвет и так из сида.
+    let claims: ClaimLog[] = [];
+    if (replay.claims !== null) {
+      try {
+        claims = (JSON.parse(replay.claims) as (ClaimLog & { by: string })[]).map(
+          ({ by, ...claim }) => ({ ...claim, mine: by === user.sub }),
+        );
+      } catch {
+        claims = [];
+      }
+    }
     const response: ReplayResponse = {
       seed: replay.seed,
       moves,
       score: replay.score,
       opponent: replay.opponentName,
+      claims,
     };
     return response;
   });

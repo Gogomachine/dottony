@@ -608,3 +608,119 @@ describe('призраки', () => {
     ]);
   });
 });
+
+describe('заявка на цвет', () => {
+  const cfg = DEFAULT_CONFIG;
+  const seed = 4242;
+  /** Секунда внутри окна заявки на первую фазу. */
+  const inWindow = cfg.phasePeriod - cfg.claimWindow / 2;
+  /** Секунда внутри самой фазы. */
+  const inPhase = cfg.phasePeriod + 1;
+
+  /** Цепочка заданной длины и цвета: обычный поиск в глубину по соседям. */
+  function findChain(board: Board, length: number, color: number): Cell[] | null {
+    const dirs = [-1, 0, 1];
+    const path: Cell[] = [];
+    const taken = new Set<string>();
+    const key = (cell: Cell): string => `${cell.r},${cell.c}`;
+
+    const walk = (cell: Cell): boolean => {
+      path.push(cell);
+      taken.add(key(cell));
+      if (path.length === length) return true;
+      for (const dr of dirs) {
+        for (const dc of dirs) {
+          if (dr === 0 && dc === 0) continue;
+          const next: Cell = { r: cell.r + dr, c: cell.c + dc };
+          if (taken.has(key(next))) continue;
+          if (cellAt(board.grid, next)?.color !== color) continue;
+          if (walk(next)) return true;
+        }
+      }
+      path.pop();
+      taken.delete(key(cell));
+      return false;
+    };
+
+    for (let r = 0; r < cfg.rows; r++) {
+      for (let c = 0; c < cfg.cols; c++) {
+        if (cellAt(board.grid, { r, c })?.color !== color) continue;
+        if (walk({ r, c })) return path;
+        path.length = 0;
+        taken.clear();
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Расклад, на котором заявку видно: цвет, который фаза сама бы не
+   * выбрала, и цепочка достаточной длины под него.
+   */
+  function layout(length: number): { seed: number; color: number; path: Cell[] } {
+    for (let candidate = seed; candidate < seed + 200; candidate++) {
+      const board = createBoard(seedRng(candidate), cfg);
+      const own = phaseColorAt(candidate, inPhase, cfg)!;
+      for (let color = 0; color < cfg.colors; color++) {
+        if (color === own) continue;
+        const path = findChain(board, length, color);
+        if (path) return { seed: candidate, color, path };
+      }
+    }
+    throw new Error('no layout found');
+  }
+
+  it('заявка красит фазу обоим игрокам', () => {
+    const { seed: s, color, path } = layout(cfg.claimChainLength);
+    const a = recorder('a');
+    const b = recorder('b');
+    const now = Date.now();
+    const duel = new Duel(s, a, b, { now });
+
+    const claimed = duel.applyMove('a', path, 0, now + inWindow * 1000);
+    expect(claimed.ok).toBe(true);
+    // Заявку объявляют обоим — своя приходит тем же сообщением, что чужая.
+    expect(a.last('claim')).toMatchObject({ cycle: 1, color, mine: true });
+    expect(b.last('claim')).toMatchObject({ cycle: 1, color, mine: false });
+
+    // Сопернику фаза досталась чужого цвета — и всё равно она его цвета:
+    // заявка общая. Тот же ход без заявки множителя бы не получил.
+    const board = createBoard(seedRng(s), cfg);
+    const plain = applyMove(board, path, cfg, phaseColorAt(s, inPhase, cfg));
+    if (typeof plain === 'string') throw new Error(plain);
+    const scored = duel.applyMove('b', path, 0, now + inPhase * 1000);
+    expect(scored).toMatchObject({ ok: true, points: plain.points * cfg.phaseMultiplier });
+  });
+
+  it('короткая цепочка и цепочка вне окна заявкой не становятся', () => {
+    const { seed: s, path } = layout(cfg.claimChainLength);
+    const a = recorder('a');
+    const duel = new Duel(s, a, recorder('b'), { now: 0 });
+
+    // Вне окна — заявки нет.
+    duel.applyMove('a', path, 0, (inWindow - cfg.claimWindow) * 1000);
+    expect(a.last('claim')).toBeUndefined();
+    expect(duel.claimLog()).toHaveLength(0);
+
+    // Короткая цепочка внутри окна — тоже нет.
+    const short = findChain(createBoard(seedRng(s), cfg), cfg.claimChainLength - 1, 0);
+    if (short) {
+      duel.applyMove('a', short, 0, inWindow * 1000);
+      expect(duel.claimLog().every((claim) => claim.length >= cfg.claimChainLength)).toBe(true);
+    }
+  });
+
+  it('снимок матча несёт заявки: вернувшийся видит тот же цвет', () => {
+    const { seed: s, color, path } = layout(cfg.claimChainLength);
+    const now = Date.now();
+    const duel = new Duel(s, recorder('a'), recorder('b'), { now });
+    duel.applyMove('a', path, 0, now + inWindow * 1000);
+
+    expect(duel.snapshot('a')?.claims).toEqual([
+      expect.objectContaining({ cycle: 1, color, mine: true }),
+    ]);
+    expect(duel.snapshot('b')?.claims).toEqual([
+      expect.objectContaining({ cycle: 1, color, mine: false }),
+    ]);
+  });
+});

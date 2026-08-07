@@ -38,6 +38,16 @@ export interface FeatureFlags {
   phases: boolean;
   /** Перегрузка: длинная цепочка оставляет заряд, взрывающий 3×3. */
   surge: boolean;
+  /**
+   * Заявка цвета: цвет резонанса не выводится из сида, а достаётся тому,
+   * чья цепочка в окне перед фазой оказалась длиннее. В дуэли заявка
+   * красит фазу обоим — это единственное место, где действие соперника
+   * видно на твоём приборе.
+   *
+   * Флаг — точка отката: выключенный возвращает прежний резонанс из сида
+   * целиком, вместе с окном и его показом.
+   */
+  claim: boolean;
 }
 
 export interface GameConfig {
@@ -59,6 +69,10 @@ export interface GameConfig {
   phaseDuration: number;
   /** Множитель очков цепочки цвета фазы. */
   phaseMultiplier: number;
+  /** Окно заявки — последние N секунд цикла перед фазой. */
+  claimWindow: number;
+  /** Цепочка от N точек в окне заявляет цвет. */
+  claimChainLength: number;
 }
 
 export const DEFAULT_CONFIG: GameConfig = {
@@ -67,12 +81,14 @@ export const DEFAULT_CONFIG: GameConfig = {
   colors: 4,
   minChain: 3,
   chainStep: 10,
-  features: { phases: true, surge: true },
+  features: { phases: true, surge: true, claim: true },
   surgeChainLength: 10,
   surgeDotValue: 10,
   phasePeriod: 45,
   phaseDuration: 8,
   phaseMultiplier: 2,
+  claimWindow: 8,
+  claimChainLength: 5,
 };
 
 /**
