@@ -361,39 +361,62 @@
     .layer > :last-child { margin-bottom: auto; }
     .layer[hidden] { display: none; }
 
-    .mtitle {
+    /* Меню в оформлении пропуска: карточка живёт по правилам .badge. */
+    .menu-card { padding: 0; gap: 0; }
+    .menu-caption { display: flex; flex-direction: column; gap: 3px; }
+    .menu-kicker {
       font-family: var(--mono);
       font-size: 9px;
-      letter-spacing: 0.2em;
+      letter-spacing: 0.18em;
       text-transform: uppercase;
-      color: #5f5d57;
-      margin-bottom: 6px;
-      text-align: center;
+      color: var(--silk-2);
     }
-    /* Пункты по центру и без пояснений: список короткий и читается сразу. */
-    .menu-list { list-style: none; }
-    .menu-list li {
-      padding: 10px 0;
-      border-bottom: 1px solid #1c1d1c;
-      font-size: 15px;
-      font-weight: 600;
-      color: var(--scope-ink);
+    .menu-title {
+      font-size: 21px;
+      font-weight: 800;
+      font-style: italic;
+      text-transform: uppercase;
+      letter-spacing: -0.01em;
+      line-height: 1.1;
+    }
+
+    /* Режим — строка-карточка: название, длительность и одна строка сути. */
+    .menu-list { list-style: none; display: flex; flex-direction: column; gap: 7px; }
+    .menu-list li.mode {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 3px 10px;
+      padding: 11px 12px;
+      background: var(--case-2);
+      border: 1px solid var(--edge);
+      border-radius: 8px;
       cursor: pointer;
-      text-align: center;
+      transition: border-color 0.12s, transform 0.09s;
     }
-    .menu-list li.hd {
-      border: 0;
-      cursor: default;
-      font-family: var(--mono);
-      font-size: 8.5px;
-      letter-spacing: 0.2em;
-      text-transform: uppercase;
-      color: #5f5d57;
-      padding: 12px 0 2px;
-      font-weight: 400;
+    .menu-list li.mode:active { transform: translateY(1px); }
+    .menu-list li.mode b { font-size: 16px; font-weight: 700; }
+    .menu-list li.mode .when {
+      font-size: 11px;
+      color: var(--silk-2);
+      font-variant-numeric: tabular-nums;
     }
-    .menu-list li.on { color: var(--acc); }
-    .menu-list li:active { opacity: 0.6; }
+    .menu-list li.mode .hint {
+      grid-column: 1 / -1;
+      font-size: 11.5px;
+      line-height: 1.35;
+      color: var(--silk-2);
+    }
+    /* Текущий режим отмечен, а не выбран заново: игрок уже в нём. */
+    .menu-list li.mode.on { border-color: var(--acc); }
+    .menu-list li.mode.on b,
+    .menu-list li.mode.on .when { color: var(--acc); }
+
+    .menu-extra { display: flex; gap: 8px; }
+    .menu-extra button { flex: 1; }
+    /* В полосе меню стоит номер образца, а не итог работы: он справочный,
+       и кегль наработки был бы для него завышен. */
+    .menu-card .tot-value { font-size: 14px; letter-spacing: 0.04em; }
 
     /* Итог соло-партии — прямо в окуляре, как показание прибора. */
     .result { align-items: center; gap: 5px; }
@@ -1039,19 +1062,55 @@
       <i class="finger" id="finger" hidden></i>
       <div class="chain" id="chain-count">Цепь 0</div>
 
-      <div class="layer" id="menu" hidden>
-        <span class="mtitle">Панель управления</span>
-        <ul class="menu-list" id="menu-list">
-          <li class="hd">Наблюдение</li>
-          <li data-go="sprint">Спринт</li>
-          <li data-go="free">Бесконечный</li>
-          <li data-go="duel">Дуэль</li>
-          <li class="hd">Прибор</li>
-          <li data-go="profile">Профиль</li>
-          <li data-go="friends">Друзья</li>
-          <li data-go="rules">Правила</li>
-          <li data-go="tutorial">Обучение</li>
-        </ul>
+      <!--
+        Меню — такой же документ прибора, что и пропуск: планка с прорезью,
+        водяной знак, фирменный блок справа, оранжевая полоса снизу.
+        Профиль и друзья отсюда убраны — на них есть своя клавиша.
+      -->
+      <div class="overlay" id="menu" hidden>
+        <div class="modal badge menu-card">
+          <div class="badge-top"><i class="slot"></i></div>
+
+          <div class="badge-body">
+            <div class="badge-head">
+              <div class="menu-caption">
+                <span class="menu-kicker">Панель управления</span>
+                <b class="menu-title">Наблюдение</b>
+              </div>
+              <div class="badge-brand"><span id="menu-brand"></span></div>
+            </div>
+
+            <ul class="menu-list" id="menu-list">
+              <li class="mode" data-go="sprint">
+                <b>Спринт</b>
+                <span class="when mono">3:00</span>
+                <span class="hint">Три минуты на максимум отсчётов. В таблицу идёт лучший заход.</span>
+              </li>
+              <li class="mode" data-go="free">
+                <b>Бесконечный</b>
+                <span class="when mono">∞</span>
+                <span class="hint">Без часов. Челлендж — лучшие отсчёты за один ход.</span>
+              </li>
+              <li class="mode" data-go="duel">
+                <b>Дуэль</b>
+                <span class="when mono">1:30</span>
+                <span class="hint">Общий образец с живым соперником. Рейтинг и лиги.</span>
+              </li>
+            </ul>
+
+            <div class="menu-extra">
+              <button data-go="tutorial">Обучение</button>
+              <button data-go="rules">Правила</button>
+            </div>
+          </div>
+
+          <div class="badge-foot">
+            <div class="tot-head">
+              <span class="tot-label">Образец</span>
+              <span id="menu-seed" class="tot-value mono">—</span>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="layer result" id="result" hidden>

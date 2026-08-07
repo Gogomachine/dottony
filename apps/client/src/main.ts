@@ -74,6 +74,7 @@ const vsNameEl = el<HTMLSpanElement>('vs-name');
 const vsScoreEl = el<HTMLSpanElement>('vs-score');
 const ratingLineEl = el<HTMLDivElement>('rating-line');
 const menuEl = el<HTMLDivElement>('menu');
+const menuSeedEl = el<HTMLSpanElement>('menu-seed');
 const resultEl = el<HTMLDivElement>('result');
 const resultCapEl = el<HTMLSpanElement>('result-cap');
 const resultBigEl = el<HTMLSpanElement>('result-big');
@@ -188,6 +189,7 @@ function startGame(seed?: number): void {
   menuEl.hidden = true;
   setStat('Готов к наблюдению');
   seedEl.textContent = `образец #${session.seed.toString(16)}`;
+  menuSeedEl.textContent = `#${session.seed.toString(16)}`;
   updateHud();
   updateGoKey();
 }
@@ -1196,6 +1198,10 @@ function openMenu(): void {
   void sendCombo();
   resultEl.hidden = true;
   menuEl.hidden = false;
+  // Текущий режим отмечаем, а не предлагаем заново: игрок уже в нём.
+  for (const item of menuEl.querySelectorAll<HTMLElement>('.menu-list li')) {
+    item.classList.toggle('on', item.dataset.go === mode);
+  }
   // Подпись должна говорить правду: партии может уже не быть, а в дуэли
   // и вызове дня часы за заслонкой продолжают идти.
   setStat('Панель управления');
@@ -1229,8 +1235,6 @@ function updateGoKey(): void {
 // Пункта «Продолжить» здесь нет: заслонку убирает та же клавиша, что её
 // открыла, и отдельная строка списка только повторяла бы её.
 const MENU_ACTIONS: Record<string, () => void> = {
-  profile: () => void openCabinet(),
-  friends: () => void cabinet.show('friends'),
   sprint: () => {
     menuEl.hidden = true;
     setMode('sprint');
@@ -1248,8 +1252,10 @@ const MENU_ACTIONS: Record<string, () => void> = {
   tutorial: () => startTutorial(),
 };
 
-el<HTMLUListElement>('menu-list').addEventListener('click', (event) => {
-  const item = (event.target as HTMLElement).closest('li');
+menuEl.addEventListener('click', (event) => {
+  // Режимы — строки списка, обучение с правилами — клавиши рядом: обходим
+  // и то и другое одним слушателем по data-go.
+  const item = (event.target as HTMLElement).closest<HTMLElement>('[data-go]');
   const action = item ? MENU_ACTIONS[item.dataset.go ?? ''] : undefined;
   if (action) action();
 });
@@ -1534,6 +1540,7 @@ requestAnimationFrame(frame);
 if (firstVisit()) startTutorial();
 else openMenu();
 el<HTMLSpanElement>('brand').innerHTML = brandLockup(88);
+el<HTMLSpanElement>('menu-brand').innerHTML = brandLockup(96);
 renderer.setMarks(loadMarks());
 el<HTMLButtonElement>('mark-toggle').classList.toggle('on', loadMarks());
 el<HTMLButtonElement>('theme-toggle').classList.toggle('on', themeName === 'graphite');
