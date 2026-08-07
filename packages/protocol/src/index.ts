@@ -124,6 +124,13 @@ export interface SubmitSprintResponse {
   rank: number;
 }
 
+/**
+ * Период таблицы рекордов: сегодняшний день или всё время. День считается
+ * по календарной дате UTC — он кончается у всех одновременно, а не
+ * разъезжается по часовым поясам.
+ */
+export type BoardPeriod = 'day' | 'all';
+
 export interface SprintEntry {
   rank: number;
   name: string;

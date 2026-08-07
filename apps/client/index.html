@@ -660,6 +660,29 @@
       font-family: var(--mono);
     }
 
+    /* Переключатель периода таблицы: день или всё время. */
+    .board-tabs { display: flex; gap: 6px; }
+    .board-tabs[hidden] { display: none; }
+    .board-tabs button {
+      flex: 1;
+      background: none;
+      border: 1px solid var(--edge);
+      border-radius: 6px;
+      padding: 7px 4px;
+      font-family: var(--mono);
+      font-size: 9.5px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--silk-2);
+      cursor: pointer;
+      transition: color 0.12s, border-color 0.12s, background 0.12s;
+    }
+    .board-tabs button.on {
+      color: var(--acc);
+      border-color: var(--acc);
+      background: color-mix(in srgb, var(--acc) 10%, transparent);
+    }
+
     /* Своей прокрутки у списков нет: внутри окуляра листается всё окно
        целиком, иначе на маленьком стекле получаются полосы в полосе. */
     .board-list {
@@ -1173,6 +1196,10 @@
           <div id="room-box" hidden>
             <span class="room-label">Код комнаты</span>
             <span id="room-code" class="mono"></span>
+          </div>
+          <div id="board-tabs" class="board-tabs" hidden>
+            <button data-period="day" class="on">Сегодня</button>
+            <button data-period="all">За всё время</button>
           </div>
           <ol id="daily-board" class="board-list" hidden></ol>
           <button id="add-opponent" hidden></button>

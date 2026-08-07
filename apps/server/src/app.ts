@@ -41,7 +41,7 @@ import {
 import { Bot, makeLinkToken, parseStart, type BotUpdate } from './bot.js';
 import { replayCombo } from './combo.js';
 import { replaySprint } from './sprint.js';
-import { Store } from './db.js';
+import { Store, type BoardPeriod } from './db.js';
 import { DEFAULT_GHOST_SCORE, makeSyntheticGhost } from './ghost.js';
 import { Matchmaker, type MatchResult } from './matchmaker.js';
 import type { DuelOutcome, DuelPlayer } from './duel.js';
@@ -77,6 +77,15 @@ const HISTORY_SIZE = 20;
 const RECENT_OPPONENTS = 8;
 /** Потолок стоимости одного хода — грубая проверка правдоподобия досыла. */
 const MAX_POINTS_PER_MOVE = 20_000;
+
+/**
+ * Какую таблицу просят: сегодняшнюю или вечную. Всё, кроме явного
+ * period=day, читаем как вечную — так старые клиенты видят прежний ответ.
+ */
+function boardPeriod(request: { query: unknown }): BoardPeriod {
+  const asked = (request.query as { period?: unknown } | undefined)?.period;
+  return asked === 'day' ? 'day' : 'all';
+}
 
 /** Сколько дней игрок не играл рейтинговых матчей. */
 function idleDays(ratedAt: string | null): number {
@@ -334,7 +343,8 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
 
   app.get('/api/sprint/leaderboard', async (request): Promise<SprintLeaderboardResponse> => {
-    const rows = await store.sprintTop(LEADERBOARD_SIZE);
+    const period = boardPeriod(request);
+    const rows = await store.sprintTop(LEADERBOARD_SIZE, period);
     const entries = rows.map((row, index) => ({
       rank: index + 1,
       name: row.name,
@@ -346,8 +356,8 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     try {
       const user = await requireUser(request);
       const [best, rank] = await Promise.all([
-        store.bestSprint(user.sub),
-        store.sprintRank(user.sub),
+        store.bestSprint(user.sub, period),
+        store.sprintRank(user.sub, period),
       ]);
       if (best > 0 && rank !== null) me = { rank, name: user.name, score: best };
     } catch {
@@ -388,7 +398,8 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
 
   app.get('/api/combo/leaderboard', async (request): Promise<ComboLeaderboardResponse> => {
-    const rows = await store.comboTop(LEADERBOARD_SIZE);
+    const period = boardPeriod(request);
+    const rows = await store.comboTop(LEADERBOARD_SIZE, period);
     const entries = rows.map((row, index) => ({
       rank: index + 1,
       name: row.name,
@@ -400,8 +411,8 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     try {
       const user = await requireUser(request);
       const [best, rank] = await Promise.all([
-        store.bestCombo(user.sub),
-        store.comboRank(user.sub),
+        store.bestCombo(user.sub, period),
+        store.comboRank(user.sub, period),
       ]);
       if (best > 0 && rank !== null) me = { rank, name: user.name, combo: best };
     } catch {

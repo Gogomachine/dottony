@@ -2,6 +2,7 @@ import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createClient } from '@libsql/client';
+import { rm } from 'node:fs/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import {
@@ -1753,5 +1754,137 @@ describe('заявка на цвет в одиночном заходе', () => 
       }),
     );
     expect(replayCombo(seed, moves)).toEqual({ combo: best });
+  });
+});
+
+describe('таблицы за день и за всё время', () => {
+  let app: FastifyInstance;
+  let raw: ReturnType<typeof createClient>;
+  let file: string;
+
+  beforeEach(async () => {
+    // Файловая база, а не ':memory:': к ней нужен второй клиент — состарить
+    // запись, чтобы она выпала из сегодняшней таблицы.
+    file = join(tmpdir(), `doton-board-${randomUUID()}.db`);
+    app = await buildApp({ databaseUrl: `file:${file}`, jwtSecret: 'test-jwt' });
+    raw = createClient({ url: `file:${file}` });
+  });
+
+  afterEach(async () => {
+    raw.close();
+    await app.close();
+    await rm(file, { force: true });
+  });
+
+  async function guest(name: string): Promise<{ token: string; id: string }> {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/auth/guest',
+      payload: { name },
+    });
+    const body = response.json() as { token: string; user: { id: string } };
+    return { token: body.token, id: body.user.id };
+  }
+
+  async function sprint(token: string, seed: number, moves: number): Promise<number> {
+    const run = playHonestRun(seed, moves);
+    await app.inject({
+      method: 'POST',
+      url: '/api/sprint',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { seed, moves: run.moves },
+    });
+    return run.score;
+  }
+
+  function board(period: string, token?: string): Promise<{ entries: unknown[]; me: unknown }> {
+    return app
+      .inject({
+        method: 'GET',
+        url: `/api/sprint/leaderboard?period=${period}`,
+        ...(token ? { headers: { authorization: `Bearer ${token}` } } : {}),
+      })
+      .then((response) => response.json() as { entries: unknown[]; me: unknown });
+  }
+
+  it('вчерашний рекорд держится в вечной таблице и уходит из дневной', async () => {
+    const ada = await guest('Ада');
+    const bob = await guest('Боб');
+    const adaScore = await sprint(ada.token, 12345, 6);
+    const bobScore = await sprint(bob.token, 999, 3);
+    expect(adaScore).toBeGreaterThan(bobScore);
+
+    // Оба здесь: обе таблицы видят сегодняшние заходы.
+    expect((await board('day')).entries).toHaveLength(2);
+    expect((await board('all')).entries).toHaveLength(2);
+
+    // Заход Ады «состарился» на сутки.
+    await raw.execute({
+      sql: `UPDATE sprint_days SET day = date('now', '-1 day') WHERE user_id = ?`,
+      args: [ada.id],
+    });
+
+    const today = await board('day', ada.token);
+    expect(today.entries).toEqual([{ rank: 1, name: 'Боб', score: bobScore }]);
+    // Своей строки у Ады сегодня нет — она сегодня не играла.
+    expect(today.me).toBeNull();
+
+    const always = await board('all', ada.token);
+    expect(always.entries).toEqual([
+      { rank: 1, name: 'Ада', score: adaScore },
+      { rank: 2, name: 'Боб', score: bobScore },
+    ]);
+    expect(always.me).toEqual({ rank: 1, name: 'Ада', score: adaScore });
+  });
+
+  it('без периода отвечает вечной таблицей — как до появления дневной', async () => {
+    const ada = await guest('Ада');
+    const score = await sprint(ada.token, 12345, 5);
+    await raw.execute({
+      sql: `UPDATE sprint_days SET day = date('now', '-1 day') WHERE user_id = ?`,
+      args: [ada.id],
+    });
+
+    const response = await app.inject({ method: 'GET', url: '/api/sprint/leaderboard' });
+    expect((response.json() as { entries: unknown[] }).entries).toEqual([
+      { rank: 1, name: 'Ада', score },
+    ]);
+  });
+
+  it('в дневной таблице у игрока лучший заход дня, а не последний', async () => {
+    const ada = await guest('Ада');
+    const best = await sprint(ada.token, 12345, 6);
+    const weaker = await sprint(ada.token, 999, 3);
+    expect(weaker).toBeLessThan(best);
+
+    expect((await board('day')).entries).toEqual([{ rank: 1, name: 'Ада', score: best }]);
+  });
+
+  it('комбо считается по тем же двум периодам', async () => {
+    const ada = await guest('Ада');
+    const { seed, moves, combo } = seedWithCombo(200);
+    await app.inject({
+      method: 'POST',
+      url: '/api/combo',
+      headers: { authorization: `Bearer ${ada.token}` },
+      payload: { seed, moves },
+    });
+
+    const day = await app.inject({ method: 'GET', url: '/api/combo/leaderboard?period=day' });
+    expect((day.json() as { entries: unknown[] }).entries).toEqual([
+      { rank: 1, name: 'Ада', combo },
+    ]);
+
+    await raw.execute({
+      sql: `UPDATE combo_days SET day = date('now', '-1 day') WHERE user_id = ?`,
+      args: [ada.id],
+    });
+    const after = await app.inject({ method: 'GET', url: '/api/combo/leaderboard?period=day' });
+    expect((after.json() as { entries: unknown[] }).entries).toEqual([]);
+
+    const always = await app.inject({ method: 'GET', url: '/api/combo/leaderboard?period=all' });
+    expect((always.json() as { entries: unknown[] }).entries).toEqual([
+      { rank: 1, name: 'Ада', combo },
+    ]);
   });
 });

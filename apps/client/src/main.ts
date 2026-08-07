@@ -1,5 +1,6 @@
 import { COMBO_CARRY_CHAIN, DEFAULT_CONFIG, type Cell, type Color } from '@doton/core';
 import type {
+  BoardPeriod,
   ComboLeaderboardResponse,
   ComboMove,
   MoveLog,
@@ -60,6 +61,7 @@ const overTitleEl = el<HTMLHeadingElement>('over-title');
 const overNoteEl = el<HTMLParagraphElement>('over-note');
 const finalScoreEl = el<HTMLSpanElement>('final-score');
 const dailyBoardEl = el<HTMLOListElement>('daily-board');
+const boardTabsEl = el<HTMLDivElement>('board-tabs');
 const modalBtn = el<HTMLButtonElement>('modal-action');
 const scopeEl = el<HTMLDivElement>('scope');
 const miniEl = el<HTMLDivElement>('mini');
@@ -449,20 +451,30 @@ async function finishSprint(run: { seed: number; moves: MoveLog[] }, score: numb
   }
 }
 
-async function showSprintBoard(): Promise<void> {
+async function showSprintBoard(period: BoardPeriod = boardPeriod): Promise<void> {
+  boardPeriod = period;
   showOverModal({ title: 'Рекорды спринта', note: 'Загружаю таблицу…', viewing: true });
+  showBoardTabs('sprint');
   try {
-    const board = await getSprintBoard();
+    const board = await getSprintBoard(period);
     if (board.entries.length === 0) {
-      overNoteEl.textContent = 'Таблица пока пуста. Три минуты на максимум отсчётов — и ты в ней.';
+      overNoteEl.hidden = false;
+      overNoteEl.textContent =
+        period === 'day'
+          ? 'Сегодня ещё никто не заходил. Три минуты на максимум отсчётов — и ты первый.'
+          : 'Таблица пока пуста. Три минуты на максимум отсчётов — и ты в ней.';
+      dailyBoardEl.hidden = true;
       return;
     }
+    overNoteEl.hidden = false;
     overNoteEl.textContent = board.me
-      ? `Твой рекорд ${groupDigits(board.me.score)} · ${board.me.rank}-е место`
+      ? `${period === 'day' ? 'Сегодня' : 'Твой рекорд'} ${groupDigits(board.me.score)} · ${board.me.rank}-е место`
       : 'Сыграй спринт, чтобы попасть в таблицу.';
     renderSprintBoard(board);
   } catch {
+    overNoteEl.hidden = false;
     overNoteEl.textContent = 'Таблица спринта недоступна. Попробуй позже.';
+    dailyBoardEl.hidden = true;
   }
 }
 
@@ -482,6 +494,31 @@ function renderSprintBoard(board: SprintLeaderboardResponse): void {
     dailyBoardEl.appendChild(item);
   }
 }
+
+/**
+ * Какой период таблиц смотрят сейчас. День — по умолчанию: он живой и
+ * начинается заново каждые сутки, вечная таблица нужна реже.
+ */
+let boardPeriod: BoardPeriod = 'day';
+/** Какую таблицу перерисовывать при переключении периода. */
+let openBoard: 'sprint' | 'combo' | null = null;
+
+function showBoardTabs(board: 'sprint' | 'combo'): void {
+  openBoard = board;
+  boardTabsEl.hidden = false;
+  for (const button of boardTabsEl.querySelectorAll('button')) {
+    button.classList.toggle('on', button.dataset.period === boardPeriod);
+  }
+}
+
+boardTabsEl.addEventListener('click', (event) => {
+  const button = (event.target as HTMLElement).closest('button');
+  const period = button?.dataset.period;
+  if (period !== 'day' && period !== 'all') return;
+  if (period === boardPeriod || openBoard === null) return;
+  if (openBoard === 'sprint') void showSprintBoard(period);
+  else void showComboBoard(period);
+});
 
 /** Изменение рейтинга за матч — как его присылает сервер. */
 type RatingChange = NonNullable<Extract<DuelServerMessage, { type: 'finished' }>['rating']>;
@@ -529,6 +566,9 @@ function showOverModal(options: {
   overNoteEl.hidden = options.note === undefined;
   overNoteEl.textContent = options.note ?? '';
   dailyBoardEl.hidden = true;
+  // Переключатель периода принадлежит таблице: её показ его и поднимет.
+  boardTabsEl.hidden = true;
+  openBoard = null;
   ratingLineEl.hidden = true;
   if (options.rating) showRatingChange(options.rating);
   // Добавить соперника проще всего сразу после матча — потом искать код.
@@ -936,21 +976,30 @@ async function sendCombo(): Promise<void> {
   }
 }
 
-async function showComboBoard(): Promise<void> {
+async function showComboBoard(period: BoardPeriod = boardPeriod): Promise<void> {
+  boardPeriod = period;
   showOverModal({ title: 'Максимальное комбо', note: 'Загружаю таблицу…', viewing: true });
+  showBoardTabs('combo');
   try {
-    const board = await getComboBoard();
+    const board = await getComboBoard(period);
     if (board.entries.length === 0) {
+      overNoteEl.hidden = false;
       overNoteEl.textContent =
-        'Таблица пока пуста. Считаются отсчёты за один ход в бесконечном режиме.';
+        period === 'day'
+          ? 'Сегодня рекордов ещё нет. Считаются отсчёты за один ход в бесконечном режиме.'
+          : 'Таблица пока пуста. Считаются отсчёты за один ход в бесконечном режиме.';
+      dailyBoardEl.hidden = true;
       return;
     }
+    overNoteEl.hidden = false;
     overNoteEl.textContent = board.me
-      ? `Твой рекорд ${groupDigits(board.me.combo)} · ${board.me.rank}-е место`
+      ? `${period === 'day' ? 'Сегодня' : 'Твой рекорд'} ${groupDigits(board.me.combo)} · ${board.me.rank}-е место`
       : 'Сделай дорогой ход в бесконечном режиме, чтобы попасть в таблицу.';
     renderComboBoard(board);
   } catch {
+    overNoteEl.hidden = false;
     overNoteEl.textContent = 'Таблица комбо недоступна. Попробуй позже.';
+    dailyBoardEl.hidden = true;
   }
 }
 

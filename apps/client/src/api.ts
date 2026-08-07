@@ -1,5 +1,6 @@
 import type {
   AuthResponse,
+  BoardPeriod,
   ComboLeaderboardResponse,
   ComboMove,
   DuelHistoryResponse,
@@ -150,8 +151,8 @@ export function submitSprint(seed: number, moves: MoveLog[]): Promise<SubmitSpri
   });
 }
 
-export function getSprintBoard(): Promise<SprintLeaderboardResponse> {
-  return request<SprintLeaderboardResponse>('/api/sprint/leaderboard');
+export function getSprintBoard(period: BoardPeriod = 'all'): Promise<SprintLeaderboardResponse> {
+  return request<SprintLeaderboardResponse>(`/api/sprint/leaderboard?period=${period}`);
 }
 
 /** Карточка игрока: рейтинг, лига, место, счёт дуэлей. Нужен токен. */
@@ -174,8 +175,8 @@ export function submitCombo(seed: number, moves: ComboMove[]): Promise<SubmitCom
   });
 }
 
-export function getComboBoard(): Promise<ComboLeaderboardResponse> {
-  return request<ComboLeaderboardResponse>('/api/combo/leaderboard');
+export function getComboBoard(period: BoardPeriod = 'all'): Promise<ComboLeaderboardResponse> {
+  return request<ComboLeaderboardResponse>(`/api/combo/leaderboard?period=${period}`);
 }
 
 /**

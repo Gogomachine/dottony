@@ -1,6 +1,9 @@
 import { randomInt } from 'node:crypto';
 import { createClient, type Client } from '@libsql/client';
 import { newRating, PLACEMENT_GAMES, type Rating } from '@doton/core';
+import type { BoardPeriod } from '@doton/protocol';
+
+export type { BoardPeriod };
 
 /** Без похожих друг на друга символов: код диктуют вслух. */
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -33,6 +36,9 @@ export interface UserRow {
  * начал гостем, вошёл через Telegram, позже привяжет кошелёк TON.
  */
 export type IdentityKind = 'guest' | 'telegram' | 'ton';
+
+/** Какая из двух таблиц рекордов: спринт или челлендж комбо. */
+type Board = 'sprint' | 'combo';
 
 export interface Identity {
   kind: IdentityKind;
@@ -108,6 +114,19 @@ export class Store {
            created_at TEXT NOT NULL DEFAULT (datetime('now'))
          )`,
         `CREATE INDEX IF NOT EXISTS idx_sprint_runs_score ON sprint_runs (score DESC)`,
+        // Таблица дня — отдельная от вечной: у каждого игрока хранится его
+        // лучший заход за конкретный день. Ходы тут не держим — заход уже
+        // пересчитан ядром при отправке, а доказуемая копия лежит в вечной
+        // строке. Иначе журнал рос бы на каждый день каждого игрока.
+        `CREATE TABLE IF NOT EXISTS sprint_days (
+           user_id TEXT NOT NULL REFERENCES users(id),
+           day TEXT NOT NULL,
+           score INTEGER NOT NULL,
+           seed INTEGER NOT NULL,
+           created_at TEXT NOT NULL DEFAULT (datetime('now')),
+           PRIMARY KEY (user_id, day)
+         )`,
+        `CREATE INDEX IF NOT EXISTS idx_sprint_days ON sprint_days (day, score DESC)`,
         // Челлендж бесконечного режима: у игрока хранится только лучший
         // заход. Ходы лежат рядом с числом — рекорд должен оставаться
         // доказуемым и после того, как его засчитали.
@@ -119,6 +138,15 @@ export class Store {
            created_at TEXT NOT NULL DEFAULT (datetime('now'))
          )`,
         `CREATE INDEX IF NOT EXISTS idx_combo_runs_combo ON combo_runs (combo DESC)`,
+        `CREATE TABLE IF NOT EXISTS combo_days (
+           user_id TEXT NOT NULL REFERENCES users(id),
+           day TEXT NOT NULL,
+           combo INTEGER NOT NULL,
+           seed INTEGER NOT NULL,
+           created_at TEXT NOT NULL DEFAULT (datetime('now')),
+           PRIMARY KEY (user_id, day)
+         )`,
+        `CREATE INDEX IF NOT EXISTS idx_combo_days ON combo_days (day, combo DESC)`,
         `CREATE TABLE IF NOT EXISTS duels (
            id TEXT PRIMARY KEY,
            seed INTEGER NOT NULL,
@@ -700,18 +728,88 @@ export class Store {
     return { total: Number(row.total_score) + points };
   }
 
-  /** Личный рекорд комбо; 0 — заходов ещё не было. */
-  async bestCombo(userId: string): Promise<number> {
+  /**
+   * Таблицы рекордов живут в двух видах: вечная и сегодняшняя. Различаются
+   * они только тем, откуда читать и чем ограничивать выборку, поэтому
+   * запросы собираются в одном месте.
+   *
+   * Имена таблиц и колонок здесь — из замкнутого набора, а не из запроса
+   * игрока: подставлять их в SQL строкой безопасно.
+   */
+  private source(board: Board, period: BoardPeriod): { table: string; column: string; where: string } {
+    const column = board === 'sprint' ? 'score' : 'combo';
+    return period === 'day'
+      ? { table: `${board}_days`, column, where: `day = date('now')` }
+      : { table: `${board}_runs`, column, where: '1 = 1' };
+  }
+
+  /** Личный рекорд: 0 — заходов ещё не было. */
+  private async best(board: Board, userId: string, period: BoardPeriod): Promise<number> {
+    const { table, column, where } = this.source(board, period);
     const result = await this.client.execute({
-      sql: 'SELECT combo FROM combo_runs WHERE user_id = ?',
+      sql: `SELECT ${column} AS value FROM ${table} WHERE user_id = ? AND ${where}`,
       args: [userId],
     });
-    return Number(result.rows[0]?.combo ?? 0);
+    return Number(result.rows[0]?.value ?? 0);
+  }
+
+  /** Место в таблице: 1 + число рекордов строго выше. */
+  private async rank(board: Board, userId: string, period: BoardPeriod): Promise<number | null> {
+    const mine = await this.best(board, userId, period);
+    if (mine === 0) return null;
+    const { table, column, where } = this.source(board, period);
+    const above = await this.client.execute({
+      sql: `SELECT COUNT(*) AS above FROM ${table} WHERE ${column} > ? AND ${where}`,
+      args: [mine],
+    });
+    return Number(above.rows[0]!.above) + 1;
+  }
+
+  /** Верхушка таблицы. При равных рекордах выше тот, кто поставил раньше. */
+  private async top(
+    board: Board,
+    limit: number,
+    period: BoardPeriod,
+  ): Promise<{ name: string; value: number }[]> {
+    const { table, column, where } = this.source(board, period);
+    const result = await this.client.execute({
+      sql: `SELECT u.name, r.${column} AS value
+            FROM ${table} r JOIN users u ON u.id = r.user_id
+            WHERE ${where}
+            ORDER BY r.${column} DESC, r.created_at ASC
+            LIMIT ?`,
+      args: [limit],
+    });
+    return result.rows.map((row) => ({ name: String(row.name), value: Number(row.value) }));
+  }
+
+  /**
+   * Рекорд дня: у игрока хранится лучший заход за сегодня. Заход слабее
+   * сегодняшнего не сохраняем — таблица про рекорд, а не про попытки.
+   */
+  private async saveDay(board: Board, userId: string, value: number, seed: number): Promise<void> {
+    const column = board === 'sprint' ? 'score' : 'combo';
+    await this.client.execute({
+      sql: `INSERT INTO ${board}_days (user_id, day, ${column}, seed)
+            VALUES (?, date('now'), ?, ?)
+            ON CONFLICT (user_id, day) DO UPDATE
+              SET ${column} = excluded.${column},
+                  seed = excluded.seed,
+                  created_at = datetime('now')
+              WHERE excluded.${column} > ${board}_days.${column}`,
+      args: [userId, value, seed],
+    });
+  }
+
+  /** Личный рекорд комбо; 0 — заходов ещё не было. */
+  async bestCombo(userId: string, period: BoardPeriod = 'all'): Promise<number> {
+    return this.best('combo', userId, period);
   }
 
   /**
    * Оставляет у игрока только лучший заход: таблица про рекорд, а не про
-   * количество попыток. Заход слабее прежнего просто не сохраняем.
+   * количество попыток. Заход слабее прежнего в вечную таблицу не идёт —
+   * но в сегодняшнюю может: день считается отдельно.
    */
   async saveCombo(
     userId: string,
@@ -719,6 +817,7 @@ export class Store {
     seed: number,
     movesJson: string,
   ): Promise<{ best: number; improved: boolean }> {
+    await this.saveDay('combo', userId, combo, seed);
     const previous = await this.bestCombo(userId);
     if (combo <= previous) return { best: previous, improved: false };
 
@@ -735,36 +834,18 @@ export class Store {
     return { best: combo, improved: true };
   }
 
-  /** Место в таблице комбо: 1 + число рекордов строго выше. */
-  async comboRank(userId: string): Promise<number | null> {
-    const mine = await this.bestCombo(userId);
-    if (mine === 0) return null;
-    const above = await this.client.execute({
-      sql: 'SELECT COUNT(*) AS above FROM combo_runs WHERE combo > ?',
-      args: [mine],
-    });
-    return Number(above.rows[0]!.above) + 1;
+  async comboRank(userId: string, period: BoardPeriod = 'all'): Promise<number | null> {
+    return this.rank('combo', userId, period);
   }
 
-  /** Верхушка таблицы комбо. При равных рекордах выше тот, кто раньше. */
-  async comboTop(limit: number): Promise<{ name: string; combo: number }[]> {
-    const result = await this.client.execute({
-      sql: `SELECT u.name, r.combo
-            FROM combo_runs r JOIN users u ON u.id = r.user_id
-            ORDER BY r.combo DESC, r.created_at ASC
-            LIMIT ?`,
-      args: [limit],
-    });
-    return result.rows.map((row) => ({ name: String(row.name), combo: Number(row.combo) }));
+  async comboTop(limit: number, period: BoardPeriod = 'all'): Promise<{ name: string; combo: number }[]> {
+    const rows = await this.top('combo', limit, period);
+    return rows.map((row) => ({ name: row.name, combo: row.value }));
   }
 
   /** Личный рекорд спринта; 0 — заходов ещё не было. */
-  async bestSprint(userId: string): Promise<number> {
-    const result = await this.client.execute({
-      sql: 'SELECT score FROM sprint_runs WHERE user_id = ?',
-      args: [userId],
-    });
-    return Number(result.rows[0]?.score ?? 0);
+  async bestSprint(userId: string, period: BoardPeriod = 'all'): Promise<number> {
+    return this.best('sprint', userId, period);
   }
 
   /** Оставляет у игрока только лучший спринт: заход слабее не сохраняем. */
@@ -774,6 +855,7 @@ export class Store {
     seed: number,
     movesJson: string,
   ): Promise<{ best: number; improved: boolean }> {
+    await this.saveDay('sprint', userId, score, seed);
     const previous = await this.bestSprint(userId);
     if (score <= previous) return { best: previous, improved: false };
 
@@ -790,27 +872,13 @@ export class Store {
     return { best: score, improved: true };
   }
 
-  /** Место в таблице спринта: 1 + число рекордов строго выше. */
-  async sprintRank(userId: string): Promise<number | null> {
-    const mine = await this.bestSprint(userId);
-    if (mine === 0) return null;
-    const above = await this.client.execute({
-      sql: 'SELECT COUNT(*) AS above FROM sprint_runs WHERE score > ?',
-      args: [mine],
-    });
-    return Number(above.rows[0]!.above) + 1;
+  async sprintRank(userId: string, period: BoardPeriod = 'all'): Promise<number | null> {
+    return this.rank('sprint', userId, period);
   }
 
-  /** Верхушка таблицы спринта. При равном счёте выше тот, кто раньше. */
-  async sprintTop(limit: number): Promise<{ name: string; score: number }[]> {
-    const result = await this.client.execute({
-      sql: `SELECT u.name, r.score
-            FROM sprint_runs r JOIN users u ON u.id = r.user_id
-            ORDER BY r.score DESC, r.created_at ASC
-            LIMIT ?`,
-      args: [limit],
-    });
-    return result.rows.map((row) => ({ name: String(row.name), score: Number(row.score) }));
+  async sprintTop(limit: number, period: BoardPeriod = 'all'): Promise<{ name: string; score: number }[]> {
+    const rows = await this.top('sprint', limit, period);
+    return rows.map((row) => ({ name: row.name, score: row.value }));
   }
 
   async createUser(id: string, name: string, identity: Identity): Promise<UserRow> {
