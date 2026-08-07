@@ -96,7 +96,8 @@ describe('Duel', () => {
     const board = createBoard(seedRng(seed), DEFAULT_CONFIG);
     const path = findAnyChain(board);
     // Момент внутри фазы «нагрузки сети»: сервер берёт своё время.
-    const phaseTime = DEFAULT_CONFIG.phasePeriod + 1;
+    // Фаза идёт сразу за окном заявки, а не в начале цикла.
+    const phaseTime = DEFAULT_CONFIG.phasePeriod + DEFAULT_CONFIG.claimWindow + 1;
     const phase = phaseColorAt(seed, phaseTime, DEFAULT_CONFIG);
     const expected = applyMove(board, path, DEFAULT_CONFIG, phase);
     if (typeof expected === 'string') throw new Error(expected);
@@ -612,10 +613,10 @@ describe('призраки', () => {
 describe('заявка на цвет', () => {
   const cfg = DEFAULT_CONFIG;
   const seed = 4242;
-  /** Секунда внутри окна заявки на первую фазу. */
-  const inWindow = cfg.phasePeriod - cfg.claimWindow / 2;
-  /** Секунда внутри самой фазы. */
-  const inPhase = cfg.phasePeriod + 1;
+  /** Секунда внутри окна заявки на первую фазу: окно открывает цикл. */
+  const inWindow = cfg.phasePeriod + cfg.claimWindow / 2;
+  /** Секунда внутри самой фазы — она идёт сразу за окном. */
+  const inPhase = cfg.phasePeriod + cfg.claimWindow + 1;
 
   /** Цепочка заданной длины и цвета: обычный поиск в глубину по соседям. */
   function findChain(board: Board, length: number, color: number): Cell[] | null {

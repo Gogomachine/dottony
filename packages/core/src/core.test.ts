@@ -329,25 +329,37 @@ describe('перегрузка', () => {
   });
 });
 
+/** Секунда внутри фазы цикла: фаза идёт сразу за окном заявки. */
+const inPhase = (cycle: number): number => cycle * cfg.phasePeriod + cfg.claimWindow + 1;
+
 describe('нагрузка сети (фазы)', () => {
-  it('первый цикл — без фазы, дальше фаза в начале каждого цикла', () => {
+  it('первый цикл — разминка, дальше окно заявки и сразу за ним фаза', () => {
     const seed = 123;
     expect(phaseColorAt(seed, 0, cfg)).toBeNull();
     expect(phaseColorAt(seed, cfg.phasePeriod - 1, cfg)).toBeNull();
-    const active = phaseColorAt(seed, cfg.phasePeriod + 1, cfg);
+    // Начало цикла занято окном заявки — фазы там ещё нет.
+    expect(phaseColorAt(seed, cfg.phasePeriod + 1, cfg)).toBeNull();
+    const active = phaseColorAt(seed, inPhase(1), cfg);
     expect(active).not.toBeNull();
     expect(active).toBeGreaterThanOrEqual(0);
     expect(active).toBeLessThan(cfg.colors);
-    expect(phaseColorAt(seed, cfg.phasePeriod + cfg.phaseDuration, cfg)).toBeNull();
+    const ends = cfg.phasePeriod + cfg.claimWindow + cfg.phaseDuration;
+    expect(phaseColorAt(seed, ends, cfg)).toBeNull();
+  });
+
+  it('без заявок фаза открывает цикл, как было до них', () => {
+    const off: GameConfig = { ...cfg, features: { ...cfg.features, claim: false } };
+    expect(phaseColorAt(7, cfg.phasePeriod + 1, off)).not.toBeNull();
+    expect(phaseColorAt(7, cfg.phasePeriod + cfg.phaseDuration, off)).toBeNull();
   });
 
   it('детерминирована по сиду', () => {
-    const t = cfg.phasePeriod * 3 + 2;
+    const t = inPhase(3);
     expect(phaseColorAt(5, t, cfg)).toBe(phaseColorAt(5, t, cfg));
   });
 
   it('выключена флагом', () => {
-    expect(phaseColorAt(5, cfg.phasePeriod + 1, bare)).toBeNull();
+    expect(phaseColorAt(5, inPhase(1), bare)).toBeNull();
   });
 
   it('умножает очки цепочки своего цвета и только их', () => {
@@ -368,32 +380,45 @@ describe('нагрузка сети (фазы)', () => {
   it('phaseStateAt отдаёт корректный отсчёт до следующей фазы', () => {
     const state = phaseStateAt(9, 5, cfg);
     expect(state.active).toBeNull();
-    expect(state.nextIn).toBe(cfg.phasePeriod - 5);
+    // Разминка: ближайшая фаза — за окном заявки первого цикла.
+    expect(state.nextIn).toBe(cfg.phasePeriod + cfg.claimWindow - 5);
     expect(state.nextColor).toBeGreaterThanOrEqual(0);
+
+    // Внутри окна отсчёт идёт до фазы своего же цикла.
+    const inWindow = phaseStateAt(9, cfg.phasePeriod + 2, cfg);
+    expect(inWindow.active).toBeNull();
+    expect(inWindow.nextIn).toBe(cfg.claimWindow - 2);
+
+    // Внутри фазы виден её остаток.
+    const running = phaseStateAt(9, inPhase(1), cfg);
+    expect(running.active).not.toBeNull();
+    expect(running.remaining).toBe(cfg.phaseDuration - 1);
   });
 });
 
 describe('заявка цвета', () => {
   /** Цвет, которого фаза этого цикла точно не получила бы сама. */
   function otherThanSeed(seed: number, cycle: number): Color {
-    const own = phaseColorAt(seed, cycle * cfg.phasePeriod + 1, cfg)!;
+    const own = phaseColorAt(seed, inPhase(cycle), cfg)!;
     return (((own + 1) % cfg.colors) as Color);
   }
 
-  it('окно открыто последние claimWindow секунд перед фазой', () => {
-    const opensAt = cfg.phasePeriod - cfg.claimWindow;
-    expect(claimWindowAt(opensAt - 0.1, cfg).open).toBe(false);
-    const open = claimWindowAt(opensAt + 0.1, cfg);
+  it('окно открывает цикл: первая заявка — на 45-й секунде', () => {
+    // Разминка окна не знает: биться за цвет на нетронутом поле нечем.
+    expect(claimWindowAt(cfg.phasePeriod - 0.1, cfg).open).toBe(false);
+    const open = claimWindowAt(cfg.phasePeriod + 0.1, cfg);
     expect(open.open).toBe(true);
-    // Окно решает фазу следующего цикла, а не своего.
+    // Окно решает фазу своего цикла — ту, что начнётся сразу за ним.
     expect(open.cycle).toBe(1);
     expect(open.remaining).toBeCloseTo(cfg.claimWindow - 0.1, 5);
-    // Сразу после начала фазы окно уже закрыто.
-    expect(claimWindowAt(cfg.phasePeriod + 1, cfg).open).toBe(false);
+    // К началу фазы окно закрыто.
+    expect(claimWindowAt(cfg.phasePeriod + cfg.claimWindow, cfg).open).toBe(false);
+    // Следующее окно — ровно через период.
+    expect(claimWindowAt(cfg.phasePeriod * 2 + 0.1, cfg)).toMatchObject({ open: true, cycle: 2 });
   });
 
   it('заявкой становится только длинная цепочка внутри окна', () => {
-    const inside = cfg.phasePeriod - 2;
+    const inside = cfg.phasePeriod + 2;
     expect(claimFrom(1, cfg.claimChainLength - 1, inside, cfg)).toBeNull();
     expect(claimFrom(1, cfg.claimChainLength, 1, cfg)).toBeNull();
     const claim = claimFrom(1, cfg.claimChainLength, inside, cfg);
@@ -403,20 +428,18 @@ describe('заявка цвета', () => {
   it('заявка красит фазу вместо сида', () => {
     const seed = 77;
     const color = otherThanSeed(seed, 1);
-    const claims: Claim[] = [{ cycle: 1, color, length: 6, t: cfg.phasePeriod - 3 }];
-    expect(phaseColorAt(seed, cfg.phasePeriod + 1, cfg, claims)).toBe(color);
+    const claims: Claim[] = [{ cycle: 1, color, length: 6, t: cfg.phasePeriod + 3 }];
+    expect(phaseColorAt(seed, inPhase(1), cfg, claims)).toBe(color);
     // Следующий цикл заявку не наследует: за него надо биться заново.
-    expect(phaseColorAt(seed, cfg.phasePeriod * 2 + 1, cfg, claims)).toBe(
-      phaseColorAt(seed, cfg.phasePeriod * 2 + 1, cfg),
-    );
+    expect(phaseColorAt(seed, inPhase(2), cfg, claims)).toBe(phaseColorAt(seed, inPhase(2), cfg));
   });
 
   it('побеждает длинная заявка, при равной длине — ранняя', () => {
     const claims: Claim[] = [
-      { cycle: 1, color: 0, length: 6, t: 38 },
-      { cycle: 1, color: 1, length: 9, t: 41 },
-      { cycle: 1, color: 2, length: 9, t: 43 },
-      { cycle: 2, color: 3, length: 20, t: 84 },
+      { cycle: 1, color: 0, length: 6, t: 46 },
+      { cycle: 1, color: 1, length: 9, t: 49 },
+      { cycle: 1, color: 2, length: 9, t: 51 },
+      { cycle: 2, color: 3, length: 20, t: 92 },
     ];
     expect(bestClaim(claims, 1)?.color).toBe(1);
     expect(bestClaim(claims, 2)?.color).toBe(3);
@@ -426,8 +449,8 @@ describe('заявка цвета', () => {
   it('заявка видна в nextColor ещё до начала фазы', () => {
     const seed = 12;
     const color = otherThanSeed(seed, 1);
-    const t = cfg.phasePeriod - 4;
-    const claims: Claim[] = [{ cycle: 1, color, length: 7, t: cfg.phasePeriod - 5 }];
+    const t = cfg.phasePeriod + 4;
+    const claims: Claim[] = [{ cycle: 1, color, length: 7, t: cfg.phasePeriod + 3 }];
     expect(phaseStateAt(seed, t, cfg, claims).nextColor).toBe(color);
     expect(phaseStateAt(seed, t, cfg).nextColor).not.toBe(color);
   });
@@ -436,11 +459,12 @@ describe('заявка цвета', () => {
     const off: GameConfig = { ...cfg, features: { ...cfg.features, claim: false } };
     const seed = 31;
     const color = otherThanSeed(seed, 1);
-    const claims: Claim[] = [{ cycle: 1, color, length: 9, t: cfg.phasePeriod - 2 }];
-    expect(claimWindowAt(cfg.phasePeriod - 2, off).open).toBe(false);
-    expect(claimFrom(color, 9, cfg.phasePeriod - 2, off)).toBeNull();
+    const claims: Claim[] = [{ cycle: 1, color, length: 9, t: cfg.phasePeriod + 2 }];
+    expect(claimWindowAt(cfg.phasePeriod + 2, off).open).toBe(false);
+    expect(claimFrom(color, 9, cfg.phasePeriod + 2, off)).toBeNull();
+    // Без окна фаза открывает цикл, и цвет у неё сидовый.
     expect(phaseColorAt(seed, cfg.phasePeriod + 1, off, claims)).toBe(
-      phaseColorAt(seed, cfg.phasePeriod + 1, cfg),
+      phaseColorAt(seed, inPhase(1), cfg),
     );
   });
 });

@@ -441,10 +441,10 @@ export class Tutorial {
     this.say(
       4,
       'Битва за цвет',
-      `За ${cfg.claimWindow} секунд до резонанса открывается окно заявки. Цепочка от ${cfg.claimChainLength} точек ставит свой цвет — и он загорится у обоих.`,
+      `Цикл открывается окном заявки на ${cfg.claimWindow} секунд, резонанс идёт сразу за ним. Цепочка от ${cfg.claimChainLength} точек ставит свой цвет — и он загорится у обоих.`,
     );
-    // Часы сценария подводим к самому окну.
-    this.clock = cfg.phasePeriod - cfg.claimWindow - 2;
+    // Часы сценария подводим к самому окну: оно открывает цикл.
+    this.clock = cfg.phasePeriod - 2;
     this.clockRuns = true;
     await this.wait(3.2);
 
@@ -490,17 +490,18 @@ export class Tutorial {
     await this.play(answer, STEP_FAST);
     this.claims.push({ cycle: 1, color: myColor, length: answer.length, t: this.clock, mine: true });
     this.hud.stat(`Заявка · цепь ${answer.length}`, 'live');
-    await this.wait(1.6);
-    // Часы придерживаем: следующий шаг сам подведёт их к фазе. Отматывать
+    // Часы придерживаем сразу: пока игрок читает итог заявки, окно не
+    // должно закрыться само. Следующий шаг подведёт их к фазе, а отматывать
     // назад нельзя — на экранчике это выглядит как сбой прибора.
     this.clockRuns = false;
+    await this.wait(1.6);
     return myColor;
   }
 
   /** 5. Что даёт цвет: множители перемножаются. */
   private async resonanceAct(color: Color): Promise<void> {
     // Доводим часы до фазы: цвет заявлен, резонанс загорается им.
-    this.clock = Math.max(this.clock, cfg.phasePeriod - 0.6);
+    this.clock = Math.max(this.clock, cfg.phasePeriod + cfg.claimWindow - 0.6);
     this.clockRuns = true;
     this.say(
       5,

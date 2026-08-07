@@ -1706,8 +1706,8 @@ describe('заявка на цвет в одиночном заходе', () => 
    * Цвет подобран так, чтобы сид его сам не выбрал — иначе проверять нечего.
    */
   function claimRun(): { seed: number; moves: MoveLog[]; claimed: number; plain: number } {
-    const claimT = cfg.phasePeriod - cfg.claimWindow / 2;
-    const phaseT = cfg.phasePeriod + 1;
+    const claimT = cfg.phasePeriod + cfg.claimWindow / 2;
+    const phaseT = cfg.phasePeriod + cfg.claimWindow + 1;
     for (let seed = 1; seed < 400; seed++) {
       const board = createBoard(seedRng(seed), cfg);
       const own = phaseColorAt(seed, phaseT, cfg)!;

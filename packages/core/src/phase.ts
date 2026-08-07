@@ -2,9 +2,18 @@ import { nextInt, seedRng } from './rng.js';
 import type { Color, GameConfig } from './types.js';
 
 /**
- * «Нагрузка сети»: в начале каждого цикла phasePeriod на phaseDuration секунд
- * объявляется цвет-фаза, цепочки этого цвета дают ×phaseMultiplier.
- * Первый цикл (t < phasePeriod) — разминка без фазы.
+ * «Нагрузка сети»: раз в phasePeriod секунд прибор на phaseDuration секунд
+ * входит в резонанс с одним цветом, и цепочки этого цвета дают
+ * ×phaseMultiplier.
+ *
+ * Цикл устроен так:
+ *
+ *   0 ──── разминка ──── 45 ─ заявка ─ 53 ── резонанс ── 61 ─ тишина ─ 90 ─ …
+ *                            claimWindow      phaseDuration
+ *
+ * Первые claimWindow секунд цикла — окно заявки, сразу за ним фаза. Первый
+ * цикл (t < phasePeriod) — разминка: ни окна, ни фазы, иначе биться за цвет
+ * пришлось бы на нетронутом поле, где длинную цепочку взять неоткуда.
  *
  * Цвет фазы берётся из сида — но только если его никто не заявил. Заявка
  * (claim) собирается в окне перед фазой и цвет перебивает; в дуэли она
@@ -53,11 +62,20 @@ function phaseColorFor(seed: number, cycle: number, cfg: GameConfig): Color {
   return roll.value as Color;
 }
 
+/**
+ * На какой секунде цикла начинается фаза: сразу после окна заявки. Без
+ * заявок окна нет, и фаза открывает цикл — ровно как до этой механики.
+ */
+function phaseStart(cfg: GameConfig): number {
+  return cfg.features.claim ? cfg.claimWindow : 0;
+}
+
 export function claimWindowAt(timeSec: number, cfg: GameConfig): ClaimWindow {
   const cycle = Math.floor(timeSec / cfg.phasePeriod);
-  const untilNext = (cycle + 1) * cfg.phasePeriod - timeSec;
-  const open = cfg.features.phases && cfg.features.claim && untilNext <= cfg.claimWindow;
-  return { cycle: cycle + 1, open, remaining: open ? untilNext : 0 };
+  const within = timeSec - cycle * cfg.phasePeriod;
+  const open =
+    cfg.features.phases && cfg.features.claim && cycle >= 1 && within < cfg.claimWindow;
+  return { cycle, open, remaining: open ? cfg.claimWindow - within : 0 };
 }
 
 /** Ход становится заявкой, если попал в окно и цепочка достаточно длинная. */
@@ -110,7 +128,8 @@ export function phaseColorAt(
   if (!cfg.features.phases || timeSec < cfg.phasePeriod) return null;
   const cycle = Math.floor(timeSec / cfg.phasePeriod);
   const within = timeSec - cycle * cfg.phasePeriod;
-  if (within >= cfg.phaseDuration) return null;
+  const start = phaseStart(cfg);
+  if (within < start || within >= start + cfg.phaseDuration) return null;
   return colorOfCycle(seed, cycle, cfg, claims);
 }
 
@@ -122,12 +141,15 @@ export function phaseStateAt(
 ): PhaseState {
   const cycle = Math.floor(timeSec / cfg.phasePeriod);
   const within = timeSec - cycle * cfg.phasePeriod;
+  const start = phaseStart(cfg);
   const active = phaseColorAt(seed, timeSec, cfg, claims);
-  const nextCycle = Math.max(cycle + 1, 1);
+  // Фаза своего цикла ещё впереди, пока идёт его окно заявки; в разминке
+  // и после фазы ближайшая — уже в следующем цикле.
+  const nextCycle = cycle >= 1 && within < start ? cycle : cycle + 1;
   return {
     active,
-    remaining: active === null ? 0 : cfg.phaseDuration - within,
+    remaining: active === null ? 0 : start + cfg.phaseDuration - within,
     nextColor: colorOfCycle(seed, nextCycle, cfg, claims),
-    nextIn: nextCycle * cfg.phasePeriod - timeSec,
+    nextIn: nextCycle * cfg.phasePeriod + start - timeSec,
   };
 }
