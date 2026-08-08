@@ -105,7 +105,7 @@ function findLongestChain(board: Board): Cell[] {
 /**
  * Честный заход бесконечного режима: каждый ход берём самую длинную
  * цепочку — так игрок и гонится за дорогим ходом. Возвращает ходы и
- * лучшие отсчёты за один ход, которые при этом получились у ядра.
+ * лучший потенциал за один ход, который при этом получился у ядра.
  */
 function playComboRun(
   seed: number,
@@ -226,7 +226,7 @@ describe('replaySprint', () => {
 });
 
 describe('replayCombo', () => {
-  it('насчитывает те же отсчёты за ход, что и честный заход', () => {
+  it('насчитывает тот же потенциал за ход, что и честный заход', () => {
     const { seed, moves, combo } = seedWithCombo(200);
     expect(replayCombo(seed, moves)).toEqual({ combo });
   });
@@ -988,7 +988,7 @@ describe('API', () => {
     expect(me?.rank).toBe(2);
   });
 
-  it('челлендж комбо: заход попадает в таблицу с пересчитанными отсчётами', async () => {
+  it('челлендж комбо: заход попадает в таблицу с пересчитанным потенциалом', async () => {
     const { seed, moves, combo } = seedWithCombo(200);
     const token = await guestToken('Ада');
 
@@ -1295,7 +1295,7 @@ describe('API', () => {
       headers: { authorization: `Bearer ${token}` },
       payload: { seed, moves },
     });
-    // Отсчёты спринта идут обычным досылом — иначе они зачлись бы дважды.
+    // Потенциал спринта идёт обычным досылом — иначе он зачёлся бы дважды.
     expect((await me()).total).toBe(0);
 
     await app.inject({

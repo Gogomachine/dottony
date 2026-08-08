@@ -120,7 +120,7 @@ let mode: Mode = 'sprint';
 let sprintRun: { seed: number; moves: MoveLog[] } | null = null;
 
 /**
- * Челлендж бесконечного режима — лучшие отсчёты за один ход.
+ * Челлендж бесконечного режима — лучший потенциал за один ход.
  *
  * Цена хода зависит от состояния поля, поэтому доказать рекорд можно
  * только журналом ходов: сервер переигрывает заход от сида и считает
@@ -132,7 +132,7 @@ let comboRun:
       seed: number;
       moves: ComboMove[];
       best: number;
-      /** Отсчёты хода, продлившего комбо; 0 — предыдущий ход его не продлевал. */
+      /** Потенциал хода, продлившего комбо; 0 — предыдущий ход его не продлевал. */
       carried: number;
       sent: number;
       full: boolean;
@@ -194,7 +194,7 @@ function startGame(seed?: number): void {
   updateGoKey();
 }
 
-/** Текущее увеличение: следующая линза умножит отсчёты на столько. */
+/** Текущее увеличение: следующая линза умножит потенциал на столько. */
 function updateStreak(streak: number): void {
   const active = streak > 0;
   gainEl.hidden = !active;
@@ -217,14 +217,14 @@ function updateHud(): void {
   if (!session.timed) {
     // В бесконечном режиме таймера нет, и его место занимает челлендж:
     // лучший ход захода. Делений не зажигаем — запаса не бывает.
-    timeLabelEl.textContent = comboRun ? 'Комбо' : 'Остаток';
+    timeLabelEl.textContent = comboRun ? 'Комбо' : 'Время';
     timeEl.textContent = comboRun ? groupDigits(comboRun.best) : '∞';
     timeFieldEl.className = 'field right';
     for (const tick of tickEls) tick.className = 'tick';
     return;
   }
 
-  timeLabelEl.textContent = 'Остаток';
+  timeLabelEl.textContent = 'Время';
   const total = Math.ceil(session.timeLeft);
   timeEl.textContent = `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
   const full = session.mode === 'duel' ? duelDuration : SPRINT_SECONDS;
@@ -463,8 +463,8 @@ async function showSprintBoard(period: BoardPeriod = boardPeriod): Promise<void>
       overNoteEl.hidden = false;
       overNoteEl.textContent =
         period === 'day'
-          ? 'Сегодня ещё никто не заходил. Три минуты на максимум отсчётов — и ты первый.'
-          : 'Таблица пока пуста. Три минуты на максимум отсчётов — и ты в ней.';
+          ? 'Сегодня ещё никто не заходил. Три минуты на максимум потенциала — и ты первый.'
+          : 'Таблица пока пуста. Три минуты на максимум потенциала — и ты в ней.';
       dailyBoardEl.hidden = true;
       return;
     }
@@ -843,7 +843,7 @@ function renderRatingBoard(board: RatingLeaderboardResponse): void {
 // ---------- Наработка прибора ----------
 
 /**
- * Отсчёты из режимов, у которых нет конца партии, копятся здесь и уходят
+ * Потенциал из режимов, у которых нет конца партии, копится здесь и уходит
  * на сервер пачками. Слать каждый ход было бы расточительно, а копить до
  * конца партии нельзя — её попросту нет.
  *
@@ -909,8 +909,8 @@ function countCombo(path: Cell[], t: number, points: number, chain: number): voi
 
   run.moves.push({ path: path.map((cell) => ({ ...cell })), t: Number(t.toFixed(3)) });
 
-  // Длинная цепочка продлевает комбо ровно на один ход: его отсчёты
-  // сложатся с этими. Продление одноразовое — дальше отсчёт с нуля.
+  // Длинная цепочка продлевает комбо ровно на один ход: его потенциал
+  // сложится с этим. Продление одноразовое — дальше отсчёт с нуля.
   const combo = run.carried + points;
   const carries = chain >= COMBO_CARRY_CHAIN;
   run.carried = carries ? points : 0;
@@ -988,8 +988,8 @@ async function showComboBoard(period: BoardPeriod = boardPeriod): Promise<void> 
       overNoteEl.hidden = false;
       overNoteEl.textContent =
         period === 'day'
-          ? 'Сегодня рекордов ещё нет. Считаются отсчёты за один ход в бесконечном режиме.'
-          : 'Таблица пока пуста. Считаются отсчёты за один ход в бесконечном режиме.';
+          ? 'Сегодня рекордов ещё нет. Считается потенциал одного хода в бесконечном режиме.'
+          : 'Таблица пока пуста. Считается потенциал одного хода в бесконечном режиме.';
       dailyBoardEl.hidden = true;
       return;
     }

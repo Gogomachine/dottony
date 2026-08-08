@@ -216,7 +216,7 @@ export class Store {
     // Бот не может написать первым тому, кто его не запускал, — отмечаем,
     // кому писать можно, чтобы не считать отказ доставки поломкой.
     await this.addColumnIfMissing('identities', 'bot_started', 'INTEGER NOT NULL DEFAULT 0');
-    // Наработка прибора: сумма отсчётов за всё время. scored_at нужен, чтобы
+    // Наработка прибора: сумма потенциала за всё время. scored_at нужен, чтобы
     // проверять темп досылов из режимов, которые сервер не пересчитывает.
     await this.addColumnIfMissing('users', 'total_score', 'INTEGER NOT NULL DEFAULT 0');
     await this.addColumnIfMissing('users', 'scored_at', 'TEXT');
@@ -671,7 +671,7 @@ export class Store {
     }));
   }
 
-  /** Наработка прибора — сумма отсчётов игрока за всё время. */
+  /** Наработка прибора — сумма потенциала игрока за всё время. */
   async totalScore(userId: string): Promise<number> {
     const result = await this.client.execute({
       sql: 'SELECT total_score FROM users WHERE id = ?',
@@ -681,7 +681,7 @@ export class Store {
   }
 
   /**
-   * Засчитывает отсчёты, которые сервер посчитал сам: результат дуэли.
+   * Засчитывает потенциал, который сервер посчитал сам: результат дуэли.
    * Проверять тут нечего — эти очки уже прошли через ядро.
    */
   async addTotal(userId: string, points: number): Promise<void> {

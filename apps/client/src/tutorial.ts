@@ -42,7 +42,7 @@ interface Point {
 
 /** Куда обучение пишет показания. Всё это — обычные приборы клиента. */
 export interface TutorialHud {
-  /** Отсчёты и серия зарядов рядом с ними. */
+  /** Потенциал и серия зарядов рядом с ним. */
   score(value: number, streak: number): void;
   /** Правое поле приборной строки. */
   time(label: string, value: string): void;
@@ -310,7 +310,7 @@ export class Tutorial {
     this.hud.mini(miniState(phase, window, leader, cfg, true));
     this.hud.tint(phase.active ?? leader?.color ?? null);
     const left = Math.max(0, DUEL - t);
-    this.hud.time('Остаток', `${Math.floor(left / 60)}:${String(Math.floor(left % 60)).padStart(2, '0')}`);
+    this.hud.time('Время', `${Math.floor(left / 60)}:${String(Math.floor(left % 60)).padStart(2, '0')}`);
     this.hud.ticks(left / DUEL);
   }
 
@@ -318,7 +318,7 @@ export class Tutorial {
   private idleInstruments(): void {
     this.hud.mini({ text: 'Обучение · показ', cd: '--', color: null, fill: 0 });
     this.hud.tint(null);
-    this.hud.time('Остаток', '∞');
+    this.hud.time('Время', '∞');
     // Делений не зажигаем: пока идёт показ, запаса времени не существует.
     this.hud.ticks(0);
   }
@@ -401,7 +401,7 @@ export class Tutorial {
     await this.wait(1.8);
   }
 
-  /** 3. Увеличение: линзы подряд множат отсчёты. */
+  /** 3. Увеличение: линзы подряд множат потенциал. */
   private async cascadeAct(): Promise<void> {
     this.reset(3);
     const first: Cell[] = [
@@ -537,11 +537,11 @@ export class Tutorial {
     this.hud.score(this.score, 0);
     this.idleInstruments();
 
-    this.hud.time('Остаток', '3:00');
+    this.hud.time('Время', '3:00');
     this.say(
       6,
       'Спринт',
-      'Три минуты на максимум отсчётов. Попыток сколько угодно, в общую таблицу идёт лучшая — счёт подтверждает сервер, переигрывая заход.',
+      'Три минуты на максимум потенциала. Попыток сколько угодно, в общую таблицу идёт лучшая — счёт подтверждает сервер, переигрывая заход.',
     );
     await this.wait(2.6);
 
@@ -549,11 +549,11 @@ export class Tutorial {
     this.say(
       6,
       'Бесконечный',
-      'Без таймера. Место часов занимает челлендж: лучшие отсчёты за один ход. Отсчёты копятся в наработку прибора.',
+      'Без таймера. Место часов занимает челлендж: лучший потенциал за один ход. Потенциал копится в наработку прибора.',
     );
     await this.wait(2.6);
 
-    this.hud.time('Остаток', '1:30');
+    this.hud.time('Время', '1:30');
     this.hud.versus('Соперник', 2430);
     this.say(
       6,
