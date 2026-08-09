@@ -5,16 +5,13 @@ import {
   phaseColorAt,
   seedRng,
   DEFAULT_CONFIG,
+  SPRINT_SECONDS,
   type Board,
   type Claim,
 } from '@doton/core';
 import type { MoveLog } from '@doton/protocol';
+import { MIN_MOVE_GAP } from './limits.js';
 
-/** Длительность спринта, сек. */
-export const SPRINT_SECONDS = 180;
-
-/** Минимальный интервал между ходами: человек физически не жмёт чаще. */
-const MIN_MOVE_GAP = 0.1;
 
 export type ReplayError =
   | 'bad-timing'

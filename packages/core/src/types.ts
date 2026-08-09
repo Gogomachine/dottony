@@ -105,6 +105,13 @@ export const DEFAULT_CONFIG: GameConfig = {
  */
 export const COMBO_CARRY_CHAIN = 22;
 
+/**
+ * Длительность спринта, сек. Живёт здесь, а не у клиента: сервер по этому
+ * же числу отсекает ходы, присланные «после конца» захода. Разъехались бы
+ * копии — разъехались бы и правила приёма рекорда.
+ */
+export const SPRINT_SECONDS = 180;
+
 export interface MoveResult {
   board: Board;
   /** Точки цепочки в порядке пути. */

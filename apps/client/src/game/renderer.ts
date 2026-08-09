@@ -244,7 +244,6 @@ export class Renderer {
         const anim = this.anims[r]![c]!;
         const center = this.center({ r, c });
         const y = center.y + anim.offset;
-        const active = inChain.has(`${r},${c}`);
 
         // Squash & stretch: приземляясь, точка приминается и распрямляется.
         const squash = anim.squash;

@@ -96,17 +96,15 @@ export const TelegramAuthRequestSchema = z.object({
   initData: z.string().min(1).max(8192),
 });
 
+/*
+ * Наружу выведены только те типы запросов, которые кто-то читает: сервер
+ * берёт разобранные данные прямо из safeParse, клиент собирает тело
+ * запроса на месте. Остальные схемы говорят за себя — плодить рядом с
+ * ними алиасы «на всякий случай» нечего.
+ */
 export type Cell = z.infer<typeof CellSchema>;
 export type MoveLog = z.infer<typeof MoveLogSchema>;
-export type SubmitSprintRequest = z.infer<typeof SubmitSprintRequestSchema>;
-export type GuestAuthRequest = z.infer<typeof GuestAuthRequestSchema>;
-export type RenameRequest = z.infer<typeof RenameRequestSchema>;
-export type AvatarRequest = z.infer<typeof AvatarRequestSchema>;
-export type AddFriendRequest = z.infer<typeof AddFriendRequestSchema>;
-export type AddScoreRequest = z.infer<typeof AddScoreRequestSchema>;
 export type ComboMove = z.infer<typeof ComboMoveSchema>;
-export type SubmitComboRequest = z.infer<typeof SubmitComboRequestSchema>;
-export type TelegramAuthRequest = z.infer<typeof TelegramAuthRequestSchema>;
 
 export interface AuthResponse {
   token: string;
@@ -292,11 +290,14 @@ export const DuelJoinSchema = z.object({
   room: z.string().trim().min(4).max(16).optional(),
 });
 
+/*
+ * Секунды хода здесь нет намеренно: в дуэли время считает сервер по своим
+ * часам, и присланному значению всё равно не было бы веры. Лишнее поле в
+ * контракте только притворялось бы, что на него смотрят.
+ */
 export const DuelMoveSchema = z.object({
   type: z.literal('move'),
   path: z.array(CellSchema).min(3).max(64),
-  /** Секунда матча, на которой сделан ход. */
-  t: z.number().min(0).max(DUEL_SECONDS + 5),
 });
 
 export const DuelLeaveSchema = z.object({ type: z.literal('leave') });
@@ -308,11 +309,6 @@ export const DuelClientMessageSchema = z.discriminatedUnion('type', [
 ]);
 
 export type DuelClientMessage = z.infer<typeof DuelClientMessageSchema>;
-
-export interface DuelOpponent {
-  name: string;
-  score: number;
-}
 
 /** Точка поля в снимке состояния: цвет и признак заряда. */
 export interface DuelDot {

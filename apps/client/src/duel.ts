@@ -89,8 +89,8 @@ export class DuelConnection {
     this.retryTimer = window.setTimeout(() => this.open(), delay);
   }
 
-  move(path: Cell[], t: number): void {
-    this.send({ type: 'move', path, t: Number(t.toFixed(3)) });
+  move(path: Cell[]): void {
+    this.send({ type: 'move', path });
   }
 
   private send(message: DuelClientMessage): void {

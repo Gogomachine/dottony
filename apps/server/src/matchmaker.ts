@@ -191,10 +191,10 @@ export class Matchmaker {
     this.timers.set(duel.id, [...(this.timers.get(duel.id) ?? []), handle]);
   }
 
-  move(playerId: string, path: Cell[], t: number): MoveOutcome {
+  move(playerId: string, path: Cell[]): MoveOutcome {
     const duel = this.byPlayer.get(playerId);
     if (!duel) return { ok: false, reason: 'not-in-duel' };
-    const outcome = duel.applyMove(playerId, path, t);
+    const outcome = duel.applyMove(playerId, path);
     if (duel.isOver()) this.settle(duel);
     return outcome;
   }

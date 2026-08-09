@@ -10,6 +10,7 @@ import {
   type Cell,
   type Claim,
 } from '@doton/core';
+import { MIN_MOVE_GAP } from './limits.js';
 import {
   DUEL_SECONDS,
   type DuelServerMessage,
@@ -23,9 +24,6 @@ import {
  * проверяет каждый ход через то же ядро, что и клиент, — счёт клиента
  * не принимается на веру никогда.
  */
-
-/** Минимальный интервал между ходами: человек физически не жмёт чаще. */
-const MIN_MOVE_GAP = 0.1;
 
 /** Заявка на цвет фазы вместе с тем, кто её подал. */
 export interface DuelClaim extends Claim {
@@ -150,13 +148,15 @@ export class Duel {
   /**
    * Применяет ход игрока: проверяет темп и легальность, начисляет очки
    * и сообщает сопернику новый счёт.
+   *
+   * Время хода — только серверное. Клиент своей секунды не присылает: ей
+   * всё равно не было бы веры, а поле в контракте создавало бы обратное
+   * впечатление.
    */
-  applyMove(playerId: string, path: Cell[], t: number, now = Date.now()): MoveOutcome {
+  applyMove(playerId: string, path: Cell[], now = Date.now()): MoveOutcome {
     const state = this.players.get(playerId);
     if (!state) return { ok: false, reason: 'not-in-duel' };
     if (this.isOver(now)) return { ok: false, reason: 'duel-over' };
-    // Время берём серверное: присланному t доверять нельзя, он лишь
-    // помогает отсеять всплески частоты.
     const elapsed = this.elapsed(now);
     if (elapsed < state.lastMoveAt + MIN_MOVE_GAP) return { ok: false, reason: 'too-fast' };
 

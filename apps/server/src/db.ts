@@ -2,16 +2,12 @@ import { randomInt } from 'node:crypto';
 import { createClient, type Client } from '@libsql/client';
 import { newRating, PLACEMENT_GAMES, type Rating } from '@doton/core';
 import type { BoardPeriod } from '@doton/protocol';
+import { MIN_MOVE_GAP, MOVE_SLACK } from './limits.js';
 
 export type { BoardPeriod };
 
 /** Без похожих друг на друга символов: код диктуют вслух. */
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-
-/** Минимальный интервал между ходами — тот же, что проверяет дуэль. */
-const MIN_MOVE_GAP = 0.1;
-/** Запас на первый досыл и расхождение часов. */
-const MOVE_SLACK = 30;
 
 export function makeFriendCode(): string {
   let code = '';

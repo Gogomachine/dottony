@@ -60,7 +60,7 @@ const overlay = el<HTMLDivElement>('game-over');
 const overTitleEl = el<HTMLHeadingElement>('over-title');
 const overNoteEl = el<HTMLParagraphElement>('over-note');
 const finalScoreEl = el<HTMLSpanElement>('final-score');
-const dailyBoardEl = el<HTMLOListElement>('daily-board');
+const boardListEl = el<HTMLOListElement>('board-list');
 const boardTabsEl = el<HTMLDivElement>('board-tabs');
 const modalBtn = el<HTMLButtonElement>('modal-action');
 const scopeEl = el<HTMLDivElement>('scope');
@@ -465,7 +465,7 @@ async function showSprintBoard(period: BoardPeriod = boardPeriod): Promise<void>
         period === 'day'
           ? 'Сегодня ещё никто не заходил. Три минуты на максимум потенциала — и ты первый.'
           : 'Таблица пока пуста. Три минуты на максимум потенциала — и ты в ней.';
-      dailyBoardEl.hidden = true;
+      boardListEl.hidden = true;
       return;
     }
     overNoteEl.hidden = false;
@@ -476,13 +476,13 @@ async function showSprintBoard(period: BoardPeriod = boardPeriod): Promise<void>
   } catch {
     overNoteEl.hidden = false;
     overNoteEl.textContent = 'Таблица спринта недоступна. Попробуй позже.';
-    dailyBoardEl.hidden = true;
+    boardListEl.hidden = true;
   }
 }
 
 function renderSprintBoard(board: SprintLeaderboardResponse): void {
-  dailyBoardEl.hidden = false;
-  dailyBoardEl.innerHTML = '';
+  boardListEl.hidden = false;
+  boardListEl.innerHTML = '';
   const rows = [...board.entries];
   // Своя строка нужна всегда, даже если игрок не попал в верхушку таблицы.
   if (board.me && !rows.some((entry) => entry.rank === board.me!.rank)) rows.push(board.me);
@@ -493,7 +493,7 @@ function renderSprintBoard(board: SprintLeaderboardResponse): void {
       `<span class="rank">${entry.rank}</span><span></span><span class="pts"></span>`;
     (item.children[1] as HTMLElement).textContent = entry.name;
     (item.children[2] as HTMLElement).textContent = groupDigits(entry.score);
-    dailyBoardEl.appendChild(item);
+    boardListEl.appendChild(item);
   }
 }
 
@@ -567,7 +567,7 @@ function showOverModal(options: {
   if (options.score !== undefined) finalScoreEl.textContent = String(options.score);
   overNoteEl.hidden = options.note === undefined;
   overNoteEl.textContent = options.note ?? '';
-  dailyBoardEl.hidden = true;
+  boardListEl.hidden = true;
   // Переключатель периода принадлежит таблице: её показ его и поднимет.
   boardTabsEl.hidden = true;
   openBoard = null;
@@ -819,8 +819,8 @@ async function showRatingBoard(): Promise<void> {
 }
 
 function renderRatingBoard(board: RatingLeaderboardResponse): void {
-  dailyBoardEl.hidden = false;
-  dailyBoardEl.innerHTML = '';
+  boardListEl.hidden = false;
+  boardListEl.innerHTML = '';
   const rows = [...board.entries];
   // Своя строка нужна всегда, даже если игрок не попал в верхушку таблицы.
   if (board.me && !rows.some((entry) => entry.rank === board.me!.rank)) rows.push(board.me);
@@ -836,7 +836,7 @@ function renderRatingBoard(board: RatingLeaderboardResponse): void {
     // Лига подписью под именем: на телефоне подсказки по наведению не работают.
     (who.children[1] as HTMLElement).textContent = entry.league;
     (item.children[2] as HTMLElement).textContent = String(entry.rating);
-    dailyBoardEl.appendChild(item);
+    boardListEl.appendChild(item);
   }
 }
 
@@ -990,7 +990,7 @@ async function showComboBoard(period: BoardPeriod = boardPeriod): Promise<void> 
         period === 'day'
           ? 'Сегодня рекордов ещё нет. Считается потенциал одного хода в бесконечном режиме.'
           : 'Таблица пока пуста. Считается потенциал одного хода в бесконечном режиме.';
-      dailyBoardEl.hidden = true;
+      boardListEl.hidden = true;
       return;
     }
     overNoteEl.hidden = false;
@@ -1001,13 +1001,13 @@ async function showComboBoard(period: BoardPeriod = boardPeriod): Promise<void> 
   } catch {
     overNoteEl.hidden = false;
     overNoteEl.textContent = 'Таблица комбо недоступна. Попробуй позже.';
-    dailyBoardEl.hidden = true;
+    boardListEl.hidden = true;
   }
 }
 
 function renderComboBoard(board: ComboLeaderboardResponse): void {
-  dailyBoardEl.hidden = false;
-  dailyBoardEl.innerHTML = '';
+  boardListEl.hidden = false;
+  boardListEl.innerHTML = '';
   const rows = [...board.entries];
   // Своя строка нужна всегда, даже если игрок не попал в верхушку таблицы.
   if (board.me && !rows.some((entry) => entry.rank === board.me!.rank)) rows.push(board.me);
@@ -1018,7 +1018,7 @@ function renderComboBoard(board: ComboLeaderboardResponse): void {
       `<span class="rank">${entry.rank}</span><span></span><span class="pts"></span>`;
     (item.children[1] as HTMLElement).textContent = entry.name;
     (item.children[2] as HTMLElement).textContent = groupDigits(entry.combo);
-    dailyBoardEl.appendChild(item);
+    boardListEl.appendChild(item);
   }
 }
 
@@ -1131,7 +1131,7 @@ const input = new ChainInput(
     if (sprintRun) {
       sprintRun.moves.push({ path: path.map((cell) => ({ ...cell })), t: Number(elapsed.toFixed(3)) });
     }
-    if (inDuel) duel.move(path, elapsed);
+    if (inDuel) duel.move(path);
     countScore(result.points);
     renderer.animateMove(oldGrid, result);
     showFloatingPoints(result.points, result.multiplier, at);

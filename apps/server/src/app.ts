@@ -42,6 +42,7 @@ import { Bot, makeLinkToken, parseStart, type BotUpdate } from './bot.js';
 import { replayCombo } from './combo.js';
 import { replaySprint } from './sprint.js';
 import { Store, type BoardPeriod } from './db.js';
+import { MAX_POINTS_PER_MOVE, SignupGuard } from './limits.js';
 import { DEFAULT_GHOST_SCORE, makeSyntheticGhost } from './ghost.js';
 import { Matchmaker, type MatchResult } from './matchmaker.js';
 import type { DuelOutcome, DuelPlayer } from './duel.js';
@@ -75,8 +76,6 @@ const LEADERBOARD_SIZE = 50;
 const RATING_BOARD_SIZE = 50;
 const HISTORY_SIZE = 20;
 const RECENT_OPPONENTS = 8;
-/** Потолок стоимости одного хода — грубая проверка правдоподобия досыла. */
-const MAX_POINTS_PER_MOVE = 20_000;
 
 /**
  * Какую таблицу просят: сегодняшнюю или вечную. Всё, кроме явного
@@ -95,9 +94,35 @@ function idleDays(ratedAt: string | null): number {
   return Math.max(0, (Date.now() - last) / 86_400_000);
 }
 
+/**
+ * Адрес запроса для лога — без строки запроса.
+ *
+ * Браузерный WebSocket не умеет слать заголовки, поэтому токен дуэли
+ * приходит параметром `/duel?token=…`. В логе такой адрес — это выданный
+ * навсегда токен, лежащий в открытом виде у всех, кто до логов дотянется.
+ * Путь для отладки и так достаточен, а параметры не нужны.
+ */
+export function loggedUrl(url: string | undefined): string {
+  if (!url) return '';
+  const cut = url.indexOf('?');
+  return cut === -1 ? url : `${url.slice(0, cut)}?…`;
+}
+
 /** Собирает приложение и готовит схему БД. */
 export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
-  const app = Fastify({ logger: options.logger ?? false });
+  const app = Fastify({
+    logger: options.logger
+      ? {
+          serializers: {
+            req: (request) => ({
+              method: request.method,
+              url: loggedUrl(request.url),
+              remoteAddress: request.ip,
+            }),
+          },
+        }
+      : false,
+  });
   const store = new Store(
     options.databaseAuthToken
       ? { url: options.databaseUrl, authToken: options.databaseAuthToken }
@@ -107,7 +132,10 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
 
   await app.register(cors, { origin: true });
   await app.register(jwt, { secret: options.jwtSecret });
-  await app.register(websocket);
+  // Ход дуэли — это десяток клеток; всё, что больше килобайта, прислано
+  // не игрой. Без потолка ws принимает кадры до 100 МиБ, и один клиент
+  // может занять память сервера, ничего не нарушая формально.
+  await app.register(websocket, { options: { maxPayload: 16 * 1024 } });
 
   const bot = options.telegramBotToken
     ? new Bot(options.telegramBotToken, options.jwtSecret, {
@@ -246,7 +274,12 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
 
   // ---------- Авторизация ----------
 
+  const signups = new SignupGuard();
+
   app.post('/api/auth/guest', async (request, reply) => {
+    // Единственная дверь без пароля и подписи: за ней сразу заводится
+    // аккаунт, поэтому она же и единственная, где считаем частоту.
+    if (!signups.allow(request.ip)) return reply.code(429).send({ error: 'too-many' });
     const parsed = GuestAuthRequestSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
     const id = randomUUID();
@@ -827,7 +860,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
           matchmaker.join(player, message.data.room);
           break;
         case 'move': {
-          const outcome = matchmaker.move(player.id, message.data.path, message.data.t);
+          const outcome = matchmaker.move(player.id, message.data.path);
           player.send(
             outcome.ok
               ? { type: 'accepted', score: outcome.score, points: outcome.points }

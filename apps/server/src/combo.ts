@@ -10,9 +10,7 @@ import {
   type Claim,
 } from '@doton/core';
 import type { ComboMove } from '@doton/protocol';
-
-/** Минимальный интервал между ходами: человек физически не жмёт чаще. */
-const MIN_MOVE_GAP = 0.1;
+import { MIN_MOVE_GAP } from './limits.js';
 
 export type ComboError = 'bad-timing' | 'invalid-move';
 

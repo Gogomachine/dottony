@@ -8,6 +8,7 @@ import {
   phaseStateAt,
   seedRng,
   DEFAULT_CONFIG,
+  SPRINT_SECONDS,
   type Board,
   type Cell,
   type Claim,
@@ -21,13 +22,15 @@ import {
 
 export type Mode = 'sprint' | 'free' | 'duel';
 
+// Длительность спринта задаёт ядро — клиент и сервер меряют заход одним
+// числом. Переэкспорт, чтобы экран не лез в ядро за одной константой.
+export { SPRINT_SECONDS };
+
 /**
  * Ошибки ядра плюс отказ самой сессии: ход в стоп-кадре ядро бы принял,
  * но партия в этот момент стоит.
  */
 export type SessionMoveError = MoveError | 'paused';
-
-export const SPRINT_SECONDS = 180;
 
 /** Заявка с пометкой, чья она: правилу это безразлично, показу — нет. */
 export interface SessionClaim extends Claim {

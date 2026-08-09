@@ -80,7 +80,7 @@ describe('Duel', () => {
     const board = createBoard(seedRng(seed), DEFAULT_CONFIG);
     const path = findAnyChain(board);
 
-    const outcome = duel.applyMove('a', path, 1);
+    const outcome = duel.applyMove('a', path);
     expect(outcome).toMatchObject({ ok: true, points: 30, score: 30 });
     // Соперник видит только счёт, не поле.
     expect(b.last('opponent')).toEqual({ type: 'opponent', score: 30 });
@@ -102,17 +102,13 @@ describe('Duel', () => {
     const expected = applyMove(board, path, DEFAULT_CONFIG, phase);
     if (typeof expected === 'string') throw new Error(expected);
 
-    const outcome = duel.applyMove('a', path, 0, now + phaseTime * 1000);
+    const outcome = duel.applyMove('a', path, now + phaseTime * 1000);
     expect(outcome).toMatchObject({ ok: true, points: expected.points });
   });
 
   it('отклоняет нелегальный ход', () => {
     const duel = new Duel(seed, recorder('a'), recorder('b'));
-    const outcome = duel.applyMove(
-      'a',
-      [{ r: 0, c: 0 }, { r: 5, c: 5 }, { r: 0, c: 1 }],
-      1,
-    );
+    const outcome = duel.applyMove('a', [{ r: 0, c: 0 }, { r: 5, c: 5 }, { r: 0, c: 1 }]);
     expect(outcome.ok).toBe(false);
   });
 
@@ -126,10 +122,10 @@ describe('Duel', () => {
     if (typeof applied === 'string') throw new Error(applied);
     board = applied.board;
 
-    expect(duel.applyMove('a', first, 1, now + 1000).ok).toBe(true);
+    expect(duel.applyMove('a', first, now + 1000).ok).toBe(true);
     // Второй ход спустя 10 мс — быстрее, чем возможно вручную.
     const second = findAnyChain(board);
-    expect(duel.applyMove('a', second, 1, now + 1010)).toMatchObject({
+    expect(duel.applyMove('a', second, now + 1010)).toMatchObject({
       ok: false,
       reason: 'too-fast',
     });
@@ -140,7 +136,7 @@ describe('Duel', () => {
     const duel = new Duel(seed, recorder('a'), recorder('b'), { now });
     const board = createBoard(seedRng(seed), DEFAULT_CONFIG);
     const path = findAnyChain(board);
-    expect(duel.applyMove('a', path, 1, now + (DUEL_SECONDS + 2) * 1000)).toMatchObject({
+    expect(duel.applyMove('a', path, now + (DUEL_SECONDS + 2) * 1000)).toMatchObject({
       ok: false,
       reason: 'duel-over',
     });
@@ -151,7 +147,7 @@ describe('Duel', () => {
     const b = recorder('b');
     const duel = new Duel(seed, a, b);
     const board = createBoard(seedRng(seed), DEFAULT_CONFIG);
-    duel.applyMove('a', findAnyChain(board), 1);
+    duel.applyMove('a', findAnyChain(board));
     duel.finish();
 
     expect(a.last('finished')).toMatchObject({ outcome: 'win', score: 30, opponentScore: 0 });
@@ -175,7 +171,7 @@ describe('Duel', () => {
     const b = recorder('b');
     const duel = new Duel(seed, a, b);
     const board = createBoard(seedRng(seed), DEFAULT_CONFIG);
-    duel.applyMove('a', findAnyChain(board), 1);
+    duel.applyMove('a', findAnyChain(board));
 
     duel.abandon('a');
     expect(a.last('finished')).toMatchObject({ outcome: 'loss' });
@@ -233,7 +229,7 @@ describe('Matchmaker', () => {
 
   it('ход вне матча отклоняется', () => {
     const { maker } = make();
-    expect(maker.move('nobody', [], 1)).toMatchObject({ ok: false, reason: 'not-in-duel' });
+    expect(maker.move('nobody', [])).toMatchObject({ ok: false, reason: 'not-in-duel' });
   });
 
   it('по истечении времени матч закрывается и результат сохраняется', () => {
@@ -320,7 +316,7 @@ describe('признак рейтингового матча', () => {
     maker.join(a);
     maker.join(b);
     const seed = (a.last('matched') as { seed: number }).seed;
-    maker.move('a', findAnyChain(createBoard(seedRng(seed), DEFAULT_CONFIG)), 1);
+    maker.move('a', findAnyChain(createBoard(seedRng(seed), DEFAULT_CONFIG)));
 
     fire((DUEL_SECONDS + 1) * 1000);
     expect(result().rated).toBe(true);
@@ -404,7 +400,7 @@ describe('обрыв связи', () => {
 
     const seed = (a.last('matched') as { seed: number }).seed;
     const board = createBoard(seedRng(seed), DEFAULT_CONFIG);
-    maker.move('a', findAnyChain(board), 1);
+    maker.move('a', findAnyChain(board));
     maker.disconnect('a');
 
     // Игрок вернулся: новое соединение, тот же идентификатор.
@@ -438,7 +434,7 @@ describe('обрыв связи', () => {
     maker.join(reconnected);
 
     const board = createBoard(seedRng(seed), DEFAULT_CONFIG);
-    expect(maker.move('a', findAnyChain(board), 1).ok).toBe(true);
+    expect(maker.move('a', findAnyChain(board)).ok).toBe(true);
     expect(b.last('opponent')).toEqual({ type: 'opponent', score: 30 });
   });
 
@@ -450,7 +446,7 @@ describe('обрыв связи', () => {
     maker.join(b);
     const seed = (a.last('matched') as { seed: number }).seed;
     const board = createBoard(seedRng(seed), DEFAULT_CONFIG);
-    maker.move('a', findAnyChain(board), 1);
+    maker.move('a', findAnyChain(board));
 
     maker.disconnect('a');
     fireTimers();
@@ -678,7 +674,7 @@ describe('заявка на цвет', () => {
     const now = Date.now();
     const duel = new Duel(s, a, b, { now });
 
-    const claimed = duel.applyMove('a', path, 0, now + inWindow * 1000);
+    const claimed = duel.applyMove('a', path, now + inWindow * 1000);
     expect(claimed.ok).toBe(true);
     // Заявку объявляют обоим — своя приходит тем же сообщением, что чужая.
     expect(a.last('claim')).toMatchObject({ cycle: 1, color, mine: true });
@@ -689,7 +685,7 @@ describe('заявка на цвет', () => {
     const board = createBoard(seedRng(s), cfg);
     const plain = applyMove(board, path, cfg, phaseColorAt(s, inPhase, cfg));
     if (typeof plain === 'string') throw new Error(plain);
-    const scored = duel.applyMove('b', path, 0, now + inPhase * 1000);
+    const scored = duel.applyMove('b', path, now + inPhase * 1000);
     expect(scored).toMatchObject({ ok: true, points: plain.points * cfg.phaseMultiplier });
   });
 
@@ -699,14 +695,14 @@ describe('заявка на цвет', () => {
     const duel = new Duel(s, a, recorder('b'), { now: 0 });
 
     // Вне окна — заявки нет.
-    duel.applyMove('a', path, 0, (inWindow - cfg.claimWindow) * 1000);
+    duel.applyMove('a', path, (inWindow - cfg.claimWindow) * 1000);
     expect(a.last('claim')).toBeUndefined();
     expect(duel.claimLog()).toHaveLength(0);
 
     // Короткая цепочка внутри окна — тоже нет.
     const short = findChain(createBoard(seedRng(s), cfg), cfg.claimChainLength - 1, 0);
     if (short) {
-      duel.applyMove('a', short, 0, inWindow * 1000);
+      duel.applyMove('a', short, inWindow * 1000);
       expect(duel.claimLog().every((claim) => claim.length >= cfg.claimChainLength)).toBe(true);
     }
   });
@@ -715,7 +711,7 @@ describe('заявка на цвет', () => {
     const { seed: s, color, path } = layout(cfg.claimChainLength);
     const now = Date.now();
     const duel = new Duel(s, recorder('a'), recorder('b'), { now });
-    duel.applyMove('a', path, 0, now + inWindow * 1000);
+    duel.applyMove('a', path, now + inWindow * 1000);
 
     expect(duel.snapshot('a')?.claims).toEqual([
       expect.objectContaining({ cycle: 1, color, mine: true }),

@@ -17,10 +17,11 @@ import {
   type Color,
 } from '@doton/core';
 import type { ComboMove, DuelServerMessage, MoveLog } from '@doton/protocol';
-import { buildApp } from './app.js';
+import { buildApp, loggedUrl } from './app.js';
 import { parseStart } from './bot.js';
 import { Store } from './db.js';
 import { replayCombo } from './combo.js';
+import { SIGNUP_LIMIT } from './limits.js';
 import { replaySprint } from './sprint.js';
 import { verifyTelegramInitData } from './telegram.js';
 
@@ -1423,7 +1424,7 @@ describe('рейтинг за дуэль', () => {
     let board = createBoard(seedRng(matched.seed), DEFAULT_CONFIG);
     for (let i = 0; i < (options.moves ?? 2); i++) {
       const path = findAnyChain(board);
-      winner.send({ type: 'move', path, t: i });
+      winner.send({ type: 'move', path });
       await winner.wait((message) => message.type === 'accepted' || message.type === 'rejected');
       const applied = applyMove(board, path, DEFAULT_CONFIG, null);
       if (typeof applied !== 'string') board = applied.board;
@@ -1886,5 +1887,29 @@ describe('таблицы за день и за всё время', () => {
     expect((always.json() as { entries: unknown[] }).entries).toEqual([
       { rank: 1, name: 'Ада', combo },
     ]);
+  });
+});
+
+describe('loggedUrl', () => {
+  it('срезает строку запроса: токен дуэли не должен попасть в лог', () => {
+    expect(loggedUrl('/duel?token=eyJhbGciOi.secret.value')).toBe('/duel?…');
+    expect(loggedUrl('/api/me')).toBe('/api/me');
+    expect(loggedUrl(undefined)).toBe('');
+  });
+});
+
+describe('порог гостевых аккаунтов', () => {
+  it('после SIGNUP_LIMIT заходов с адреса отвечает 429', async () => {
+    const app = await buildApp({ databaseUrl: ':memory:', jwtSecret: 'test-jwt' });
+    const guest = (): ReturnType<typeof app.inject> =>
+      app.inject({ method: 'POST', url: '/api/auth/guest', payload: { name: 'Гость' } });
+
+    for (let i = 0; i < SIGNUP_LIMIT; i++) {
+      expect((await guest()).statusCode).toBe(200);
+    }
+    const blocked = await guest();
+    expect(blocked.statusCode).toBe(429);
+    expect(blocked.json()).toEqual({ error: 'too-many' });
+    await app.close();
   });
 });
