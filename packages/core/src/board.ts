@@ -21,6 +21,29 @@ export function createBoard(seed: RngState, cfg: GameConfig): Board {
   return { grid, rng, moveCount: 0, surgeStreak: 0 };
 }
 
+/**
+ * Цвет свежей точки. Обычно все цвета равны; в окне заказа прибор
+ * притягивает свой — он выпадает с весом `orderWeight` против единицы у
+ * каждого из остальных. Розыгрыш всё равно один на точку, поэтому порядок
+ * обращений к RNG не меняется.
+ */
+function nextColor(
+  rng: RngState,
+  cfg: GameConfig,
+  bias: Color | null,
+): { color: Color; state: RngState } {
+  if (bias === null) {
+    const roll = nextInt(rng, cfg.colors);
+    return { color: roll.value as Color, state: roll.state };
+  }
+  const weight = cfg.orderWeight;
+  const roll = nextInt(rng, weight + cfg.colors - 1);
+  if (roll.value < weight) return { color: bias, state: roll.state };
+  // Остаток раздаём прочим цветам по порядку, пропуская притянутый.
+  const rest = roll.value - weight;
+  return { color: (rest >= bias ? rest + 1 : rest) as Color, state: roll.state };
+}
+
 export function cellAt(grid: Grid, cell: Cell): DotCell | undefined {
   return grid[cell.r]?.[cell.c];
 }
@@ -35,7 +58,13 @@ export interface CollapseResult {
  * Порядок обращений к RNG зафиксирован и менять его нельзя — сломается
  * совместимость реплеев: по столбцам слева направо, в столбце сверху вниз.
  */
-export function collapse(board: Board, removed: Cell[], cfg: GameConfig): CollapseResult {
+export function collapse(
+  board: Board,
+  removed: Cell[],
+  cfg: GameConfig,
+  /** Цвет, который прибор притягивает досыпкой; null — все цвета поровну. */
+  bias: Color | null = null,
+): CollapseResult {
   const gone: boolean[][] = Array.from({ length: cfg.rows }, () =>
     Array<boolean>(cfg.cols).fill(false),
   );
@@ -55,8 +84,8 @@ export function collapse(board: Board, removed: Cell[], cfg: GameConfig): Collap
     }
     const missing = cfg.rows - survivors.length;
     for (let r = 0; r < missing; r++) {
-      const roll = nextInt(rng, cfg.colors);
-      grid[r]![c] = dot(roll.value as Color);
+      const roll = nextColor(rng, cfg, bias);
+      grid[r]![c] = dot(roll.color);
       rng = roll.state;
     }
     for (let i = 0; i < survivors.length; i++) {

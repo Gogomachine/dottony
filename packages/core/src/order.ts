@@ -1,66 +1,63 @@
-import { nextInt } from './rng.js';
-import type { Color, GameConfig, MoveResult, RngState } from './types.js';
+import { nextInt, seedRng } from './rng.js';
+import type { Color, GameConfig } from './types.js';
 
 /**
- * Заказ: прибор просит снять ровно столько точек названного цвета.
+ * Заказ: прибор входит в резонанс со случайным цветом и держит окно
+ * `orderWindow` секунд. За это время нужно снять `orderTarget` точек этого
+ * цвета — и обязательно за один раз, одним касанием.
  *
- * Смысл механики в слове «ровно». Точки снимаются группами, а размер
- * группы задаёт поле, а не игрок: под конец заказа остаётся взять четыре,
- * а на поле лежат шестёрки. Поэтому последние ходы — это работа на
- * будущее: разобрать чужие цвета так, чтобы нужная группа получилась
- * нужного размера. Перебор заказ срывает — в этом и интрига.
+ * Смысл механики в том, что размер группы задаёт поле, а не игрок: пятно
+ * нужного цвета выращивают, разбирая всё вокруг, а сколько в нём точек на
+ * самом деле — до касания не сосчитать. Может оказаться двадцать четыре, и
+ * тогда всё уйдёт впустую. В этом и интрига.
  *
- * Правило чистое и живёт в ядре: цвет заказа выводится из состояния RNG,
- * поэтому последовательность заказов воспроизводима по сиду, как и всё
- * остальное в игре.
+ * Пока окно открыто, прибор притягивает свой цвет: досыпка отдаёт ему вес
+ * `orderWeight` против единицы у каждого из прочих. Без притяжения пятно
+ * упирается в два десятка точек, и цель была бы не задачей, а лотереей
+ * расклада — с ним медиана достижимого встаёт ровно на цель.
+ *
+ * Всё выводится из сида и секунды партии, как и фазы: одинаковый заход
+ * даёт одинаковые окна.
  */
 
-export interface Order {
+export interface OrderState {
+  /** Цвет окна; в паузе — цвет следующего окна. */
   color: Color;
-  /** Сколько точек этого цвета нужно снять — ровно столько. */
-  target: number;
+  /** Открыто ли окно прямо сейчас. */
+  open: boolean;
+  /** Секунды до конца окна или, в паузе, до начала следующего. */
+  remaining: number;
+  /** Номер окна с начала захода; в паузе — уже следующего. */
+  cycle: number;
 }
 
-/**
- * Чем ход кончился для заказа:
- * - `idle` — ход был другого цвета, заказа не касается;
- * - `grows` — засчитан, до цели ещё есть чем добрать;
- * - `done` — набрано ровно, заказ закрыт;
- * - `over` — перебор, заказ сорван;
- * - `stuck` — недобор, которым уже не закрыться: остаток меньше цепочки,
- *   а группами меньше неё точки не снимаются.
- */
-export type OrderStep = 'idle' | 'grows' | 'done' | 'over' | 'stuck';
+function colorOfWindow(seed: number, cycle: number, cfg: GameConfig): Color {
+  const roll = nextInt(seedRng((seed ^ Math.imul(cycle + 1, 0x85ebca6b)) >>> 0), cfg.colors);
+  return roll.value as Color;
+}
 
-export function nextOrder(rng: RngState, cfg: GameConfig): { order: Order; state: RngState } {
-  const roll = nextInt(rng, cfg.colors);
+export function orderAt(seed: number, timeSec: number, cfg: GameConfig): OrderState {
+  const period = cfg.orderWindow + cfg.orderBreak;
+  const passed = Math.floor(timeSec / period);
+  const within = timeSec - passed * period;
+  const open = within < cfg.orderWindow;
+  // В паузе прибор уже называет следующий цвет: пауза для того и нужна —
+  // успеть посмотреть на поле и решить, с чего начинать.
+  const cycle = open ? passed : passed + 1;
   return {
-    order: { color: roll.value as Color, target: cfg.orderTarget },
-    state: roll.state,
+    color: colorOfWindow(seed, cycle, cfg),
+    open,
+    remaining: open ? cfg.orderWindow - within : period - within,
+    cycle,
   };
 }
 
 /**
- * Засчитывает ход в заказ. В счёт идут только точки самой группы: взрыв
- * заряда сносит что попало, и пускать его в заказ значило бы отдать
- * решающий ход лотерее.
- *
- * Заказ срывает не только перебор. Остаток меньше цепочки — тоже срыв:
- * группами короче `minChain` точки не снимаются, значит добрать нечем. Из
- * этого и растёт вся стратегия режима: оставляй себе или ровно ноль, или
- * не меньше цепочки.
+ * Награда за снятую группу: ровно в цель стоит `orderReward`, и каждая
+ * точка сверх цели — столько же ещё. Недобор не стоит ничего: линия
+ * резкая, иначе исчезает вся ставка хода.
  */
-export function fillOrder(
-  order: Order,
-  taken: number,
-  move: MoveResult,
-  cfg: GameConfig,
-): { taken: number; step: OrderStep } {
-  if (move.color !== order.color) return { taken, step: 'idle' };
-
-  const next = taken + move.removed.length;
-  if (next === order.target) return { taken: next, step: 'done' };
-  if (next > order.target) return { taken: next, step: 'over' };
-  if (next > order.target - cfg.minChain) return { taken: next, step: 'stuck' };
-  return { taken: next, step: 'grows' };
+export function orderReward(size: number, cfg: GameConfig): number {
+  if (size < cfg.orderTarget) return 0;
+  return cfg.orderReward * (size - cfg.orderTarget + 1);
 }

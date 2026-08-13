@@ -44,7 +44,7 @@ import { Session, SPRINT_SECONDS, type Mode } from './game/session';
 import { Tutorial } from './tutorial';
 import { brandLockup } from './brand';
 import { emblemSvg } from './emblem';
-import { applyTheme, loadMarks, loadTap, loadThemeName, saveMarks, saveTap, SCOPE } from './theme';
+import { applyTheme, loadMarks, loadThemeName, saveMarks, SCOPE } from './theme';
 
 function el<T extends HTMLElement>(id: string): T {
   const found = document.getElementById(id);
@@ -81,8 +81,6 @@ const vsScoreEl = el<HTMLSpanElement>('vs-score');
 const ratingLineEl = el<HTMLDivElement>('rating-line');
 const menuEl = el<HTMLDivElement>('menu');
 const menuSeedEl = el<HTMLSpanElement>('menu-seed');
-const expTapEl = el<HTMLButtonElement>('exp-tap');
-const expTapStateEl = el<HTMLElement>('exp-tap-state');
 const resultEl = el<HTMLDivElement>('result');
 const resultCapEl = el<HTMLSpanElement>('result-cap');
 const resultBigEl = el<HTMLSpanElement>('result-big');
@@ -128,26 +126,15 @@ let mode: Mode = 'sprint';
  * поэтому переключатель меняет само поле `features.tap`, а не собирает
  * новый конфиг: иначе половина игры осталась бы со старым.
  */
-/** Опыт с касанием включён игроком — выбор переживает перезагрузку. */
-let tapChosen = loadTap();
-
-const cfg: GameConfig = {
-  ...DEFAULT_CONFIG,
-  features: { ...DEFAULT_CONFIG.features, tap: tapChosen },
-};
+const cfg: GameConfig = { ...DEFAULT_CONFIG, features: { ...DEFAULT_CONFIG.features } };
 
 /**
- * Ставит способ хода по режиму. В заказах он не выбирается: там весь смысл
- * в том, что размер группы задаёт поле, а не игрок. Дай там вести цепочку
- * пальцем — и «ровно 25» собиралось бы по счётчику, без единой развилки.
+ * Ставит способ хода по режиму. Касанием играют только заказы: там весь
+ * смысл в том, что размер группы задаёт поле, а не игрок. Дай там вести
+ * цепочку пальцем — и «25 за раз» отмерялось бы по счётчику, без ставки.
  */
 function syncTap(): void {
-  cfg.features.tap = tapChosen || mode === 'order';
-}
-
-/** Правила разошлись с заводскими — рекорды никуда не уходят: это другая игра. */
-function experiment(): boolean {
-  return cfg.features.tap;
+  cfg.features.tap = mode === 'order';
 }
 
 /**
@@ -212,20 +199,19 @@ function startGame(seed?: number): void {
   if (!replay) input.enabled = true;
   // Челлендж живёт только в бесконечном режиме: в остальных заход кончается
   // сам, и мерить в них рекорд серии — другая игра.
-  // В опыте журналы не ведём вовсе: сервер проверяет заход цепочками, а
-  // ход касанием он воспроизвести не умеет — и не должен, пока механика
-  // не принята. Заодно это держит общие таблицы честными.
   comboRun =
-    session.mode === 'free' && !experiment()
+    session.mode === 'free'
       ? { seed: session.seed, moves: [], best: 0, carried: 0, sent: 0, full: false }
       : null;
   // Спринт пишется весь: без журнала рекорд нечем подтвердить.
   sprintRun =
-    session.mode === 'sprint' && !replay && !experiment()
-      ? { seed: session.seed, moves: [] }
-      : null;
+    session.mode === 'sprint' && !replay ? { seed: session.seed, moves: [] } : null;
   renderer.resetAnims();
   updateStreak(0);
+  // Новая партия — новые окна: показ прошлых не должен пережить сброс.
+  shownWindow = -1;
+  shownChain = '';
+  miniCache = '';
   overlay.hidden = true;
   resultEl.hidden = true;
   menuEl.hidden = true;
@@ -255,18 +241,30 @@ function setStat(text: string, kind: '' | 'live' | 'warn' = ''): void {
 }
 
 function updateHud(): void {
-  scoreEl.textContent = String(session.score);
+  scoreEl.textContent = groupDigits(session.score);
+  const order = session.order();
+  if (order) {
+    // В заказах справа — счёт закрытых, а шкала делений отдана окну: она
+    // и есть таймер, только не всей партии, а текущего резонанса.
+    timeLabelEl.textContent = 'Заказы';
+    timeEl.textContent = String(session.ordersDone);
+    const full = order.open ? session.cfg.orderWindow : session.cfg.orderBreak;
+    const lit = Math.round((order.remaining / full) * TICKS);
+    const warn = order.open && order.remaining <= 8;
+    timeFieldEl.className = `field right${warn ? ' warn' : ''}`;
+    tickEls.forEach((tick, i) => {
+      // Пауза показана пунктиром наоборот: деления не горят, а копятся к
+      // началу окна — видно, что прибор ещё не звенит.
+      const on = order.open ? i < lit : i >= TICKS - lit;
+      tick.className = `tick${on ? (warn ? ' warn' : ' on') : ''}`;
+    });
+    return;
+  }
   if (!session.timed) {
-    // В бесконечных режимах таймера нет, и его место занимает счёт захода:
-    // в заказах — закрытые наряды, иначе челлендж комбо. Делений не
-    // зажигаем — запаса не бывает.
-    const orders = session.mode === 'order';
-    timeLabelEl.textContent = orders ? 'Заказы' : comboRun ? 'Комбо' : 'Время';
-    timeEl.textContent = orders
-      ? String(session.ordersDone)
-      : comboRun
-        ? groupDigits(comboRun.best)
-        : '∞';
+    // В бесконечном режиме таймера нет, и его место занимает челлендж:
+    // лучший ход захода. Делений не зажигаем — запаса не бывает.
+    timeLabelEl.textContent = comboRun ? 'Комбо' : 'Время';
+    timeEl.textContent = comboRun ? groupDigits(comboRun.best) : '∞';
     timeFieldEl.className = 'field right';
     for (const tick of tickEls) tick.className = 'tick';
     return;
@@ -318,17 +316,15 @@ function showMini(state: MiniState): void {
 }
 
 function updateMini(): void {
-  // В заказах экранчик занят нарядом: резонанс там идёт и считается, но
-  // видно его по ореолам на поле — а место экранчика важнее отдать тому,
-  // что игрок держит в голове весь заказ.
-  const order = session.order;
+  // В заказах экранчик занят окном резонанса: цвет, отсчёт и то, что нужно
+  // снять за раз. Заявок в этом режиме нет — их место здесь и заняло окно.
+  const order = session.order();
   if (order) {
-    const key = `o${order.color}:${session.orderTaken}`;
+    const key = `o${order.color}:${order.open ? 1 : 0}:${Math.ceil(order.remaining)}`;
     if (key === miniCache) return;
     miniCache = key;
-    const state = orderMini(order, session.orderTaken);
-    showMini(state);
-    tintScope(SCOPE.dots[order.color]!);
+    showMini(orderMini(order, session.cfg));
+    tintScope(order.open ? SCOPE.dots[order.color]! : null);
     return;
   }
 
@@ -405,8 +401,8 @@ const tutorial = new Tutorial(renderer, {
   tint: (color) => tintScope(color === null ? null : SCOPE.dots[color]!),
   flash: () => flashMini(),
   chain: (length) => {
-    shownChain = length;
-    chainCountEl.textContent = `Цепь ${length}`;
+    shownChain = `Цепь ${length}`;
+    chainCountEl.textContent = shownChain;
   },
   points: (points, multiplier, at) => showFloatingPoints(points, multiplier, at),
   finger: (at) => {
@@ -918,9 +914,9 @@ let pendingScore = { points: 0, moves: 0 };
 let flushTimer = 0;
 
 function countScore(points: number): void {
-  // Опыт в наработку не идёт: ход касанием стоит совсем других денег, и
-  // счётчик всей жизни прибора смешивать с ним нельзя.
-  if (inDuel || replay || experiment()) return;
+  // Заказы в наработку не идут: там счёт — награды за окна, и мешать их с
+  // потенциалом, которым живёт весь остальной прибор, нельзя.
+  if (inDuel || replay || mode === 'order') return;
   pendingScore.points += points;
   pendingScore.moves += 1;
   if (flushTimer !== 0) return;
@@ -1169,10 +1165,11 @@ async function startReplay(duelId: string): Promise<void> {
 
 // ---------- Ходы ----------
 
-function showFloatingPoints(points: number, multiplier: number, at: { x: number; y: number }): void {
+/** Всплывающая подпись над местом хода. */
+function showFloatingLabel(text: string, at: { x: number; y: number }): void {
   const label = document.createElement('span');
   label.className = 'float-label';
-  label.textContent = multiplier > 1 ? `+${points} ×${multiplier}` : `+${points}`;
+  label.textContent = text;
   // Координаты приходят от доски, а подпись висит на окуляре: доска в нём
   // висит по центру, так что без сдвига цифра оторвалась бы от хода.
   label.style.left = `${at.x + canvas.offsetLeft}px`;
@@ -1181,39 +1178,54 @@ function showFloatingPoints(points: number, multiplier: number, at: { x: number;
   setTimeout(() => label.remove(), 900);
 }
 
+function showFloatingPoints(points: number, multiplier: number, at: { x: number; y: number }): void {
+  showFloatingLabel(multiplier > 1 ? `+${points} ×${multiplier}` : `+${points}`, at);
+}
+
 /**
  * Отчёт по заказу вместо обычного отчёта о ходе. Возвращает false, если
- * заказов сейчас нет, — тогда прибор говорит как обычно.
+ * режим не тот, — тогда прибор говорит как обычно.
  *
- * Заказ закрывают ровно в цель, поэтому и слова разные: пока далеко —
- * сколько осталось, у самой цели — что ход решающий, а перебор — срыв.
+ * Размер группы называем только после хода: до касания игрок его не знает,
+ * и в этом вся ставка. Зато после — знает точно, вплоть до «двадцать
+ * четыре», ради которых стоило рискнуть ещё одним разбором.
  */
 function reportOrder(removed: number): boolean {
-  if (session.mode !== 'order') return false;
-  const left = session.order ? session.order.target - session.orderTaken : 0;
-  switch (session.lastOrder) {
-    case 'done':
-      setStat(`Заказ закрыт · ${session.ordersDone}-й · серия ${session.orderStreak}`, 'live');
-      if (navigator.vibrate) navigator.vibrate(FEEL.hapticMax);
-      break;
-    case 'over':
-      setStat('Перебор — заказ сорван. Прибор просит новый цвет', 'warn');
-      if (navigator.vibrate) navigator.vibrate([FEEL.hapticMax, 40, FEEL.hapticMax]);
-      break;
-    case 'stuck':
-      // Остаток короче цепочки: добрать его нечем — заказ уже не закрыть.
-      setStat(`Недобор — остаток меньше ${cfg.minChain}, добрать нечем. Новый заказ`, 'warn');
-      if (navigator.vibrate) navigator.vibrate([FEEL.hapticMax, 40, FEEL.hapticMax]);
-      break;
-    case 'grows':
-      setStat(`Взято ${removed} · остаётся ${left}`, 'live');
-      break;
-    default:
-      // Ход чужого цвета: заказу он не в счёт, зато разбирает поле под него.
-      setStat(`Не тот цвет · до заказа ${left}`);
+  const order = session.order();
+  if (!order) return false;
+  const fire = session.lastFire;
+  if (fire === null) {
+    // Ход не цветом окна: заказу он не в счёт, зато растит пятно под него.
+    setStat(order.open ? `Снято ${removed} · пятно растёт` : `Снято ${removed} · окно закрыто`);
+  } else if (fire.reward > 0) {
+    setStat(`Заказ · ${fire.size} точек · +${groupDigits(fire.reward)}`, 'live');
+    if (navigator.vibrate) navigator.vibrate(FEEL.hapticMax);
+  } else {
+    setStat(`${fire.size} — не хватило до ${session.cfg.orderTarget}`, 'warn');
+    if (navigator.vibrate) navigator.vibrate([FEEL.hapticMax, 40, FEEL.hapticMax]);
   }
   updateHud();
   return true;
+}
+
+/**
+ * Смена окна: прибор объявляет новый цвет, а заодно и судьбу прошлого
+ * окна. Пропущенное окно обрывает серию — сказать об этом должен прибор,
+ * а не догадка игрока.
+ */
+let shownWindow = -1;
+function watchWindow(): void {
+  const order = session.order();
+  if (!order || order.cycle === shownWindow) return;
+  const first = shownWindow < 0;
+  shownWindow = order.cycle;
+  if (first || !session.started) return;
+  if (session.lastWindow === 'missed') {
+    setStat('Окно закрыто · заказ не собран, серия обнулена', 'warn');
+    flashMini();
+    return;
+  }
+  setStat(`Окно закрыто · серия ${session.orderStreak}`, 'live');
 }
 
 const input = new ChainInput(
@@ -1230,7 +1242,7 @@ const input = new ChainInput(
     const claimBefore = session.leader();
     // В опыте наружу приходит группа, и первой в ней стоит нажатая точка:
     // ядру нужна она одна, остальное оно соберёт само.
-    const result = experiment() ? session.tryTap(path[0]!) : session.tryMove(path);
+    const result = cfg.features.tap ? session.tryTap(path[0]!) : session.tryMove(path);
     if (typeof result === 'string') return;
     if (sprintRun) {
       sprintRun.moves.push({ path: path.map((cell) => ({ ...cell })), t: Number(elapsed.toFixed(3)) });
@@ -1238,11 +1250,15 @@ const input = new ChainInput(
     if (inDuel) duel.move(path);
     countScore(result.points);
     renderer.animateMove(oldGrid, result);
-    showFloatingPoints(result.points, result.multiplier, at);
     updateStreak(result.streak);
     // Снятое показываем строкой состояния — это и есть отчёт прибора. В
-    // заказах отчёт другой: там важно не сколько снято, а сколько осталось.
-    if (!reportOrder(result.removed.length)) {
+    // заказах отчёт другой: там важно не сколько снято вообще, а сколько
+    // ушло в заказ, — и цифра над полем там тоже другая.
+    if (reportOrder(result.removed.length)) {
+      const fire = session.lastFire;
+      if (fire) showFloatingLabel(fire.reward > 0 ? `${fire.size} · +${fire.reward}` : `${fire.size}`, at);
+    } else {
+      showFloatingPoints(result.points, result.multiplier, at);
       const gain = result.multiplier > 1 ? ` ×${result.multiplier}` : '';
       setStat(`Снято ${result.removed.length + result.exploded.length} · +${result.points}${gain}`, 'live');
     }
@@ -1355,18 +1371,6 @@ const MENU_ACTIONS: Record<string, () => void> = {
     setMode('order');
   },
   duel: () => {
-    // Сервер проверяет ход цепочкой; касание он воспроизвести не умеет,
-    // поэтому в опыте дуэль закрыта — иначе матч оборвался бы отказом.
-    // Спрашиваем о выборе игрока, а не о текущем режиме: в дуэли заказов
-    // нет, и её собственный способ хода — обычная цепочка.
-    if (tapChosen) {
-      showOverModal({
-        title: 'Дуэль',
-        note: 'Опыт с ходом касанием идёт только в одиночных режимах. Выключите его в панели — и дуэль вернётся.',
-        viewing: true,
-      });
-      return;
-    }
     duelSheet.hidden = false;
   },
   rules: () => {
@@ -1374,38 +1378,6 @@ const MENU_ACTIONS: Record<string, () => void> = {
   },
   tutorial: () => startTutorial(),
 };
-
-/**
- * Переключатель опыта. Правила меняются посреди партии — значит партия
- * начинается заново: доигрывать заход, начатый по другим правилам, было
- * бы нечестно и к самому заходу, и к рекорду.
- */
-function toggleExperiment(): void {
-  const on = !tapChosen;
-  tapChosen = on;
-  saveTap(on);
-  showExperiment();
-  if (inDuel) endDuel();
-  stopReplay();
-  startGame();
-  // Панель не закрываем: переключатель живёт в ней, и игрок обычно тут же
-  // выбирает режим, в котором будет пробовать.
-  openMenu();
-  setStat(
-    // В заказах касание не выключается — не обещаем того, чего не будет.
-    mode === 'order'
-      ? 'В заказах ход всегда одним касанием'
-      : on
-        ? 'Опыт: ход одним касанием'
-        : 'Обычный ход: цепочка пальцем',
-    'warn',
-  );
-}
-
-function showExperiment(): void {
-  expTapEl.classList.toggle('on', tapChosen);
-  expTapStateEl.textContent = tapChosen ? 'вкл' : 'выкл';
-}
 
 menuEl.addEventListener('click', (event) => {
   // Режимы — строки списка, обучение с правилами — клавиши рядом: обходим
@@ -1416,8 +1388,6 @@ menuEl.addEventListener('click', (event) => {
 });
 
 el<HTMLButtonElement>('tut-skip').addEventListener('click', () => stopTutorial());
-
-expTapEl.addEventListener('click', () => toggleExperiment());
 
 el<HTMLButtonElement>('rules-close').addEventListener('click', () => {
   rulesSheet.hidden = true;
@@ -1649,8 +1619,8 @@ new ResizeObserver(fitBoard).observe(boardWrap);
 // ---------- Игровой цикл ----------
 
 let lastTime = performance.now();
-/** Длина цепочки, уже показанная в углу окуляра. */
-let shownChain = 0;
+/** Подпись, уже показанная в углу окуляра. */
+let shownChain = '';
 function frame(now: number): void {
   const dt = Math.min((now - lastTime) / 1000, 0.05);
   lastTime = now;
@@ -1677,16 +1647,22 @@ function frame(now: number): void {
     }
     updateGoKey();
   }
-  if (session.timed && !session.over) updateHud();
+  const order = session.order();
+  if ((session.timed || order) && !session.over) updateHud();
   updateMini();
+  watchWindow();
 
-  const chainLength = input.chain.length;
-  if (chainLength !== shownChain) {
-    shownChain = chainLength;
-    chainCountEl.textContent = `Цепь ${chainLength}`;
+  // В заказах длину группы под пальцем не показываем: не знать её до
+  // касания — и есть вся ставка режима. Вместо счётчика — напоминание.
+  const corner = order ? `Нужно ${session.cfg.orderTarget}+` : `Цепь ${input.chain.length}`;
+  if (corner !== shownChain) {
+    shownChain = corner;
+    chainCountEl.textContent = corner;
   }
 
-  renderer.draw(dt, session.board.grid, input.chain, input.pointer, session.phase().active);
+  // Ореолы на поле — по цвету резонанса: в заказах его задаёт окно.
+  const glow = order ? (order.open ? order.color : null) : session.phase().active;
+  renderer.draw(dt, session.board.grid, input.chain, input.pointer, glow);
   requestAnimationFrame(frame);
 }
 
@@ -1699,7 +1675,6 @@ else openMenu();
 el<HTMLSpanElement>('brand').innerHTML = brandLockup(88);
 el<HTMLSpanElement>('menu-brand').innerHTML = brandLockup(96);
 renderer.setMarks(loadMarks());
-showExperiment();
 el<HTMLButtonElement>('mark-toggle').classList.toggle('on', loadMarks());
 el<HTMLButtonElement>('theme-toggle').classList.toggle('on', themeName === 'graphite');
 

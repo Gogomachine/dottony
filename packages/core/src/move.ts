@@ -114,11 +114,13 @@ export function applyTap(
   from: Cell,
   cfg: GameConfig,
   phaseColor: Color | null = null,
+  /** Цвет, который прибор притягивает досыпкой (окно заказа). */
+  bias: Color | null = null,
 ): MoveResult | MoveError {
   if (cellAt(board.grid, from) === undefined) return 'out-of-bounds';
   const group = tapGroup(board, from, cfg);
   if (group.length < cfg.minChain) return 'too-short';
-  return resolve(board, group, cfg, phaseColor);
+  return resolve(board, group, cfg, phaseColor, bias);
 }
 
 /**
@@ -131,6 +133,7 @@ function resolve(
   validated: Cell[],
   cfg: GameConfig,
   phaseColor: Color | null,
+  bias: Color | null = null,
 ): MoveResult {
   const color = cellAt(board.grid, validated[0]!)!.color;
   const removedSet = new Set(validated.map(cellKey));
@@ -165,7 +168,7 @@ function resolve(
     (chainPoints(validated.length, cfg) + exploded.length * cfg.surgeDotValue) * multiplier;
 
   const allRemoved = [...validated, ...exploded];
-  const collapsed = collapse(board, allRemoved, cfg);
+  const collapsed = collapse(board, allRemoved, cfg, bias);
 
   // Заряд перегрузки ложится туда, где кончилась длинная цепочка.
   let charged: Cell | null = null;

@@ -9,7 +9,7 @@ import {
   phaseStateAt,
   type Claim,
 } from './phase.js';
-import { fillOrder, nextOrder } from './order.js';
+import { orderAt, orderReward } from './order.js';
 import { nextInt, seedRng } from './rng.js';
 import {
   DEFAULT_CONFIG,
@@ -581,66 +581,77 @@ describe('ход одним касанием', () => {
 });
 
 describe('заказ', () => {
-  /** Ход, от которого заказу нужны только цвет и число снятых точек. */
-  function move(color: Color, removed: number, exploded = 0): MoveResult {
-    const cells = (n: number): Cell[] => Array.from({ length: n }, (_, i) => ({ r: 0, c: i }));
-    return {
-      board: boardFrom(ROWS),
-      removed: cells(removed),
-      exploded: cells(exploded),
-      charged: null,
-      points: 0,
-      color,
-      phased: false,
-      surges: 0,
-      multiplier: 1,
-      streak: 0,
-    };
-  }
+  it('окно и пауза сменяют друг друга по часам партии', () => {
+    const start = orderAt(7, 0, cfg);
+    expect(start.open).toBe(true);
+    expect(start.remaining).toBe(cfg.orderWindow);
 
-  const order = { color: 1 as Color, target: 25 };
+    const late = orderAt(7, cfg.orderWindow - 1, cfg);
+    expect(late.open).toBe(true);
+    expect(late.cycle).toBe(start.cycle);
 
-  it('цвет заказа выводится из сида — заказы воспроизводимы', () => {
-    const first = nextOrder(seedRng(7), cfg);
-    const again = nextOrder(seedRng(7), cfg);
-    expect(first.order).toEqual(again.order);
-    expect(first.order.target).toBe(cfg.orderTarget);
-    expect(first.order.color).toBeLessThan(cfg.colors);
+    const pause = orderAt(7, cfg.orderWindow + 1, cfg);
+    expect(pause.open).toBe(false);
+    // В паузе прибор называет уже следующее окно и считает до него.
+    expect(pause.cycle).toBe(start.cycle + 1);
+    expect(pause.remaining).toBe(cfg.orderBreak - 1);
+
+    const next = orderAt(7, cfg.orderWindow + cfg.orderBreak, cfg);
+    expect(next.open).toBe(true);
+    expect(next.cycle).toBe(start.cycle + 1);
+    expect(next.color).toBe(pause.color);
   });
 
-  it('следующий заказ берётся из продвинутого состояния', () => {
-    const first = nextOrder(seedRng(7), cfg);
-    const second = nextOrder(first.state, cfg);
-    expect(second.state).not.toBe(first.state);
+  it('цвета окон выводятся из сида — заход воспроизводим', () => {
+    const period = cfg.orderWindow + cfg.orderBreak;
+    const first = Array.from({ length: 8 }, (_, i) => orderAt(7, i * period, cfg).color);
+    const again = Array.from({ length: 8 }, (_, i) => orderAt(7, i * period, cfg).color);
+    expect(first).toEqual(again);
+    for (const color of first) expect(color).toBeLessThan(cfg.colors);
+    // Не один и тот же цвет во всех окнах подряд.
+    expect(new Set(first).size).toBeGreaterThan(1);
   });
 
-  it('чужой цвет заказа не касается', () => {
-    expect(fillOrder(order, 10, move(2, 6), cfg)).toEqual({ taken: 10, step: 'idle' });
+  it('разные образцы дают разные окна', () => {
+    const period = cfg.orderWindow + cfg.orderBreak;
+    const colors = (seed: number) =>
+      Array.from({ length: 12 }, (_, i) => orderAt(seed, i * period, cfg).color).join('');
+    expect(colors(1)).not.toBe(colors(2));
   });
 
-  it('свой цвет копится', () => {
-    expect(fillOrder(order, 10, move(1, 6), cfg)).toEqual({ taken: 16, step: 'grows' });
+  it('недобор не стоит ничего, цель стоит награду, а сверх — по награде за точку', () => {
+    expect(orderReward(cfg.orderTarget - 1, cfg)).toBe(0);
+    expect(orderReward(cfg.orderTarget, cfg)).toBe(cfg.orderReward);
+    expect(orderReward(cfg.orderTarget + 1, cfg)).toBe(cfg.orderReward * 2);
+    expect(orderReward(cfg.orderTarget + 5, cfg)).toBe(cfg.orderReward * 6);
   });
 
-  it('ровно в цель — заказ закрыт', () => {
-    expect(fillOrder(order, 20, move(1, 5), cfg)).toEqual({ taken: 25, step: 'done' });
+  it('притянутый цвет сыплется чаще прочих, но не вытесняет их', () => {
+    // Смотрим прямо на досыпку: сносим поле целиком и считаем, чем его залило.
+    const tally = [0, 0, 0, 0];
+    let board = boardFrom(ROWS);
+    const whole: Cell[] = [];
+    for (let r = 0; r < cfg.rows; r++) {
+      for (let c = 0; c < cfg.cols; c++) whole.push({ r, c });
+    }
+    for (let i = 0; i < 60; i++) {
+      const filled = collapse(board, whole, cfg, 3);
+      for (const row of filled.grid) {
+        for (const cell of row) tally[cell.color]! += 1;
+      }
+      board = { ...board, grid: filled.grid, rng: filled.rng };
+    }
+    const total = tally.reduce((a, b) => a + b, 0);
+    const share = tally[3]! / total;
+    const expected = cfg.orderWeight / (cfg.orderWeight + cfg.colors - 1);
+    expect(Math.abs(share - expected)).toBeLessThan(0.05);
+    for (const color of [0, 1, 2]) expect(tally[color]!).toBeGreaterThan(0);
   });
 
-  it('перебор срывает заказ', () => {
-    expect(fillOrder(order, 22, move(1, 5), cfg)).toEqual({ taken: 27, step: 'over' });
-  });
-
-  it('остаток меньше цепочки — добрать нечем, заказ сорван', () => {
-    // 23 из 25: двойками точки не снимаются, значит закрыться уже нельзя.
-    expect(fillOrder(order, 20, move(1, 3), cfg)).toEqual({ taken: 23, step: 'stuck' });
-  });
-
-  it('остаток ровно в цепочку ещё живой', () => {
-    expect(fillOrder(order, 19, move(1, 3), cfg)).toEqual({ taken: 22, step: 'grows' });
-  });
-
-  it('точки, снятые взрывом, в заказ не идут', () => {
-    // Иначе решающий ход стал бы лотереей: заряд сносит что попало.
-    expect(fillOrder(order, 20, move(1, 5, 4), cfg)).toEqual({ taken: 25, step: 'done' });
+  it('без притяжения досыпка равномерна', () => {
+    const plain = applyTap(boardFrom(ROWS), { r: 0, c: 0 }, bare);
+    const same = applyTap(boardFrom(ROWS), { r: 0, c: 0 }, bare, null, null);
+    if (typeof plain === 'string' || typeof same === 'string') throw new Error('tap');
+    expect(same.board.grid).toEqual(plain.board.grid);
   });
 });

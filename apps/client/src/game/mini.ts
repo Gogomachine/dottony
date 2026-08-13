@@ -1,4 +1,4 @@
-import type { ClaimWindow, Color, GameConfig, Order, PhaseState } from '@doton/core';
+import type { ClaimWindow, Color, GameConfig, OrderState, PhaseState } from '@doton/core';
 
 /**
  * Что показывает служебный экранчик над окуляром. Вынесено из main, чтобы
@@ -60,18 +60,19 @@ export function miniState(
 }
 
 /**
- * Экранчик в режиме заказов. Место то же, но показывает он не резонанс, а
- * наряд прибора: каким цветом и сколько ещё точек он ждёт. Считаем именно
- * остаток — до конца заказа игрок держит в голове его, а не набранное.
+ * Экранчик в режиме заказов. Место то же, но показывает он не заявку, а
+ * окно резонанса: каким цветом прибор сейчас звенит и сколько окну
+ * осталось. В паузе он уже называет цвет следующего окна — для того пауза
+ * и нужна: посмотреть на поле и решить, с чего начинать.
  */
-export function orderMini(order: Order, taken: number): MiniState {
+export function orderMini(order: OrderState, cfg: GameConfig): MiniState {
   return {
-    text: `Заказ · <b>${order.target}</b>`,
-    // Справа на экранчике всегда отсчёт — здесь он в точках, а не в
-    // секундах: сколько ещё снять. Ноль на нём и значит закрытый заказ.
-    cd: String(Math.max(0, order.target - taken)).padStart(2, '0'),
+    text: order.open
+      ? `Резонанс · <b>${cfg.orderTarget}+</b> за раз`
+      : 'Резонанс · <b>готовься</b>',
+    cd: pad(order.remaining),
     color: order.color,
-    fill: taken / order.target,
+    fill: order.remaining / (order.open ? cfg.orderWindow : cfg.orderBreak),
   };
 }
 

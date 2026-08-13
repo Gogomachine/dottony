@@ -5,8 +5,8 @@ import {
   claimFrom,
   claimWindowAt,
   createBoard,
-  fillOrder,
-  nextOrder,
+  orderAt,
+  orderReward,
   phaseColorAt,
   phaseStateAt,
   seedRng,
@@ -19,10 +19,8 @@ import {
   type GameConfig,
   type MoveError,
   type MoveResult,
-  type Order,
-  type OrderStep,
+  type OrderState,
   type PhaseState,
-  type RngState,
   type Color,
 } from '@doton/core';
 
@@ -61,22 +59,17 @@ export class Session {
    * решает сравнение, и заявка соперника может прийти после твоей.
    */
   private readonly claims: SessionClaim[] = [];
-  /**
-   * Текущий заказ прибора и сколько его цвета уже снято. Живёт только в
-   * режиме заказов; в остальных — null, и ходы его не касаются.
-   */
-  order: Order | null = null;
-  orderTaken = 0;
-  /** Закрыто заказов за заход и сколько из них подряд, без срыва. */
+  /** Закрыто заказов за заход и сколько окон подряд закрыто хотя бы одним. */
   ordersDone = 0;
   orderStreak = 0;
-  /** Чем последний ход кончился для заказа — для отчёта на экране. */
-  lastOrder: OrderStep = 'idle';
-  /**
-   * Заказы идут своим потоком случайных чисел. Брать их из поля нельзя:
-   * тот же поток раздаёт новые точки, и заказ сдвигал бы расклад.
-   */
-  private orderRng: RngState;
+  /** Сколько заказов закрыто в текущем окне. */
+  orderHits = 0;
+  /** Номер окна, которое идёт сейчас; −1 — заход ещё не начинался. */
+  orderCycle = -1;
+  /** Чем кончилось прошлое окно: закрыто или упущено. */
+  lastWindow: 'done' | 'missed' | null = null;
+  /** Последний ход цветом окна: сколько снял и сколько за это дали. */
+  lastFire: { size: number; reward: number } | null = null;
   over = false;
   /**
    * Момент старта по стенным часам. Время партии считаем от него, а не
@@ -107,18 +100,27 @@ export class Session {
     this.duration =
       mode === 'sprint' ? SPRINT_SECONDS : mode === 'duel' ? (duration ?? 90) : Infinity;
     this.timeLeft = this.duration;
-    // Свой сид, но выведенный из общего: по номеру образца заказы
-    // повторяются, а расклад поля от них не зависит.
-    this.orderRng = seedRng(seed ^ 0x9e3779b9);
-    if (mode === 'order') this.drawOrder();
+    this.syncOrder();
   }
 
-  /** Берёт следующий заказ и обнуляет прогресс по нему. */
-  private drawOrder(): void {
-    const drawn = nextOrder(this.orderRng, this.cfg);
-    this.orderRng = drawn.state;
-    this.order = drawn.order;
-    this.orderTaken = 0;
+  /** Окно заказа на текущей секунде; null — режим не тот. */
+  order(): OrderState | null {
+    return this.mode === 'order' ? orderAt(this.seed, this.elapsed, this.cfg) : null;
+  }
+
+  /**
+   * Закрывает прошедшее окно и открывает новое. Серию ведём по окнам, а не
+   * по заказам: окно без единого закрытого заказа её и обрывает.
+   */
+  private syncOrder(): void {
+    const state = this.order();
+    if (state === null || state.cycle === this.orderCycle) return;
+    if (this.orderCycle >= 0) {
+      this.lastWindow = this.orderHits > 0 ? 'done' : 'missed';
+      this.orderStreak = this.orderHits > 0 ? this.orderStreak + 1 : 0;
+    }
+    this.orderCycle = state.cycle;
+    this.orderHits = 0;
   }
 
   /** Партия идёт на время. */
@@ -168,7 +170,11 @@ export class Session {
   tryTap(cell: Cell): MoveResult | SessionMoveError {
     const stop = this.blocked();
     if (stop) return stop;
-    return this.commit(applyTap(this.board, cell, this.cfg, this.phaseNow()));
+    // Пока окно открыто, прибор притягивает свой цвет: досыпка отдаёт ему
+    // вес против единицы у прочих. Без этого пятно до цели не дорастает.
+    const window = this.order();
+    const bias = window?.open ? window.color : null;
+    return this.commit(applyTap(this.board, cell, this.cfg, this.phaseNow(), bias));
   }
 
   /** Почему партия не примет ход прямо сейчас; null — примет. */
@@ -181,8 +187,13 @@ export class Session {
     return null;
   }
 
-  /** Цвет фазы на текущей секунде — с учётом уже поданных заявок. */
+  /**
+   * Цвет фазы на текущей секунде — с учётом уже поданных заявок. В заказах
+   * фаз нет вовсе: там резонанс — само окно, и второй, со своим цветом и
+   * множителем, только сбивал бы с толку.
+   */
   private phaseNow(): Color | null {
+    if (this.mode === 'order') return null;
     return phaseColorAt(this.seed, this.elapsed, this.cfg, this.claims);
   }
 
@@ -194,8 +205,13 @@ export class Session {
   private commit(result: MoveResult | MoveError): MoveResult | SessionMoveError {
     if (typeof result === 'string') return result;
     this.board = result.board;
+    // В заказах счёт — это награды за закрытые заказы: потенциал обычного
+    // хода там на два порядка крупнее и просто затопил бы их.
+    if (this.mode === 'order') {
+      this.fire(result);
+      return result;
+    }
     this.score += result.points;
-    this.fill(result);
     // Заявку на цвет в дуэли объявляет сервер: окно там решают его часы,
     // и ход у самой границы окна иначе разошёлся бы с сервером. В
     // одиночных режимах считать некому — считаем сами.
@@ -214,24 +230,25 @@ export class Session {
   }
 
   /**
-   * Засчитывает ход в заказ. Закрытый заказ и сорванный одинаково ведут к
-   * следующему: партия в этом режиме не кончается, кончается заказ — и
-   * разница между ними только в серии.
+   * Считает ход по заказу. В счёт идёт только сама группа: взрыв заряда
+   * сносит что попало, и пускать его в заказ значило бы отдать решающий
+   * ход лотерее. Ход чужого цвета или мимо цели не стоит ничего — линия
+   * резкая, в ней вся ставка.
    */
-  private fill(result: MoveResult): void {
-    const order = this.order;
-    if (!order) return;
-    const step = fillOrder(order, this.orderTaken, result, this.cfg);
-    this.orderTaken = step.taken;
-    this.lastOrder = step.step;
-    if (step.step === 'done') {
-      this.ordersDone += 1;
-      this.orderStreak += 1;
-      this.drawOrder();
-    } else if (step.step === 'over' || step.step === 'stuck') {
-      this.orderStreak = 0;
-      this.drawOrder();
+  private fire(result: MoveResult): void {
+    this.syncOrder();
+    const window = this.order();
+    if (window === null || !window.open || result.color !== window.color) {
+      this.lastFire = null;
+      return;
     }
+    const size = result.removed.length;
+    const reward = orderReward(size, this.cfg);
+    this.lastFire = { size, reward };
+    if (reward === 0) return;
+    this.score += reward;
+    this.ordersDone += 1;
+    this.orderHits += 1;
   }
 
   /**
@@ -242,6 +259,7 @@ export class Session {
   tick(_dtSeconds: number, now = Date.now()): boolean {
     if (this.over || this.pausedAt !== null || !this.startedYet) return false;
     this.elapsed = (now - this.startedAt) / 1000;
+    this.syncOrder();
     if (!this.timed) return false;
     this.timeLeft = Math.max(0, this.duration - this.elapsed);
     if (this.timeLeft === 0) {
