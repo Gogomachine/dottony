@@ -1,4 +1,10 @@
-import { COMBO_CARRY_CHAIN, DEFAULT_CONFIG, type Cell, type Color } from '@doton/core';
+import {
+  COMBO_CARRY_CHAIN,
+  DEFAULT_CONFIG,
+  type Cell,
+  type Color,
+  type GameConfig,
+} from '@doton/core';
 import type {
   BoardPeriod,
   ComboLeaderboardResponse,
@@ -38,7 +44,7 @@ import { Session, SPRINT_SECONDS, type Mode } from './game/session';
 import { Tutorial } from './tutorial';
 import { brandLockup } from './brand';
 import { emblemSvg } from './emblem';
-import { applyTheme, loadMarks, loadThemeName, saveMarks, SCOPE } from './theme';
+import { applyTheme, loadMarks, loadTap, loadThemeName, saveMarks, saveTap, SCOPE } from './theme';
 
 function el<T extends HTMLElement>(id: string): T {
   const found = document.getElementById(id);
@@ -75,6 +81,8 @@ const vsScoreEl = el<HTMLSpanElement>('vs-score');
 const ratingLineEl = el<HTMLDivElement>('rating-line');
 const menuEl = el<HTMLDivElement>('menu');
 const menuSeedEl = el<HTMLSpanElement>('menu-seed');
+const expTapEl = el<HTMLButtonElement>('exp-tap');
+const expTapStateEl = el<HTMLElement>('exp-tap-state');
 const resultEl = el<HTMLDivElement>('result');
 const resultCapEl = el<HTMLSpanElement>('result-cap');
 const resultBigEl = el<HTMLSpanElement>('result-big');
@@ -111,6 +119,24 @@ for (let i = 0; i < TICKS; i++) {
 let themeName = loadThemeName();
 applyTheme(themeName);
 let mode: Mode = 'sprint';
+
+/**
+ * Правила этого прибора. Отличаются от заводских одним: опытом с ходом
+ * одним касанием, который игрок включает сам.
+ *
+ * Объект один на всех — рендер, ввод и сессия держат ссылку на него, —
+ * поэтому переключатель меняет само поле `features.tap`, а не собирает
+ * новый конфиг: иначе половина игры осталась бы со старым.
+ */
+const cfg: GameConfig = {
+  ...DEFAULT_CONFIG,
+  features: { ...DEFAULT_CONFIG.features, tap: loadTap() },
+};
+
+/** Опыт идёт — рекорды никуда не уходят: это другая игра. */
+function experiment(): boolean {
+  return cfg.features.tap;
+}
 
 /**
  * Активный спринт: сид и лог ходов. Спринт — соревновательный режим, и
@@ -158,15 +184,10 @@ let inDuel = false;
 let duelDuration = 90;
 
 let session = newSession();
-const renderer = new Renderer(canvas, DEFAULT_CONFIG, SCOPE);
+const renderer = new Renderer(canvas, cfg, SCOPE);
 
 function newSession(seed?: number): Session {
-  return new Session(
-    seed ?? Math.floor(Math.random() * 0xffffffff),
-    mode,
-    DEFAULT_CONFIG,
-    duelDuration,
-  );
+  return new Session(seed ?? Math.floor(Math.random() * 0xffffffff), mode, cfg, duelDuration);
 }
 
 function startGame(seed?: number): void {
@@ -176,12 +197,18 @@ function startGame(seed?: number): void {
   if (!replay) input.enabled = true;
   // Челлендж живёт только в бесконечном режиме: в остальных заход кончается
   // сам, и мерить в них рекорд серии — другая игра.
+  // В опыте журналы не ведём вовсе: сервер проверяет заход цепочками, а
+  // ход касанием он воспроизвести не умеет — и не должен, пока механика
+  // не принята. Заодно это держит общие таблицы честными.
   comboRun =
-    session.mode === 'free'
+    session.mode === 'free' && !experiment()
       ? { seed: session.seed, moves: [], best: 0, carried: 0, sent: 0, full: false }
       : null;
   // Спринт пишется весь: без журнала рекорд нечем подтвердить.
-  sprintRun = session.mode === 'sprint' && !replay ? { seed: session.seed, moves: [] } : null;
+  sprintRun =
+    session.mode === 'sprint' && !replay && !experiment()
+      ? { seed: session.seed, moves: [] }
+      : null;
   renderer.resetAnims();
   updateStreak(0);
   overlay.hidden = true;
@@ -853,7 +880,9 @@ let pendingScore = { points: 0, moves: 0 };
 let flushTimer = 0;
 
 function countScore(points: number): void {
-  if (inDuel || replay) return;
+  // Опыт в наработку не идёт: ход касанием стоит совсем других денег, и
+  // счётчик всей жизни прибора смешивать с ним нельзя.
+  if (inDuel || replay || experiment()) return;
   pendingScore.points += points;
   pendingScore.moves += 1;
   if (flushTimer !== 0) return;
@@ -1057,7 +1086,7 @@ async function startReplay(duelId: string): Promise<void> {
   mode = 'duel';
   menuEl.hidden = true;
   resultEl.hidden = true;
-  session = new Session(data.seed, 'duel', DEFAULT_CONFIG, duelDuration);
+  session = new Session(data.seed, 'duel', cfg, duelDuration);
   // Цвет фаз решали оба игрока, а ходы в записи только свои: без заявок
   // реплей насчитал бы другие очки.
   session.setClaims(data.claims.map((claim) => ({ ...claim, color: claim.color as Color })));
@@ -1118,7 +1147,7 @@ const input = new ChainInput(
   canvas,
   renderer,
   () => session.board,
-  DEFAULT_CONFIG,
+  cfg,
   (path: Cell[]) => {
     const oldGrid = session.board.grid;
     const at = input.pointer ?? renderer.center(path[path.length - 1]!);
@@ -1126,7 +1155,9 @@ const input = new ChainInput(
     // Часы пускает первый ход: до него игрок разглядывает образец.
     session.begin();
     const claimBefore = session.leader();
-    const result = session.tryMove(path);
+    // В опыте наружу приходит группа, и первой в ней стоит нажатая точка:
+    // ядру нужна она одна, остальное оно соберёт само.
+    const result = experiment() ? session.tryTap(path[0]!) : session.tryMove(path);
     if (typeof result === 'string') return;
     if (sprintRun) {
       sprintRun.moves.push({ path: path.map((cell) => ({ ...cell })), t: Number(elapsed.toFixed(3)) });
@@ -1244,6 +1275,16 @@ const MENU_ACTIONS: Record<string, () => void> = {
     setMode('free');
   },
   duel: () => {
+    // Сервер проверяет ход цепочкой; касание он воспроизвести не умеет,
+    // поэтому в опыте дуэль закрыта — иначе матч оборвался бы отказом.
+    if (experiment()) {
+      showOverModal({
+        title: 'Дуэль',
+        note: 'Опыт с ходом касанием идёт только в одиночных режимах. Выключите его в панели — и дуэль вернётся.',
+        viewing: true,
+      });
+      return;
+    }
     duelSheet.hidden = false;
   },
   rules: () => {
@@ -1251,6 +1292,31 @@ const MENU_ACTIONS: Record<string, () => void> = {
   },
   tutorial: () => startTutorial(),
 };
+
+/**
+ * Переключатель опыта. Правила меняются посреди партии — значит партия
+ * начинается заново: доигрывать заход, начатый по другим правилам, было
+ * бы нечестно и к самому заходу, и к рекорду.
+ */
+function toggleExperiment(): void {
+  const on = !cfg.features.tap;
+  cfg.features.tap = on;
+  saveTap(on);
+  showExperiment();
+  if (inDuel) endDuel();
+  stopReplay();
+  startGame();
+  // Панель не закрываем: переключатель живёт в ней, и игрок обычно тут же
+  // выбирает режим, в котором будет пробовать.
+  openMenu();
+  setStat(on ? 'Опыт: ход одним касанием' : 'Обычный ход: цепочка пальцем', 'warn');
+}
+
+function showExperiment(): void {
+  const on = cfg.features.tap;
+  expTapEl.classList.toggle('on', on);
+  expTapStateEl.textContent = on ? 'вкл' : 'выкл';
+}
 
 menuEl.addEventListener('click', (event) => {
   // Режимы — строки списка, обучение с правилами — клавиши рядом: обходим
@@ -1261,6 +1327,8 @@ menuEl.addEventListener('click', (event) => {
 });
 
 el<HTMLButtonElement>('tut-skip').addEventListener('click', () => stopTutorial());
+
+expTapEl.addEventListener('click', () => toggleExperiment());
 
 el<HTMLButtonElement>('rules-close').addEventListener('click', () => {
   rulesSheet.hidden = true;
@@ -1542,6 +1610,7 @@ else openMenu();
 el<HTMLSpanElement>('brand').innerHTML = brandLockup(88);
 el<HTMLSpanElement>('menu-brand').innerHTML = brandLockup(96);
 renderer.setMarks(loadMarks());
+showExperiment();
 el<HTMLButtonElement>('mark-toggle').classList.toggle('on', loadMarks());
 el<HTMLButtonElement>('theme-toggle').classList.toggle('on', themeName === 'graphite');
 

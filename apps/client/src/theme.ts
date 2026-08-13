@@ -21,6 +21,11 @@ export type ThemeName = 'draft' | 'graphite';
 
 const THEME_KEY = 'doton-theme';
 const MARKS_KEY = 'doton-marks';
+/**
+ * Опыт с касанием. Хранится рядом с остальными настройками прибора и по
+ * умолчанию выключен: механика экспериментальная, и включает её игрок сам.
+ */
+const TAP_KEY = 'doton-tap';
 
 export function loadThemeName(): ThemeName {
   const saved = localStorage.getItem(THEME_KEY);
@@ -43,4 +48,12 @@ export function loadMarks(): boolean {
 
 export function saveMarks(on: boolean): void {
   localStorage.setItem(MARKS_KEY, on ? 'on' : 'off');
+}
+
+export function loadTap(): boolean {
+  return localStorage.getItem(TAP_KEY) === 'on';
+}
+
+export function saveTap(on: boolean): void {
+  localStorage.setItem(TAP_KEY, on ? 'on' : 'off');
 }

@@ -48,6 +48,15 @@ export interface FeatureFlags {
    * целиком, вместе с окном и его показом.
    */
   claim: boolean;
+  /**
+   * Опыт: ход одним касанием. Вместо того чтобы вести палец по точкам,
+   * игрок нажимает на одну, и снимается вся связная группа её цвета.
+   *
+   * Механика экспериментальная и по умолчанию выключена: она меняет не
+   * баланс, а сам способ играть, поэтому живёт отдельным флагом и
+   * выключается одним значением — вместе с вводом и показом.
+   */
+  tap: boolean;
 }
 
 export interface GameConfig {
@@ -81,7 +90,7 @@ export const DEFAULT_CONFIG: GameConfig = {
   colors: 4,
   minChain: 3,
   chainStep: 10,
-  features: { phases: true, surge: true, claim: true },
+  features: { phases: true, surge: true, claim: true, tap: false },
   surgeChainLength: 10,
   surgeDotValue: 10,
   phasePeriod: 45,

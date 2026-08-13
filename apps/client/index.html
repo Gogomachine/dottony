@@ -413,6 +413,20 @@
     .menu-list li.mode.on .when { color: var(--acc); }
 
     .menu-extra { display: flex; gap: 8px; }
+    /* Полка опыта: то же семейство, что и клавиши, но приглушённее — это
+       не режим игры, а переключатель для проверки идеи. */
+    .exp {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      width: 100%;
+      border-style: dashed !important;
+      color: var(--silk-2) !important;
+    }
+    .exp b { color: var(--silk-2); font-weight: 700; }
+    .exp.on { border-color: var(--acc) !important; border-style: solid !important; }
+    .exp.on b { color: var(--acc); }
     .menu-extra button { flex: 1; }
     /* В полосе меню стоит номер образца, а не итог работы: он справочный,
        и кегль наработки был бы для него завышен. */
@@ -1102,6 +1116,15 @@
               <button data-go="tutorial">Обучение</button>
               <button data-go="rules">Правила</button>
             </div>
+
+            <!--
+              Опыт: ход одним касанием. Рекорды при нём не отправляются —
+              это другая игра, и в общих таблицах ей не место.
+            -->
+            <button class="exp" id="exp-tap">
+              <span>Опыт · ход касанием</span>
+              <b id="exp-tap-state">выкл</b>
+            </button>
           </div>
 
           <div class="badge-foot">

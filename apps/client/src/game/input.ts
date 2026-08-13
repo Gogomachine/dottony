@@ -1,4 +1,4 @@
-import { areNeighbors, cellAt, type Board, type Cell, type GameConfig } from '@doton/core';
+import { areNeighbors, cellAt, tapGroup, type Board, type Cell, type GameConfig } from '@doton/core';
 import { FEEL } from './feel';
 import type { Renderer } from './renderer';
 
@@ -16,6 +16,12 @@ interface Point {
  * итоговый ход всё равно проверяет ядро.
  * Отката нет: уже взятая точка из цепочки не выходит, так что за
  * направление игрок отвечает сразу.
+ *
+ * В опыте с касанием (`features.tap`) ввод другой: палец не ведут, а
+ * нажимают. Под пальцем сразу подсвечивается вся связная группа цвета, и
+ * она же снимается, когда палец подняли; сдвинув палец на другую точку,
+ * игрок переносит выбор — нажатие остаётся одним. Наружу уходит та же
+ * группа, и первой в ней стоит нажатая точка.
  */
 export class ChainInput {
   chain: Cell[] = [];
@@ -55,6 +61,21 @@ export class ChainInput {
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }
 
+  /** Опыт с касанием: ход — это группа под пальцем, а не пройденный путь. */
+  private get tapping(): boolean {
+    return this.cfg.features.tap;
+  }
+
+  /** Берёт на прицел группу под пальцем; она же снимется при отпускании. */
+  private aim(cell: Cell): void {
+    const head = this.chain[0];
+    if (head && head.r === cell.r && head.c === cell.c) return;
+    const group = tapGroup(this.getBoard(), cell, this.cfg);
+    this.chain = group;
+    this.renderer.pulse(cell);
+    this.onExtend(group.length);
+  }
+
   private readonly onDown = (e: PointerEvent): void => {
     if (!this.on) return;
     this.canvas.setPointerCapture(e.pointerId);
@@ -64,11 +85,14 @@ export class ChainInput {
     const point = this.toLocal(e);
     this.pointer = point;
     const cell = this.renderer.hitTest(point.x, point.y, this.touch);
-    if (cell) {
-      this.chain.push(cell);
-      this.renderer.pulse(cell);
-      this.onExtend(1);
+    if (!cell) return;
+    if (this.tapping) {
+      this.aim(cell);
+      return;
     }
+    this.chain.push(cell);
+    this.renderer.pulse(cell);
+    this.onExtend(1);
   };
 
   private readonly onMove = (e: PointerEvent): void => {
@@ -76,6 +100,12 @@ export class ChainInput {
     const from = this.pointer;
     const to = this.toLocal(e);
     this.pointer = to;
+    // В опыте палец не ведут, а переносят: под ним всегда своя группа.
+    if (this.tapping) {
+      const cell = this.renderer.hitTest(to.x, to.y, this.touch);
+      if (cell) this.aim(cell);
+      return;
+    }
     if (this.chain.length === 0) {
       // Цепочка ещё не начата: разрешаем подхватить точку по ходу движения.
       const cell = this.renderer.hitTest(to.x, to.y, this.touch);

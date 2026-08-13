@@ -214,9 +214,11 @@ export class Renderer {
     }
     ctx.stroke();
 
-    // Линия цепочки — под точками.
+    // Линия цепочки — под точками. В опыте с касанием её нет: группа не
+    // проходится по порядку, и ломаная через её точки рисовала бы путь,
+    // которого игрок не делал.
     const first = chain[0];
-    const firstContent = first ? grid[first.r]?.[first.c] : undefined;
+    const firstContent = first && !this.cfg.features.tap ? grid[first.r]?.[first.c] : undefined;
     if (firstContent !== undefined) {
       ctx.strokeStyle = theme.dots[firstContent.color]!;
       ctx.globalAlpha = FEEL.chainAlpha;

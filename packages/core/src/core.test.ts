@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { cellAt, collapse, createBoard, dot } from './board.js';
-import { applyMove, areNeighbors, chainPoints, validatePath } from './move.js';
+import { applyMove, applyTap, areNeighbors, chainPoints, tapGroup, validatePath } from './move.js';
 import {
   bestClaim,
   claimFrom,
@@ -25,7 +25,7 @@ const cfg = DEFAULT_CONFIG;
 /** Конфиг с выключенными фичами — для тестов чистых цепочек. */
 const bare: GameConfig = {
   ...DEFAULT_CONFIG,
-  features: { phases: false, surge: false, claim: false },
+  features: { phases: false, surge: false, claim: false, tap: false },
 };
 
 function boardFrom(rows: string[], charged: Cell[] = []): Board {
@@ -507,3 +507,74 @@ function findAnyChain(board: Board): Cell[] {
   }
   throw new Error('no chain found on board');
 }
+
+describe('ход одним касанием', () => {
+  /*
+   * Поле для группы: пятно нулей в левом верхнем углу, связанное и по
+   * диагонали, и отдельная единица под ним.
+   */
+  const SPOT = ['001231', '001323', '102132', '231213', '312321', '123132'];
+
+  it('снимает всю связную группу цвета, считая и диагонали', () => {
+    const board = boardFrom(SPOT);
+    const group = tapGroup(board, { r: 0, c: 0 }, bare);
+    expect(group.map((cell) => `${cell.r}${cell.c}`).sort()).toEqual(['00', '01', '10', '11', '21']);
+  });
+
+  it('порядок идёт волной от касания: первой снимается нажатая точка', () => {
+    const board = boardFrom(SPOT);
+    expect(tapGroup(board, { r: 2, c: 1 }, bare)[0]).toEqual({ r: 2, c: 1 });
+  });
+
+  it('считает потенциал как цепочка той же длины', () => {
+    const board = boardFrom(SPOT);
+    const tapped = applyTap(board, { r: 0, c: 0 }, bare);
+    if (typeof tapped === 'string') throw new Error(tapped);
+    expect(tapped.points).toBe(chainPoints(5, bare));
+    expect(tapped.removed).toHaveLength(5);
+    expect(tapped.color).toBe(0);
+  });
+
+  it('одиночку не берёт: порог тот же, что у цепочки', () => {
+    const board = boardFrom(SPOT);
+    expect(tapGroup(board, { r: 2, c: 0 }, bare).length).toBeLessThan(bare.minChain);
+    expect(applyTap(board, { r: 2, c: 0 }, bare)).toBe('too-short');
+  });
+
+  it('за полем — отказ', () => {
+    expect(applyTap(boardFrom(SPOT), { r: -1, c: 0 }, bare)).toBe('out-of-bounds');
+  });
+
+  it('заряд в группе взрывает 3×3 и множит ход — как в цепочке', () => {
+    const board = boardFrom(SPOT, [{ r: 1, c: 1 }]);
+    const tapped = applyTap(board, { r: 0, c: 0 }, cfg);
+    if (typeof tapped === 'string') throw new Error(tapped);
+    expect(tapped.surges).toBe(1);
+    expect(tapped.exploded.length).toBeGreaterThan(0);
+    expect(tapped.multiplier).toBe(2);
+  });
+
+  it('фаза своего цвета удваивает и касание', () => {
+    const board = boardFrom(SPOT);
+    const plain = applyTap(board, { r: 0, c: 0 }, cfg, 1);
+    const phased = applyTap(board, { r: 0, c: 0 }, cfg, 0);
+    if (typeof plain === 'string' || typeof phased === 'string') throw new Error('tap');
+    expect(phased.points).toBe(plain.points * cfg.phaseMultiplier);
+  });
+
+  it('поле после касания падает так же, как после цепочки', () => {
+    const board = boardFrom(SPOT);
+    const tapped = applyTap(board, { r: 0, c: 0 }, bare);
+    if (typeof tapped === 'string') throw new Error(tapped);
+    expect(tapped.board.grid).toHaveLength(bare.rows);
+    for (const row of tapped.board.grid) expect(row).toHaveLength(bare.cols);
+    expect(tapped.board.moveCount).toBe(1);
+  });
+
+  it('не трогает исходное поле', () => {
+    const board = boardFrom(SPOT);
+    const snapshot = structuredClone(board);
+    applyTap(board, { r: 0, c: 0 }, cfg);
+    expect(board).toEqual(snapshot);
+  });
+});

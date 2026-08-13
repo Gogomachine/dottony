@@ -1,5 +1,6 @@
 import {
   applyMove,
+  applyTap,
   bestClaim,
   claimFrom,
   claimWindowAt,
@@ -121,13 +122,43 @@ export class Session {
   }
 
   tryMove(path: Cell[]): MoveResult | SessionMoveError {
+    const stop = this.blocked();
+    if (stop) return stop;
+    return this.commit(applyMove(this.board, path, this.cfg, this.phaseNow()));
+  }
+
+  /**
+   * Ход одним касанием: снимается вся группа под нажатой точкой. Опыт
+   * включается флагом ядра, поэтому экран зовёт этот путь только когда
+   * ввод и правила согласованы.
+   */
+  tryTap(cell: Cell): MoveResult | SessionMoveError {
+    const stop = this.blocked();
+    if (stop) return stop;
+    return this.commit(applyTap(this.board, cell, this.cfg, this.phaseNow()));
+  }
+
+  /** Почему партия не примет ход прямо сейчас; null — примет. */
+  private blocked(): SessionMoveError | null {
     if (this.over) return 'too-short';
     // Стоп-кадр останавливает партию, а не только часы. Иначе в замершем
     // времени можно было бы спокойно собирать цепочки: фаза не меняется,
-    // остаток не тает, а очки капают — это уже не наблюдение.
+    // время не тает, а потенциал капает — это уже не наблюдение.
     if (this.paused) return 'paused';
-    const phaseColor = phaseColorAt(this.seed, this.elapsed, this.cfg, this.claims);
-    const result = applyMove(this.board, path, this.cfg, phaseColor);
+    return null;
+  }
+
+  /** Цвет фазы на текущей секунде — с учётом уже поданных заявок. */
+  private phaseNow(): Color | null {
+    return phaseColorAt(this.seed, this.elapsed, this.cfg, this.claims);
+  }
+
+  /**
+   * Общий хвост хода: счёт и заявка на цвет. Цепочка и касание отличаются
+   * только тем, что попало в ядро, — дальше всё одинаково, и длину для
+   * заявки обе берут из одного места: снятых точек хода.
+   */
+  private commit(result: MoveResult | MoveError): MoveResult | SessionMoveError {
     if (typeof result === 'string') return result;
     this.board = result.board;
     this.score += result.points;
@@ -137,7 +168,12 @@ export class Session {
     if (this.mode !== 'duel') {
       // Время округляем как в журнале ходов: сервер переигрывает заход по
       // журналу и должен попасть в то же окно, что и клиент.
-      const claim = claimFrom(result.color, path.length, Number(this.elapsed.toFixed(3)), this.cfg);
+      const claim = claimFrom(
+        result.color,
+        result.removed.length,
+        Number(this.elapsed.toFixed(3)),
+        this.cfg,
+      );
       if (claim) this.claims.push({ ...claim, mine: true });
     }
     return result;

@@ -71,8 +71,68 @@ export function applyMove(
 ): MoveResult | MoveError {
   const validated = validatePath(board, path, cfg);
   if (typeof validated === 'string') return validated;
+  return resolve(board, validated, cfg, phaseColor);
+}
 
-  const color = cellAt(board.grid, path[0]!)!.color;
+/**
+ * Снятая группа под пальцем: точки того же цвета, связанные соседством —
+ * тем же, по которому ведут цепочку, в восемь сторон. Обход в ширину, так
+ * что порядок идёт волной от места касания: по нему рендер и анимирует
+ * снятие.
+ */
+export function tapGroup(board: Board, from: Cell, cfg: GameConfig): Cell[] {
+  const start = cellAt(board.grid, from);
+  if (start === undefined) return [];
+  const color = start.color;
+  const seen = new Set([cellKey(from)]);
+  const group: Cell[] = [from];
+
+  for (let i = 0; i < group.length; i++) {
+    const cell = group[i]!;
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        if (dr === 0 && dc === 0) continue;
+        const next: Cell = { r: cell.r + dr, c: cell.c + dc };
+        const key = cellKey(next);
+        if (seen.has(key)) continue;
+        if (cellAt(board.grid, next)?.color !== color) continue;
+        seen.add(key);
+        group.push(next);
+      }
+    }
+  }
+  return group;
+}
+
+/**
+ * Ход одним касанием: снимается вся связная группа цвета под пальцем.
+ * Дальше всё как у цепочки — те же взрывы, та же серия, тот же множитель
+ * фазы, — потому что считает их общий код.
+ */
+export function applyTap(
+  board: Board,
+  from: Cell,
+  cfg: GameConfig,
+  phaseColor: Color | null = null,
+): MoveResult | MoveError {
+  if (cellAt(board.grid, from) === undefined) return 'out-of-bounds';
+  const group = tapGroup(board, from, cfg);
+  if (group.length < cfg.minChain) return 'too-short';
+  return resolve(board, group, cfg, phaseColor);
+}
+
+/**
+ * Общая часть хода: взрывы зарядов, множители, снятие и падение. Цепочка и
+ * касание отличаются только тем, как собран список снятых точек, — считать
+ * их дальше по-разному было бы способом развести правила.
+ */
+function resolve(
+  board: Board,
+  validated: Cell[],
+  cfg: GameConfig,
+  phaseColor: Color | null,
+): MoveResult {
+  const color = cellAt(board.grid, validated[0]!)!.color;
   const removedSet = new Set(validated.map(cellKey));
 
   // Взрывы перегрузки: 3×3 вокруг каждой заряженной точки цепочки.
