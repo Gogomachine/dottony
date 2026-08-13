@@ -140,8 +140,10 @@ export class Renderer {
       rows.add(cell.r);
     }
 
-    // Волна вдоль собранной цепочки — видимое подтверждение хода.
-    if (result.removed.length > 0) {
+    // Волна вдоль собранной цепочки — видимое подтверждение хода. В ходе
+    // касанием её нет: игрок не вёл пути, и ломаная по группе рисовала бы
+    // маршрут, которого не было. Там точки просто гаснут призраками.
+    if (result.removed.length > 0 && !this.cfg.features.tap) {
       this.waves.push({
         points: result.removed.map((cell) => this.center(cell)),
         color: this.theme.dots[result.color]!,
@@ -236,10 +238,25 @@ export class Renderer {
       ctx.globalAlpha = 1;
     }
 
-    // Содержимое клеток. Точка занимает почти всю клетку: так поле читается
-    // как плотная сетка сигналов, а не как редкие кружки. Между соседями
-    // остаётся просвет в пятую часть клетки — цепочка по нему и видна.
+    // Точка занимает почти всю клетку: так поле читается как плотная сетка
+    // сигналов, а не как редкие кружки. Между соседями остаётся просвет в
+    // пятую часть клетки — цепочка по нему и видна.
     const radius = this.cell * 0.41;
+
+    // Призраки снятых клеток: точка не пропадает кадром, а тает на месте.
+    // Рисуем их до живых точек — падающая сверху точка должна проходить
+    // поверх тающей, а не окрашиваться ею.
+    for (const ghost of this.ghosts) {
+      const t = ghost.age / GHOST_LIFE;
+      ctx.globalAlpha = (1 - t) * (1 - t);
+      ctx.fillStyle = ghost.fill;
+      ctx.beginPath();
+      ctx.arc(ghost.x, ghost.y, radius * (1 - t * 0.35), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // Содержимое клеток.
     for (let r = 0; r < this.cfg.rows; r++) {
       for (let c = 0; c < this.cfg.cols; c++) {
         const content = grid[r]![c]!;
@@ -295,17 +312,6 @@ export class Renderer {
         else ctx.lineTo(point.x, point.y);
       });
       ctx.stroke();
-    }
-    ctx.globalAlpha = 1;
-
-    // Призраки снятых клеток.
-    for (const ghost of this.ghosts) {
-      const t = ghost.age / GHOST_LIFE;
-      ctx.globalAlpha = 0.5 * (1 - t);
-      ctx.fillStyle = ghost.fill;
-      ctx.beginPath();
-      ctx.arc(ghost.x, ghost.y, radius * (1 + t * 0.9), 0, Math.PI * 2);
-      ctx.fill();
     }
     ctx.globalAlpha = 1;
 

@@ -5,6 +5,8 @@ import {
   claimFrom,
   claimWindowAt,
   createBoard,
+  fillOrder,
+  nextOrder,
   phaseColorAt,
   phaseStateAt,
   seedRng,
@@ -17,11 +19,14 @@ import {
   type GameConfig,
   type MoveError,
   type MoveResult,
+  type Order,
+  type OrderStep,
   type PhaseState,
+  type RngState,
   type Color,
 } from '@doton/core';
 
-export type Mode = 'sprint' | 'free' | 'duel';
+export type Mode = 'sprint' | 'free' | 'duel' | 'order';
 
 // Длительность спринта задаёт ядро — клиент и сервер меряют заход одним
 // числом. Переэкспорт, чтобы экран не лез в ядро за одной константой.
@@ -56,6 +61,22 @@ export class Session {
    * решает сравнение, и заявка соперника может прийти после твоей.
    */
   private readonly claims: SessionClaim[] = [];
+  /**
+   * Текущий заказ прибора и сколько его цвета уже снято. Живёт только в
+   * режиме заказов; в остальных — null, и ходы его не касаются.
+   */
+  order: Order | null = null;
+  orderTaken = 0;
+  /** Закрыто заказов за заход и сколько из них подряд, без срыва. */
+  ordersDone = 0;
+  orderStreak = 0;
+  /** Чем последний ход кончился для заказа — для отчёта на экране. */
+  lastOrder: OrderStep = 'idle';
+  /**
+   * Заказы идут своим потоком случайных чисел. Брать их из поля нельзя:
+   * тот же поток раздаёт новые точки, и заказ сдвигал бы расклад.
+   */
+  private orderRng: RngState;
   over = false;
   /**
    * Момент старта по стенным часам. Время партии считаем от него, а не
@@ -86,6 +107,18 @@ export class Session {
     this.duration =
       mode === 'sprint' ? SPRINT_SECONDS : mode === 'duel' ? (duration ?? 90) : Infinity;
     this.timeLeft = this.duration;
+    // Свой сид, но выведенный из общего: по номеру образца заказы
+    // повторяются, а расклад поля от них не зависит.
+    this.orderRng = seedRng(seed ^ 0x9e3779b9);
+    if (mode === 'order') this.drawOrder();
+  }
+
+  /** Берёт следующий заказ и обнуляет прогресс по нему. */
+  private drawOrder(): void {
+    const drawn = nextOrder(this.orderRng, this.cfg);
+    this.orderRng = drawn.state;
+    this.order = drawn.order;
+    this.orderTaken = 0;
   }
 
   /** Партия идёт на время. */
@@ -162,6 +195,7 @@ export class Session {
     if (typeof result === 'string') return result;
     this.board = result.board;
     this.score += result.points;
+    this.fill(result);
     // Заявку на цвет в дуэли объявляет сервер: окно там решают его часы,
     // и ход у самой границы окна иначе разошёлся бы с сервером. В
     // одиночных режимах считать некому — считаем сами.
@@ -177,6 +211,27 @@ export class Session {
       if (claim) this.claims.push({ ...claim, mine: true });
     }
     return result;
+  }
+
+  /**
+   * Засчитывает ход в заказ. Закрытый заказ и сорванный одинаково ведут к
+   * следующему: партия в этом режиме не кончается, кончается заказ — и
+   * разница между ними только в серии.
+   */
+  private fill(result: MoveResult): void {
+    const order = this.order;
+    if (!order) return;
+    const step = fillOrder(order, this.orderTaken, result, this.cfg);
+    this.orderTaken = step.taken;
+    this.lastOrder = step.step;
+    if (step.step === 'done') {
+      this.ordersDone += 1;
+      this.orderStreak += 1;
+      this.drawOrder();
+    } else if (step.step === 'over' || step.step === 'stuck') {
+      this.orderStreak = 0;
+      this.drawOrder();
+    }
   }
 
   /**

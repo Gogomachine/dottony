@@ -82,6 +82,8 @@ export interface GameConfig {
   claimWindow: number;
   /** Цепочка от N точек в окне заявляет цвет. */
   claimChainLength: number;
+  /** Сколько точек просит заказ — ровно столько, ни точкой больше. */
+  orderTarget: number;
 }
 
 export const DEFAULT_CONFIG: GameConfig = {
@@ -98,6 +100,7 @@ export const DEFAULT_CONFIG: GameConfig = {
   phaseMultiplier: 2,
   claimWindow: 8,
   claimChainLength: 5,
+  orderTarget: 25,
 };
 
 /**

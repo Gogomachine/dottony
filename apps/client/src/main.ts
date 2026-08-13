@@ -39,7 +39,7 @@ import { DuelConnection, makeRoomCode } from './duel';
 import { FEEL } from './game/feel';
 import { ChainInput } from './game/input';
 import { Renderer } from './game/renderer';
-import { miniState, type MiniState } from './game/mini';
+import { miniState, orderMini, type MiniState } from './game/mini';
 import { Session, SPRINT_SECONDS, type Mode } from './game/session';
 import { Tutorial } from './tutorial';
 import { brandLockup } from './brand';
@@ -121,19 +121,31 @@ applyTheme(themeName);
 let mode: Mode = 'sprint';
 
 /**
- * Правила этого прибора. Отличаются от заводских одним: опытом с ходом
- * одним касанием, который игрок включает сам.
+ * Правила этого прибора. Отличаются от заводских одним: ходом одним
+ * касанием — его включает либо игрок в панели, либо сам режим заказов.
  *
  * Объект один на всех — рендер, ввод и сессия держат ссылку на него, —
  * поэтому переключатель меняет само поле `features.tap`, а не собирает
  * новый конфиг: иначе половина игры осталась бы со старым.
  */
+/** Опыт с касанием включён игроком — выбор переживает перезагрузку. */
+let tapChosen = loadTap();
+
 const cfg: GameConfig = {
   ...DEFAULT_CONFIG,
-  features: { ...DEFAULT_CONFIG.features, tap: loadTap() },
+  features: { ...DEFAULT_CONFIG.features, tap: tapChosen },
 };
 
-/** Опыт идёт — рекорды никуда не уходят: это другая игра. */
+/**
+ * Ставит способ хода по режиму. В заказах он не выбирается: там весь смысл
+ * в том, что размер группы задаёт поле, а не игрок. Дай там вести цепочку
+ * пальцем — и «ровно 25» собиралось бы по счётчику, без единой развилки.
+ */
+function syncTap(): void {
+  cfg.features.tap = tapChosen || mode === 'order';
+}
+
+/** Правила разошлись с заводскими — рекорды никуда не уходят: это другая игра. */
 function experiment(): boolean {
   return cfg.features.tap;
 }
@@ -192,6 +204,9 @@ function newSession(seed?: number): Session {
 
 function startGame(seed?: number): void {
   void sendCombo();
+  // Способ хода ставим до партии: сессия, ввод и рендер читают один конфиг,
+  // и режим заказов меняет его для себя.
+  syncTap();
   session = newSession(seed);
   // Новый образец снимает стоп-кадр: партия другая, запрет от старой не её.
   if (!replay) input.enabled = true;
@@ -242,10 +257,16 @@ function setStat(text: string, kind: '' | 'live' | 'warn' = ''): void {
 function updateHud(): void {
   scoreEl.textContent = String(session.score);
   if (!session.timed) {
-    // В бесконечном режиме таймера нет, и его место занимает челлендж:
-    // лучший ход захода. Делений не зажигаем — запаса не бывает.
-    timeLabelEl.textContent = comboRun ? 'Комбо' : 'Время';
-    timeEl.textContent = comboRun ? groupDigits(comboRun.best) : '∞';
+    // В бесконечных режимах таймера нет, и его место занимает счёт захода:
+    // в заказах — закрытые наряды, иначе челлендж комбо. Делений не
+    // зажигаем — запаса не бывает.
+    const orders = session.mode === 'order';
+    timeLabelEl.textContent = orders ? 'Заказы' : comboRun ? 'Комбо' : 'Время';
+    timeEl.textContent = orders
+      ? String(session.ordersDone)
+      : comboRun
+        ? groupDigits(comboRun.best)
+        : '∞';
     timeFieldEl.className = 'field right';
     for (const tick of tickEls) tick.className = 'tick';
     return;
@@ -297,6 +318,20 @@ function showMini(state: MiniState): void {
 }
 
 function updateMini(): void {
+  // В заказах экранчик занят нарядом: резонанс там идёт и считается, но
+  // видно его по ореолам на поле — а место экранчика важнее отдать тому,
+  // что игрок держит в голове весь заказ.
+  const order = session.order;
+  if (order) {
+    const key = `o${order.color}:${session.orderTaken}`;
+    if (key === miniCache) return;
+    miniCache = key;
+    const state = orderMini(order, session.orderTaken);
+    showMini(state);
+    tintScope(SCOPE.dots[order.color]!);
+    return;
+  }
+
   const phase = session.phase();
   const window = session.claimWindow();
   const leader = window.open ? session.leader() : null;
@@ -397,6 +432,9 @@ function startTutorial(): void {
   overlay.hidden = true;
   duelSheet.hidden = true;
   rulesSheet.hidden = true;
+  // Показ ведут цепочкой: у него свои ходы, и рисоваться они должны линией.
+  // Способ хода вернёт startGame() в конце показа.
+  cfg.features.tap = false;
   // Партия под обучением не идёт: показ ведёт своё поле и свои часы.
   session.pause();
   input.enabled = false;
@@ -1143,6 +1181,41 @@ function showFloatingPoints(points: number, multiplier: number, at: { x: number;
   setTimeout(() => label.remove(), 900);
 }
 
+/**
+ * Отчёт по заказу вместо обычного отчёта о ходе. Возвращает false, если
+ * заказов сейчас нет, — тогда прибор говорит как обычно.
+ *
+ * Заказ закрывают ровно в цель, поэтому и слова разные: пока далеко —
+ * сколько осталось, у самой цели — что ход решающий, а перебор — срыв.
+ */
+function reportOrder(removed: number): boolean {
+  if (session.mode !== 'order') return false;
+  const left = session.order ? session.order.target - session.orderTaken : 0;
+  switch (session.lastOrder) {
+    case 'done':
+      setStat(`Заказ закрыт · ${session.ordersDone}-й · серия ${session.orderStreak}`, 'live');
+      if (navigator.vibrate) navigator.vibrate(FEEL.hapticMax);
+      break;
+    case 'over':
+      setStat('Перебор — заказ сорван. Прибор просит новый цвет', 'warn');
+      if (navigator.vibrate) navigator.vibrate([FEEL.hapticMax, 40, FEEL.hapticMax]);
+      break;
+    case 'stuck':
+      // Остаток короче цепочки: добрать его нечем — заказ уже не закрыть.
+      setStat(`Недобор — остаток меньше ${cfg.minChain}, добрать нечем. Новый заказ`, 'warn');
+      if (navigator.vibrate) navigator.vibrate([FEEL.hapticMax, 40, FEEL.hapticMax]);
+      break;
+    case 'grows':
+      setStat(`Взято ${removed} · остаётся ${left}`, 'live');
+      break;
+    default:
+      // Ход чужого цвета: заказу он не в счёт, зато разбирает поле под него.
+      setStat(`Не тот цвет · до заказа ${left}`);
+  }
+  updateHud();
+  return true;
+}
+
 const input = new ChainInput(
   canvas,
   renderer,
@@ -1167,9 +1240,12 @@ const input = new ChainInput(
     renderer.animateMove(oldGrid, result);
     showFloatingPoints(result.points, result.multiplier, at);
     updateStreak(result.streak);
-    // Снятое показываем строкой состояния — это и есть отчёт прибора.
-    const gain = result.multiplier > 1 ? ` ×${result.multiplier}` : '';
-    setStat(`Снято ${result.removed.length + result.exploded.length} · +${result.points}${gain}`, 'live');
+    // Снятое показываем строкой состояния — это и есть отчёт прибора. В
+    // заказах отчёт другой: там важно не сколько снято, а сколько осталось.
+    if (!reportOrder(result.removed.length)) {
+      const gain = result.multiplier > 1 ? ` ×${result.multiplier}` : '';
+      setStat(`Снято ${result.removed.length + result.exploded.length} · +${result.points}${gain}`, 'live');
+    }
     updateGoKey();
     updateHud();
     // Своя заявка в одиночных режимах: в дуэли её объявит сервер.
@@ -1274,10 +1350,16 @@ const MENU_ACTIONS: Record<string, () => void> = {
     menuEl.hidden = true;
     setMode('free');
   },
+  order: () => {
+    menuEl.hidden = true;
+    setMode('order');
+  },
   duel: () => {
     // Сервер проверяет ход цепочкой; касание он воспроизвести не умеет,
     // поэтому в опыте дуэль закрыта — иначе матч оборвался бы отказом.
-    if (experiment()) {
+    // Спрашиваем о выборе игрока, а не о текущем режиме: в дуэли заказов
+    // нет, и её собственный способ хода — обычная цепочка.
+    if (tapChosen) {
       showOverModal({
         title: 'Дуэль',
         note: 'Опыт с ходом касанием идёт только в одиночных режимах. Выключите его в панели — и дуэль вернётся.',
@@ -1299,8 +1381,8 @@ const MENU_ACTIONS: Record<string, () => void> = {
  * бы нечестно и к самому заходу, и к рекорду.
  */
 function toggleExperiment(): void {
-  const on = !cfg.features.tap;
-  cfg.features.tap = on;
+  const on = !tapChosen;
+  tapChosen = on;
   saveTap(on);
   showExperiment();
   if (inDuel) endDuel();
@@ -1309,13 +1391,20 @@ function toggleExperiment(): void {
   // Панель не закрываем: переключатель живёт в ней, и игрок обычно тут же
   // выбирает режим, в котором будет пробовать.
   openMenu();
-  setStat(on ? 'Опыт: ход одним касанием' : 'Обычный ход: цепочка пальцем', 'warn');
+  setStat(
+    // В заказах касание не выключается — не обещаем того, чего не будет.
+    mode === 'order'
+      ? 'В заказах ход всегда одним касанием'
+      : on
+        ? 'Опыт: ход одним касанием'
+        : 'Обычный ход: цепочка пальцем',
+    'warn',
+  );
 }
 
 function showExperiment(): void {
-  const on = cfg.features.tap;
-  expTapEl.classList.toggle('on', on);
-  expTapStateEl.textContent = on ? 'вкл' : 'выкл';
+  expTapEl.classList.toggle('on', tapChosen);
+  expTapStateEl.textContent = tapChosen ? 'вкл' : 'выкл';
 }
 
 menuEl.addEventListener('click', (event) => {
@@ -1363,13 +1452,13 @@ el<HTMLButtonElement>('join-code').addEventListener('click', () => {
 });
 
 /**
- * Стоп-кадр — только для бесконечного режима. В дуэли время общее с
+ * Стоп-кадр — только для режимов без часов. В дуэли время общее с
  * соперником, а спринт стал соревновательным: там остановка часов дала бы
- * фору — думай сколько хочешь, а таймер стоит. В бесконечном отнимать
- * нечего: комбо считается за ход и от времени не зависит.
+ * фору — думай сколько хочешь, а таймер стоит. Где часов нет, отнимать
+ * нечего: и комбо, и заказ считаются за ход, а не за секунду.
  */
 function canPause(): boolean {
-  return session.mode === 'free' && replay === null && !session.over && session.started;
+  return !session.timed && replay === null && !session.over && session.started;
 }
 
 /**

@@ -9,6 +9,7 @@ import {
   phaseStateAt,
   type Claim,
 } from './phase.js';
+import { fillOrder, nextOrder } from './order.js';
 import { nextInt, seedRng } from './rng.js';
 import {
   DEFAULT_CONFIG,
@@ -576,5 +577,70 @@ describe('ход одним касанием', () => {
     const snapshot = structuredClone(board);
     applyTap(board, { r: 0, c: 0 }, cfg);
     expect(board).toEqual(snapshot);
+  });
+});
+
+describe('заказ', () => {
+  /** Ход, от которого заказу нужны только цвет и число снятых точек. */
+  function move(color: Color, removed: number, exploded = 0): MoveResult {
+    const cells = (n: number): Cell[] => Array.from({ length: n }, (_, i) => ({ r: 0, c: i }));
+    return {
+      board: boardFrom(ROWS),
+      removed: cells(removed),
+      exploded: cells(exploded),
+      charged: null,
+      points: 0,
+      color,
+      phased: false,
+      surges: 0,
+      multiplier: 1,
+      streak: 0,
+    };
+  }
+
+  const order = { color: 1 as Color, target: 25 };
+
+  it('цвет заказа выводится из сида — заказы воспроизводимы', () => {
+    const first = nextOrder(seedRng(7), cfg);
+    const again = nextOrder(seedRng(7), cfg);
+    expect(first.order).toEqual(again.order);
+    expect(first.order.target).toBe(cfg.orderTarget);
+    expect(first.order.color).toBeLessThan(cfg.colors);
+  });
+
+  it('следующий заказ берётся из продвинутого состояния', () => {
+    const first = nextOrder(seedRng(7), cfg);
+    const second = nextOrder(first.state, cfg);
+    expect(second.state).not.toBe(first.state);
+  });
+
+  it('чужой цвет заказа не касается', () => {
+    expect(fillOrder(order, 10, move(2, 6), cfg)).toEqual({ taken: 10, step: 'idle' });
+  });
+
+  it('свой цвет копится', () => {
+    expect(fillOrder(order, 10, move(1, 6), cfg)).toEqual({ taken: 16, step: 'grows' });
+  });
+
+  it('ровно в цель — заказ закрыт', () => {
+    expect(fillOrder(order, 20, move(1, 5), cfg)).toEqual({ taken: 25, step: 'done' });
+  });
+
+  it('перебор срывает заказ', () => {
+    expect(fillOrder(order, 22, move(1, 5), cfg)).toEqual({ taken: 27, step: 'over' });
+  });
+
+  it('остаток меньше цепочки — добрать нечем, заказ сорван', () => {
+    // 23 из 25: двойками точки не снимаются, значит закрыться уже нельзя.
+    expect(fillOrder(order, 20, move(1, 3), cfg)).toEqual({ taken: 23, step: 'stuck' });
+  });
+
+  it('остаток ровно в цепочку ещё живой', () => {
+    expect(fillOrder(order, 19, move(1, 3), cfg)).toEqual({ taken: 22, step: 'grows' });
+  });
+
+  it('точки, снятые взрывом, в заказ не идут', () => {
+    // Иначе решающий ход стал бы лотереей: заряд сносит что попало.
+    expect(fillOrder(order, 20, move(1, 5, 4), cfg)).toEqual({ taken: 25, step: 'done' });
   });
 });
