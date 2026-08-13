@@ -9,7 +9,7 @@ import {
   phaseStateAt,
   type Claim,
 } from './phase.js';
-import { orderAt, orderReward } from './order.js';
+import { nextOrderColor, orderReward } from './order.js';
 import { nextInt, seedRng } from './rng.js';
 import {
   DEFAULT_CONFIG,
@@ -581,35 +581,31 @@ describe('ход одним касанием', () => {
 });
 
 describe('заказ', () => {
-  it('окна идут подряд, без передышки между ними', () => {
-    const start = orderAt(7, 0, cfg);
-    expect(start.cycle).toBe(0);
-    expect(start.remaining).toBe(cfg.orderWindow);
+  /** Цепочка цветов окон по сиду — как её ведёт партия. */
+  function windows(seed: number, count: number): Color[] {
+    const out: Color[] = [];
+    let previous: Color | null = null;
+    for (let cycle = 0; cycle < count; cycle++) {
+      previous = nextOrderColor(seed, cycle, previous, cfg);
+      out.push(previous);
+    }
+    return out;
+  }
 
-    const late = orderAt(7, cfg.orderWindow - 1, cfg);
-    expect(late.cycle).toBe(start.cycle);
-    expect(late.remaining).toBe(1);
-
-    // Следующая секунда — уже следующее окно, со своим цветом и полным
-    // отсчётом: паузы между ними нет.
-    const next = orderAt(7, cfg.orderWindow, cfg);
-    expect(next.cycle).toBe(start.cycle + 1);
-    expect(next.remaining).toBe(cfg.orderWindow);
+  it('цвет окна не повторяет предыдущий — смену видно', () => {
+    const run = windows(7, 60);
+    for (let i = 1; i < run.length; i++) expect(run[i]).not.toBe(run[i - 1]);
+    for (const color of run) expect(color).toBeLessThan(cfg.colors);
+    // Все цвета в ходу: исключается только один, а не половина палитры.
+    expect(new Set(run).size).toBe(cfg.colors);
   });
 
   it('цвета окон выводятся из сида — заход воспроизводим', () => {
-    const first = Array.from({ length: 8 }, (_, i) => orderAt(7, i * cfg.orderWindow, cfg).color);
-    const again = Array.from({ length: 8 }, (_, i) => orderAt(7, i * cfg.orderWindow, cfg).color);
-    expect(first).toEqual(again);
-    for (const color of first) expect(color).toBeLessThan(cfg.colors);
-    // Не один и тот же цвет во всех окнах подряд.
-    expect(new Set(first).size).toBeGreaterThan(1);
+    expect(windows(7, 12)).toEqual(windows(7, 12));
   });
 
   it('разные образцы дают разные окна', () => {
-    const colors = (seed: number) =>
-      Array.from({ length: 12 }, (_, i) => orderAt(seed, i * cfg.orderWindow, cfg).color).join('');
-    expect(colors(1)).not.toBe(colors(2));
+    expect(windows(1, 12).join('')).not.toBe(windows(2, 12).join(''));
   });
 
   it('недобор не стоит ничего, цель стоит награду, а сверх — по награде за точку', () => {

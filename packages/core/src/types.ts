@@ -118,7 +118,7 @@ export const DEFAULT_CONFIG: GameConfig = {
   claimChainLength: 5,
   orderTarget: 25,
   orderReward: 100,
-  orderWindow: 20,
+  orderWindow: 18,
   orderLives: 3,
   orderWeight: 4,
 };

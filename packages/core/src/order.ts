@@ -3,9 +3,12 @@ import type { Color, GameConfig } from './types.js';
 
 /**
  * Заказ: прибор звенит случайным цветом и держит окно `orderWindow`
- * секунд, после чего сразу берёт следующий цвет. За окно нужно снять
- * `orderTarget` точек его цвета — и обязательно за один раз, одним
- * касанием.
+ * секунд. За окно нужно снять `orderTarget` точек его цвета — и
+ * обязательно за один раз, одним касанием.
+ *
+ * Окно кончается двумя способами, и оба сразу открывают следующее, с
+ * новым цветом и полным отсчётом: время вышло — сбой, заказ закрыт —
+ * успех. Тянуть закрытое окно незачем: цвет уже отработан.
  *
  * Смысл механики в том, что размер группы задаёт поле, а не игрок: пятно
  * нужного цвета выращивают, разбирая всё вокруг, а сколько в нём точек на
@@ -30,23 +33,26 @@ export interface OrderState {
   cycle: number;
 }
 
-function colorOfWindow(seed: number, cycle: number, cfg: GameConfig): Color {
-  const roll = nextInt(seedRng((seed ^ Math.imul(cycle + 1, 0x85ebca6b)) >>> 0), cfg.colors);
-  return roll.value as Color;
+function roll(seed: number, cycle: number, sides: number): number {
+  return nextInt(seedRng((seed ^ Math.imul(cycle + 1, 0x85ebca6b)) >>> 0), sides).value;
 }
 
 /**
- * Окна идут подряд, без передышки: прибор звенит всегда, меняется только
- * цвет. Пауза между ними была временем на подготовку — и оказалась
- * временем, когда играть незачем.
+ * Цвет окна номер `cycle` — из сида, но никогда не тот, что был в
+ * предыдущем: смена цвета и есть знак, что окно кончилось. Повторись он —
+ * закрытый заказ выглядел бы как незакрытый.
+ *
+ * Поэтому цвет — цепочка от окна к окну, а не функция одного номера, и
+ * ведёт её партия. По сиду она всё равно воспроизводима.
  */
-export function orderAt(seed: number, timeSec: number, cfg: GameConfig): OrderState {
-  const cycle = Math.floor(timeSec / cfg.orderWindow);
-  return {
-    color: colorOfWindow(seed, cycle, cfg),
-    remaining: (cycle + 1) * cfg.orderWindow - timeSec,
-    cycle,
-  };
+export function nextOrderColor(
+  seed: number,
+  cycle: number,
+  previous: Color | null,
+  cfg: GameConfig,
+): Color {
+  if (previous === null) return roll(seed, cycle, cfg.colors) as Color;
+  return ((previous + 1 + roll(seed, cycle, cfg.colors - 1)) % cfg.colors) as Color;
 }
 
 /**

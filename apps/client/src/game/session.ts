@@ -5,7 +5,7 @@ import {
   claimFrom,
   claimWindowAt,
   createBoard,
-  orderAt,
+  nextOrderColor,
   orderReward,
   phaseColorAt,
   phaseStateAt,
@@ -67,10 +67,10 @@ export class Session {
    * иначе заказы шли бы бесконечно и заход нечем было бы мерить.
    */
   orderFails = 0;
-  /** Сколько заказов закрыто в текущем окне. */
-  orderHits = 0;
-  /** Номер окна, которое идёт сейчас; −1 — заход ещё не начинался. */
-  orderCycle = -1;
+  /** Номер окна, которое идёт сейчас, и секунда, с которой оно пошло. */
+  orderCycle = 0;
+  private orderSince = 0;
+  private orderColor: Color = 0;
   /** Чем кончилось прошлое окно: закрыто или упущено. */
   lastWindow: 'done' | 'missed' | null = null;
   /** Последний ход цветом окна: сколько снял и сколько за это дали. */
@@ -105,31 +105,46 @@ export class Session {
     this.duration =
       mode === 'sprint' ? SPRINT_SECONDS : mode === 'duel' ? (duration ?? 90) : Infinity;
     this.timeLeft = this.duration;
-    this.syncOrder();
+    if (mode === 'order') this.orderColor = nextOrderColor(seed, 0, null, cfg);
   }
 
   /** Окно заказа на текущей секунде; null — режим не тот. */
   order(): OrderState | null {
-    return this.mode === 'order' ? orderAt(this.seed, this.elapsed, this.cfg) : null;
+    if (this.mode !== 'order') return null;
+    return {
+      color: this.orderColor,
+      cycle: this.orderCycle,
+      remaining: this.orderSince + this.cfg.orderWindow - this.elapsed,
+    };
   }
 
   /**
-   * Закрывает прошедшее окно и открывает новое. Считаем по окнам, а не по
-   * ходам: промах внутри окна стоит пятна и времени, но окно ещё можно
-   * вытянуть — а вот окно, закрытое пустым, уже сбой прибора.
+   * Закрывает окно и открывает следующее — с новым цветом и полным
+   * отсчётом. Закрытый заказ окно исчерпывает: цвет отработан, тянуть его
+   * до конца отсчёта незачем. Значит и досидеть до конца может только
+   * пустое окно, а пустое окно — сбой прибора.
    */
+  private nextWindow(done: boolean): void {
+    this.lastWindow = done ? 'done' : 'missed';
+    this.orderStreak = done ? this.orderStreak + 1 : 0;
+    if (!done) {
+      this.orderFails += 1;
+      // Запас кончился — заход тоже: следующего окна уже не будет.
+      if (this.orderFails >= this.cfg.orderLives) {
+        this.over = true;
+        return;
+      }
+    }
+    this.orderCycle += 1;
+    this.orderSince = this.elapsed;
+    this.orderColor = nextOrderColor(this.seed, this.orderCycle, this.orderColor, this.cfg);
+  }
+
+  /** Часы окна вышли. Возвращение из свёрнутой вкладки стоит одного сбоя. */
   private syncOrder(): void {
     const state = this.order();
-    if (state === null || state.cycle === this.orderCycle) return;
-    if (this.orderCycle >= 0) {
-      const done = this.orderHits > 0;
-      this.lastWindow = done ? 'done' : 'missed';
-      this.orderStreak = done ? this.orderStreak + 1 : 0;
-      if (!done) this.orderFails += 1;
-      if (this.orderFails >= this.cfg.orderLives) this.over = true;
-    }
-    this.orderCycle = state.cycle;
-    this.orderHits = 0;
+    if (state === null || state.remaining > 0) return;
+    this.nextWindow(false);
   }
 
   /** Партия идёт на время. */
@@ -256,7 +271,7 @@ export class Session {
     if (reward === 0) return;
     this.score += reward;
     this.ordersDone += 1;
-    this.orderHits += 1;
+    this.nextWindow(true);
   }
 
   /**

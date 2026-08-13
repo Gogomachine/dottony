@@ -1219,7 +1219,10 @@ function reportOrder(removed: number): boolean {
     // Ход не цветом окна: заказу он не в счёт, зато растит пятно под него.
     setStat(`Снято ${removed} · пятно растёт`);
   } else if (fire.reward > 0) {
-    setStat(`Заказ · ${fire.size} точек · +${groupDigits(fire.reward)}`, 'live');
+    // Заказ закрыт — окно вместе с ним: цвет уже сменился, и говорить об
+    // этом отдельной строкой не нужно, серия дописывается сюда же.
+    const run = session.orderStreak > 1 ? ` · серия ${session.orderStreak}` : '';
+    setStat(`Заказ · ${fire.size} точек · +${groupDigits(fire.reward)}${run}`, 'live');
     if (navigator.vibrate) navigator.vibrate(FEEL.hapticMax);
   } else {
     setStat(`${fire.size} — не хватило до ${session.cfg.orderTarget}`, 'warn');
@@ -1230,9 +1233,8 @@ function reportOrder(removed: number): boolean {
 }
 
 /**
- * Смена окна: прибор объявляет новый цвет, а заодно и судьбу прошлого
- * окна. Пропущенное окно обрывает серию — сказать об этом должен прибор,
- * а не догадка игрока.
+ * Смена окна. Про закрытый заказ уже сказал отчёт о ходе — здесь остаётся
+ * упущенное окно: его обрыв серии игрок иначе увидит только по счётчику.
  */
 let shownWindow = -1;
 function watchWindow(): void {
@@ -1240,16 +1242,16 @@ function watchWindow(): void {
   if (!order || session.over || order.cycle === shownWindow) return;
   const first = shownWindow < 0;
   shownWindow = order.cycle;
-  if (first || !session.started) return;
-  if (session.lastWindow === 'missed') {
-    const left = session.cfg.orderLives - session.orderFails;
-    setStat(`Окно упущено · сбой ${session.orderFails} из ${session.cfg.orderLives}`, 'warn');
-    flashMini();
-    if (navigator.vibrate) navigator.vibrate([FEEL.hapticMax, 40, FEEL.hapticMax]);
-    if (left === 1) setStat('Окно упущено · остался последний запас', 'warn');
-    return;
-  }
-  setStat(`Окно закрыто · серия ${session.orderStreak}`, 'live');
+  if (first || !session.started || session.lastWindow !== 'missed') return;
+  const left = session.cfg.orderLives - session.orderFails;
+  setStat(
+    left === 1
+      ? 'Окно упущено · остался последний запас'
+      : `Окно упущено · сбой ${session.orderFails} из ${session.cfg.orderLives}`,
+    'warn',
+  );
+  flashMini();
+  if (navigator.vibrate) navigator.vibrate([FEEL.hapticMax, 40, FEEL.hapticMax]);
 }
 
 const input = new ChainInput(
