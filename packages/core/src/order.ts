@@ -2,9 +2,10 @@ import { nextInt, seedRng } from './rng.js';
 import type { Color, GameConfig } from './types.js';
 
 /**
- * Заказ: прибор входит в резонанс со случайным цветом и держит окно
- * `orderWindow` секунд. За это время нужно снять `orderTarget` точек этого
- * цвета — и обязательно за один раз, одним касанием.
+ * Заказ: прибор звенит случайным цветом и держит окно `orderWindow`
+ * секунд, после чего сразу берёт следующий цвет. За окно нужно снять
+ * `orderTarget` точек его цвета — и обязательно за один раз, одним
+ * касанием.
  *
  * Смысл механики в том, что размер группы задаёт поле, а не игрок: пятно
  * нужного цвета выращивают, разбирая всё вокруг, а сколько в нём точек на
@@ -21,13 +22,11 @@ import type { Color, GameConfig } from './types.js';
  */
 
 export interface OrderState {
-  /** Цвет окна; в паузе — цвет следующего окна. */
+  /** Цвет, которым прибор звенит сейчас. */
   color: Color;
-  /** Открыто ли окно прямо сейчас. */
-  open: boolean;
-  /** Секунды до конца окна или, в паузе, до начала следующего. */
+  /** Секунды до конца окна. */
   remaining: number;
-  /** Номер окна с начала захода; в паузе — уже следующего. */
+  /** Номер окна с начала захода. */
   cycle: number;
 }
 
@@ -36,18 +35,16 @@ function colorOfWindow(seed: number, cycle: number, cfg: GameConfig): Color {
   return roll.value as Color;
 }
 
+/**
+ * Окна идут подряд, без передышки: прибор звенит всегда, меняется только
+ * цвет. Пауза между ними была временем на подготовку — и оказалась
+ * временем, когда играть незачем.
+ */
 export function orderAt(seed: number, timeSec: number, cfg: GameConfig): OrderState {
-  const period = cfg.orderWindow + cfg.orderBreak;
-  const passed = Math.floor(timeSec / period);
-  const within = timeSec - passed * period;
-  const open = within < cfg.orderWindow;
-  // В паузе прибор уже называет следующий цвет: пауза для того и нужна —
-  // успеть посмотреть на поле и решить, с чего начинать.
-  const cycle = open ? passed : passed + 1;
+  const cycle = Math.floor(timeSec / cfg.orderWindow);
   return {
     color: colorOfWindow(seed, cycle, cfg),
-    open,
-    remaining: open ? cfg.orderWindow - within : period - within,
+    remaining: (cycle + 1) * cfg.orderWindow - timeSec,
     cycle,
   };
 }

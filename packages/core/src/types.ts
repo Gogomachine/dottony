@@ -87,9 +87,8 @@ export interface GameConfig {
   orderTarget: number;
   /** Награда за заказ ровно в цель; каждая точка сверх неё стоит столько же. */
   orderReward: number;
-  /** Сколько длится окно заказа и пауза между окнами, сек. */
+  /** Сколько длится окно заказа, сек. Окна идут подряд, без передышки. */
   orderWindow: number;
-  orderBreak: number;
   /**
    * Сколько окон можно упустить за заход. Столько раз прибор простит
    * пустое окно — на следующем заход кончается.
@@ -119,8 +118,7 @@ export const DEFAULT_CONFIG: GameConfig = {
   claimChainLength: 5,
   orderTarget: 25,
   orderReward: 100,
-  orderWindow: 25,
-  orderBreak: 6,
+  orderWindow: 20,
   orderLives: 3,
   orderWeight: 4,
 };

@@ -179,11 +179,10 @@ export class Session {
   tryTap(cell: Cell): MoveResult | SessionMoveError {
     const stop = this.blocked();
     if (stop) return stop;
-    // Пока окно открыто, прибор притягивает свой цвет: досыпка отдаёт ему
-    // вес против единицы у прочих. Без этого пятно до цели не дорастает.
+    // Прибор притягивает цвет окна: досыпка отдаёт ему вес против единицы
+    // у прочих. Без этого пятно до цели не дорастает.
     const window = this.order();
-    const bias = window?.open ? window.color : null;
-    return this.commit(applyTap(this.board, cell, this.cfg, this.phaseNow(), bias));
+    return this.commit(applyTap(this.board, cell, this.cfg, this.phaseNow(), window?.color ?? null));
   }
 
   /** Почему партия не примет ход прямо сейчас; null — примет. */
@@ -247,7 +246,7 @@ export class Session {
   private fire(result: MoveResult): void {
     this.syncOrder();
     const window = this.order();
-    if (window === null || !window.open || result.color !== window.color) {
+    if (window === null || result.color !== window.color) {
       this.lastFire = null;
       return;
     }

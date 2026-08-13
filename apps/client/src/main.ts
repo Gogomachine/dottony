@@ -252,15 +252,12 @@ function updateHud(): void {
     showFails();
     timeLabelEl.textContent = 'Заказы';
     timeEl.textContent = String(session.ordersDone);
-    const full = order.open ? session.cfg.orderWindow : session.cfg.orderBreak;
-    const lit = Math.round((order.remaining / full) * TICKS);
-    const warn = order.open && order.remaining <= 8;
+    const lit = Math.round((order.remaining / session.cfg.orderWindow) * TICKS);
+    // Последние секунды окна шкала краснеет — это видно боковым зрением.
+    const warn = order.remaining <= 5;
     timeFieldEl.className = `field right${warn ? ' warn' : ''}`;
     tickEls.forEach((tick, i) => {
-      // Пауза показана пунктиром наоборот: деления не горят, а копятся к
-      // началу окна — видно, что прибор ещё не звенит.
-      const on = order.open ? i < lit : i >= TICKS - lit;
-      tick.className = `tick${on ? (warn ? ' warn' : ' on') : ''}`;
+      tick.className = `tick${i < lit ? (warn ? ' warn' : ' on') : ''}`;
     });
     return;
   }
@@ -331,11 +328,11 @@ function updateMini(): void {
     return;
   }
   if (order) {
-    const key = `o${order.color}:${order.open ? 1 : 0}:${Math.ceil(order.remaining)}`;
+    const key = `o${order.color}:${Math.ceil(order.remaining)}`;
     if (key === miniCache) return;
     miniCache = key;
     showMini(orderMini(order, session.cfg));
-    tintScope(order.open ? SCOPE.dots[order.color]! : null);
+    tintScope(SCOPE.dots[order.color]!);
     return;
   }
 
@@ -1220,7 +1217,7 @@ function reportOrder(removed: number): boolean {
   const fire = session.lastFire;
   if (fire === null) {
     // Ход не цветом окна: заказу он не в счёт, зато растит пятно под него.
-    setStat(order.open ? `Снято ${removed} · пятно растёт` : `Снято ${removed} · окно закрыто`);
+    setStat(`Снято ${removed} · пятно растёт`);
   } else if (fire.reward > 0) {
     setStat(`Заказ · ${fire.size} точек · +${groupDigits(fire.reward)}`, 'live');
     if (navigator.vibrate) navigator.vibrate(FEEL.hapticMax);
@@ -1695,7 +1692,7 @@ function frame(now: number): void {
   }
 
   // Ореолы на поле — по цвету резонанса: в заказах его задаёт окно.
-  const glow = order ? (order.open ? order.color : null) : session.phase().active;
+  const glow = order ? order.color : session.phase().active;
   renderer.draw(dt, session.board.grid, input.chain, input.pointer, glow);
   requestAnimationFrame(frame);
 }

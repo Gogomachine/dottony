@@ -62,17 +62,14 @@ export function miniState(
 /**
  * Экранчик в режиме заказов. Место то же, но показывает он не заявку, а
  * окно резонанса: каким цветом прибор сейчас звенит и сколько окну
- * осталось. В паузе он уже называет цвет следующего окна — для того пауза
- * и нужна: посмотреть на поле и решить, с чего начинать.
+ * осталось.
  */
 export function orderMini(order: OrderState, cfg: GameConfig): MiniState {
   return {
-    text: order.open
-      ? `Резонанс · <b>${cfg.orderTarget}+</b> за раз`
-      : 'Резонанс · <b>готовься</b>',
+    text: `Резонанс · <b>${cfg.orderTarget}+</b> за раз`,
     cd: pad(order.remaining),
     color: order.color,
-    fill: order.remaining / (order.open ? cfg.orderWindow : cfg.orderBreak),
+    fill: order.remaining / cfg.orderWindow,
   };
 }
 

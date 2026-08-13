@@ -581,31 +581,25 @@ describe('ход одним касанием', () => {
 });
 
 describe('заказ', () => {
-  it('окно и пауза сменяют друг друга по часам партии', () => {
+  it('окна идут подряд, без передышки между ними', () => {
     const start = orderAt(7, 0, cfg);
-    expect(start.open).toBe(true);
+    expect(start.cycle).toBe(0);
     expect(start.remaining).toBe(cfg.orderWindow);
 
     const late = orderAt(7, cfg.orderWindow - 1, cfg);
-    expect(late.open).toBe(true);
     expect(late.cycle).toBe(start.cycle);
+    expect(late.remaining).toBe(1);
 
-    const pause = orderAt(7, cfg.orderWindow + 1, cfg);
-    expect(pause.open).toBe(false);
-    // В паузе прибор называет уже следующее окно и считает до него.
-    expect(pause.cycle).toBe(start.cycle + 1);
-    expect(pause.remaining).toBe(cfg.orderBreak - 1);
-
-    const next = orderAt(7, cfg.orderWindow + cfg.orderBreak, cfg);
-    expect(next.open).toBe(true);
+    // Следующая секунда — уже следующее окно, со своим цветом и полным
+    // отсчётом: паузы между ними нет.
+    const next = orderAt(7, cfg.orderWindow, cfg);
     expect(next.cycle).toBe(start.cycle + 1);
-    expect(next.color).toBe(pause.color);
+    expect(next.remaining).toBe(cfg.orderWindow);
   });
 
   it('цвета окон выводятся из сида — заход воспроизводим', () => {
-    const period = cfg.orderWindow + cfg.orderBreak;
-    const first = Array.from({ length: 8 }, (_, i) => orderAt(7, i * period, cfg).color);
-    const again = Array.from({ length: 8 }, (_, i) => orderAt(7, i * period, cfg).color);
+    const first = Array.from({ length: 8 }, (_, i) => orderAt(7, i * cfg.orderWindow, cfg).color);
+    const again = Array.from({ length: 8 }, (_, i) => orderAt(7, i * cfg.orderWindow, cfg).color);
     expect(first).toEqual(again);
     for (const color of first) expect(color).toBeLessThan(cfg.colors);
     // Не один и тот же цвет во всех окнах подряд.
@@ -613,9 +607,8 @@ describe('заказ', () => {
   });
 
   it('разные образцы дают разные окна', () => {
-    const period = cfg.orderWindow + cfg.orderBreak;
     const colors = (seed: number) =>
-      Array.from({ length: 12 }, (_, i) => orderAt(seed, i * period, cfg).color).join('');
+      Array.from({ length: 12 }, (_, i) => orderAt(seed, i * cfg.orderWindow, cfg).color).join('');
     expect(colors(1)).not.toBe(colors(2));
   });
 
