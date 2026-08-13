@@ -1674,7 +1674,7 @@ function frame(now: number): void {
       // заход уже не трогает, и на нём остался бы последний живой отсчёт.
       showFails();
       showResult(`Прибор сбоит · ${session.ordersDone} заказов`, session.score);
-      setStat(`${session.cfg.orderLives} пустых окон — заход окончен`, 'warn');
+      setStat('Запас сбоев исчерпан — заход окончен', 'warn');
     } else {
       // Соло-итог показываем прямо в окуляре — как показание прибора.
       showResult('Наблюдение завершено', session.score);
