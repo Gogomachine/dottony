@@ -208,6 +208,9 @@ function startGame(seed?: number): void {
     session.mode === 'sprint' && !replay ? { seed: session.seed, moves: [] } : null;
   renderer.resetAnims();
   updateStreak(0);
+  // Третье поле приборной строки занимают дуэль и заказы; заказы поднимут
+  // его сами при первом же обновлении.
+  vsFieldEl.hidden = !inDuel;
   // Новая партия — новые окна: показ прошлых не должен пережить сброс.
   shownWindow = -1;
   shownChain = '';
@@ -246,6 +249,7 @@ function updateHud(): void {
   if (order) {
     // В заказах справа — счёт закрытых, а шкала делений отдана окну: она
     // и есть таймер, только не всей партии, а текущего резонанса.
+    showFails();
     timeLabelEl.textContent = 'Заказы';
     timeEl.textContent = String(session.ordersDone);
     const full = order.open ? session.cfg.orderWindow : session.cfg.orderBreak;
@@ -319,6 +323,13 @@ function updateMini(): void {
   // В заказах экранчик занят окном резонанса: цвет, отсчёт и то, что нужно
   // снять за раз. Заявок в этом режиме нет — их место здесь и заняло окно.
   const order = session.order();
+  if (order && session.over) {
+    if (miniCache === 'dead') return;
+    miniCache = 'dead';
+    showMini({ text: 'Резонанс · <b>сбой</b>', cd: '--', color: null, fill: 0 });
+    tintScope(null);
+    return;
+  }
   if (order) {
     const key = `o${order.color}:${order.open ? 1 : 0}:${Math.ceil(order.remaining)}`;
     if (key === miniCache) return;
@@ -665,6 +676,19 @@ const duel = new DuelConnection(handleDuelMessage, (state) => {
 
 /** Связь с сервером потеряна: ходы не отправить, ввод блокируем. */
 let connectionLost = false;
+
+/**
+ * Запас сбоев — третьим полем приборной строки, как счёт соперника в
+ * дуэли. Место одно: в заказах соперника нет, а в дуэли нет сбоев.
+ */
+function showFails(): void {
+  const left = Math.max(0, session.cfg.orderLives - session.orderFails);
+  vsFieldEl.hidden = false;
+  vsNameEl.textContent = 'Запас';
+  vsScoreEl.textContent = `${left} / ${session.cfg.orderLives}`;
+  // Последний сбой красим: заход держится на одном окне.
+  vsFieldEl.className = `field${left <= 1 ? ' warn' : ''}`;
+}
 
 /** Счёт соперника — третьим полем приборной строки, только в дуэли. */
 function showVersus(name: string, opponentScore: number): void {
@@ -1216,13 +1240,16 @@ function reportOrder(removed: number): boolean {
 let shownWindow = -1;
 function watchWindow(): void {
   const order = session.order();
-  if (!order || order.cycle === shownWindow) return;
+  if (!order || session.over || order.cycle === shownWindow) return;
   const first = shownWindow < 0;
   shownWindow = order.cycle;
   if (first || !session.started) return;
   if (session.lastWindow === 'missed') {
-    setStat('Окно закрыто · заказ не собран, серия обнулена', 'warn');
+    const left = session.cfg.orderLives - session.orderFails;
+    setStat(`Окно упущено · сбой ${session.orderFails} из ${session.cfg.orderLives}`, 'warn');
     flashMini();
+    if (navigator.vibrate) navigator.vibrate([FEEL.hapticMax, 40, FEEL.hapticMax]);
+    if (left === 1) setStat('Окно упущено · остался последний запас', 'warn');
     return;
   }
   setStat(`Окно закрыто · серия ${session.orderStreak}`, 'live');
@@ -1641,6 +1668,13 @@ function frame(now: number): void {
     } else if (inDuel) {
       // Итог объявляет сервер — ждём его сообщения, чтобы счёт сошёлся.
       showOverModal({ title: 'Дуэль', note: 'Время вышло, считаем результат…' });
+    } else if (session.mode === 'order') {
+      // Заказы кончаются не временем, а запасом: об этом и говорим. Запас
+      // дорисовываем сам: обычное обновление приборной строки мёртвый
+      // заход уже не трогает, и на нём остался бы последний живой отсчёт.
+      showFails();
+      showResult(`Прибор сбоит · ${session.ordersDone} заказов`, session.score);
+      setStat(`${session.cfg.orderLives} пустых окон — заход окончен`, 'warn');
     } else {
       // Соло-итог показываем прямо в окуляре — как показание прибора.
       showResult('Наблюдение завершено', session.score);

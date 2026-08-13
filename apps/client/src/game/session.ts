@@ -62,6 +62,11 @@ export class Session {
   /** Закрыто заказов за заход и сколько окон подряд закрыто хотя бы одним. */
   ordersDone = 0;
   orderStreak = 0;
+  /**
+   * Сбои: окна, закрытые без единого заказа. Их запас и есть конец захода —
+   * иначе заказы шли бы бесконечно и заход нечем было бы мерить.
+   */
+  orderFails = 0;
   /** Сколько заказов закрыто в текущем окне. */
   orderHits = 0;
   /** Номер окна, которое идёт сейчас; −1 — заход ещё не начинался. */
@@ -109,15 +114,19 @@ export class Session {
   }
 
   /**
-   * Закрывает прошедшее окно и открывает новое. Серию ведём по окнам, а не
-   * по заказам: окно без единого закрытого заказа её и обрывает.
+   * Закрывает прошедшее окно и открывает новое. Считаем по окнам, а не по
+   * ходам: промах внутри окна стоит пятна и времени, но окно ещё можно
+   * вытянуть — а вот окно, закрытое пустым, уже сбой прибора.
    */
   private syncOrder(): void {
     const state = this.order();
     if (state === null || state.cycle === this.orderCycle) return;
     if (this.orderCycle >= 0) {
-      this.lastWindow = this.orderHits > 0 ? 'done' : 'missed';
-      this.orderStreak = this.orderHits > 0 ? this.orderStreak + 1 : 0;
+      const done = this.orderHits > 0;
+      this.lastWindow = done ? 'done' : 'missed';
+      this.orderStreak = done ? this.orderStreak + 1 : 0;
+      if (!done) this.orderFails += 1;
+      if (this.orderFails >= this.cfg.orderLives) this.over = true;
     }
     this.orderCycle = state.cycle;
     this.orderHits = 0;
@@ -260,6 +269,8 @@ export class Session {
     if (this.over || this.pausedAt !== null || !this.startedYet) return false;
     this.elapsed = (now - this.startedAt) / 1000;
     this.syncOrder();
+    // Заход заказов кончается не по часам, а по запасу сбоев.
+    if (this.over) return true;
     if (!this.timed) return false;
     this.timeLeft = Math.max(0, this.duration - this.elapsed);
     if (this.timeLeft === 0) {

@@ -91,6 +91,11 @@ export interface GameConfig {
   orderWindow: number;
   orderBreak: number;
   /**
+   * Сколько окон можно упустить за заход. Столько раз прибор простит
+   * пустое окно — на следующем заход кончается.
+   */
+  orderLives: number;
+  /**
    * Во сколько раз чаще прочих выпадает цвет заказа, пока окно открыто.
    * Это и делает цель достижимой: без притяжения пятно упирается в два
    * десятка точек и «ровно 25» превращается в лотерею расклада.
@@ -116,6 +121,7 @@ export const DEFAULT_CONFIG: GameConfig = {
   orderReward: 100,
   orderWindow: 35,
   orderBreak: 6,
+  orderLives: 5,
   orderWeight: 4,
 };
 
