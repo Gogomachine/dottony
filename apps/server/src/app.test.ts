@@ -1901,7 +1901,9 @@ describe('loggedUrl', () => {
 describe('порог гостевых аккаунтов', () => {
   it('после SIGNUP_LIMIT заходов с адреса отвечает 429', async () => {
     const app = await buildApp({ databaseUrl: ':memory:', jwtSecret: 'test-jwt' });
-    const guest = (): ReturnType<typeof app.inject> =>
+    // Тип ответа выводим, а не называем: у inject несколько перегрузок, и
+    // ReturnType берёт из них цепочечную, а не ту, что отдаёт ответ.
+    const guest = async () =>
       app.inject({ method: 'POST', url: '/api/auth/guest', payload: { name: 'Гость' } });
 
     for (let i = 0; i < SIGNUP_LIMIT; i++) {
