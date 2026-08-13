@@ -7,6 +7,7 @@ import {
   AddFriendRequestSchema,
   AddScoreRequestSchema,
   AvatarRequestSchema,
+  MarksRequestSchema,
   DuelClientMessageSchema,
   FriendCodeSchema,
   GuestAuthRequestSchema,
@@ -31,6 +32,7 @@ import {
   type SubmitSprintResponse,
 } from '@doton/protocol';
 import {
+  cleanMarks,
   decayDeviation,
   leagueOf,
   nextLeague,
@@ -334,6 +336,19 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return issueToken(user.sub, parsed.data.name);
   });
 
+  /**
+   * Шильдики корпуса. Набор закрытый, поэтому проверка короткая: номер
+   * должен быть из каталога ядра — всё остальное отсекается там же.
+   */
+  app.put('/api/me/marks', async (request, reply) => {
+    const user = await requireUser(request);
+    const parsed = MarksRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
+    const marks = cleanMarks(parsed.data.marks);
+    await store.setMarks(user.sub, marks);
+    return { marks };
+  });
+
   /** Смайлик на пропуске: единственное, что игрок рисует о себе сам. */
   app.post('/api/me/avatar', async (request, reply) => {
     const user = await requireUser(request);
@@ -382,17 +397,20 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       rank: index + 1,
       name: row.name,
       score: row.score,
+      mark: row.mark,
     }));
 
     // Авторизация не обязательна: без токена просто не будет строки «я».
     let me: SprintLeaderboardResponse['me'] = null;
     try {
       const user = await requireUser(request);
-      const [best, rank] = await Promise.all([
+      const [best, rank, marks] = await Promise.all([
         store.bestSprint(user.sub, period),
         store.sprintRank(user.sub, period),
+        store.marksOf(user.sub),
       ]);
-      if (best > 0 && rank !== null) me = { rank, name: user.name, score: best };
+      const mark = marks.find((id) => id !== null) ?? null;
+      if (best > 0 && rank !== null) me = { rank, name: user.name, score: best, mark };
     } catch {
       // нет или битый токен — гость смотрит таблицу анонимно
     }
@@ -440,18 +458,21 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       name: row.name,
       score: row.score,
       orders: row.orders,
+      mark: row.mark,
     }));
 
     // Авторизация не обязательна: без токена просто не будет строки «я».
     let me: OrderLeaderboardResponse['me'] = null;
     try {
       const user = await requireUser(request);
-      const [best, orders, rank] = await Promise.all([
+      const [best, orders, rank, marks] = await Promise.all([
         store.bestOrder(user.sub, period),
         store.ordersOf(user.sub, period),
         store.orderRank(user.sub, period),
+        store.marksOf(user.sub),
       ]);
-      if (best > 0 && rank !== null) me = { rank, name: user.name, score: best, orders };
+      const mark = marks.find((id) => id !== null) ?? null;
+      if (best > 0 && rank !== null) me = { rank, name: user.name, score: best, orders, mark };
     } catch {
       // нет или битый токен — гость смотрит таблицу анонимно
     }
@@ -502,6 +523,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       order,
       orders,
       orderRank,
+      marks,
     ] = await Promise.all([
         store.ratingOf(user.sub),
         store.ratingRank(user.sub),
@@ -514,6 +536,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         store.bestOrder(user.sub),
         store.ordersOf(user.sub),
         store.orderRank(user.sub),
+        store.marksOf(user.sub),
       ]);
     const up = nextLeague(rating.rating);
     const league = leagueOf(rating.rating);
@@ -535,6 +558,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       identities,
       sprint: { best: sprint, rank: sprintRank },
       order: { best: order, orders, rank: orderRank },
+      marks,
     };
   });
 
@@ -807,6 +831,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       name: row.name,
       rating: row.rating,
       league: leagueOf(row.rating).name,
+      mark: row.mark,
     }));
 
     // Токен не обязателен: гость просто увидит таблицу без своей строки.
@@ -815,8 +840,17 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       const user = await requireUser(request);
       const rank = await store.ratingRank(user.sub);
       if (rank !== null) {
-        const rating = await store.ratingOf(user.sub);
-        me = { rank, name: user.name, rating: rating.rating, league: leagueOf(rating.rating).name };
+        const [rating, marks] = await Promise.all([
+          store.ratingOf(user.sub),
+          store.marksOf(user.sub),
+        ]);
+        me = {
+          rank,
+          name: user.name,
+          rating: rating.rating,
+          league: leagueOf(rating.rating).name,
+          mark: marks.find((id) => id !== null) ?? null,
+        };
       }
     } catch {
       // нет или битый токен — смотрим таблицу анонимно
@@ -847,14 +881,15 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       },
     };
 
-    // Код друга нужен сопернику на экране результата. Читаем один раз при
-    // подключении: к моменту подбора он уже на месте.
-    void store
-      .friendCodeOf(user.sub)
-      .then((code) => {
+    // Код друга нужен сопернику на экране результата, шильдик — с первой
+    // секунды матча. Читаем один раз при подключении: к моменту подбора
+    // оба уже на месте.
+    void Promise.all([store.friendCodeOf(user.sub), store.marksOf(user.sub)])
+      .then(([code, marks]) => {
         if (code) player.code = code;
+        player.mark = marks.find((id) => id !== null) ?? null;
       })
-      .catch((error: unknown) => app.log.error(error, 'friend code lookup failed'));
+      .catch((error: unknown) => app.log.error(error, 'duel player lookup failed'));
 
     socket.on('message', (raw: Buffer | string) => {
       let parsed: unknown;

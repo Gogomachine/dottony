@@ -1,4 +1,5 @@
 import {
+  markById,
   DEFAULT_CONFIG,
   type Cell,
   type Color,
@@ -43,6 +44,7 @@ import { Session, SPRINT_SECONDS, type Mode } from './game/session';
 import { Tutorial } from './tutorial';
 import { brandLockup } from './brand';
 import { emblemSvg } from './emblem';
+import { markChip, loadPlate, savePlate, showPlate } from './plate';
 import { applyTheme, loadMarks, loadThemeName, saveMarks, SCOPE } from './theme';
 
 function el<T extends HTMLElement>(id: string): T {
@@ -99,6 +101,7 @@ const tutStepEl = el<HTMLSpanElement>('tut-step');
 const tutTitleEl = el<HTMLElement>('tut-title');
 const tutTextEl = el<HTMLParagraphElement>('tut-text');
 const fingerEl = el<HTMLElement>('finger');
+const plateMarksEl = el<HTMLSpanElement>('plate-marks');
 const boardWrap = canvas.parentElement as HTMLElement;
 
 /** Шкала времени: полоска делений вдоль верхнего края окуляра. */
@@ -210,6 +213,17 @@ function updateStreak(streak: number): void {
   const active = streak > 0;
   gainEl.hidden = !active;
   if (active) gainEl.textContent = ` ×${streak + 1}`;
+}
+
+/**
+ * Имя игрока в чужой таблице: перед ним — его шильдик, если корпус помечен.
+ * Строку собираем из узлов, а не из разметки: имя пришло с сервера.
+ */
+function nameWithMark(host: HTMLElement, name: string, mark: string | null): void {
+  host.textContent = '';
+  const badge = mark === null ? undefined : markById(mark);
+  if (badge) host.appendChild(markChip(badge));
+  host.appendChild(document.createTextNode(name));
 }
 
 /** «1 заказ», «4 заказа», «7 заказов» — число решает окончание. */
@@ -541,8 +555,8 @@ function renderSprintBoard(board: SprintLeaderboardResponse): void {
     const item = document.createElement('li');
     if (board.me && entry.rank === board.me.rank) item.className = 'me';
     item.innerHTML =
-      `<span class="rank">${entry.rank}</span><span></span><span class="pts"></span>`;
-    (item.children[1] as HTMLElement).textContent = entry.name;
+      `<span class="rank">${entry.rank}</span><span class="who-line"></span><span class="pts"></span>`;
+    nameWithMark(item.children[1] as HTMLElement, entry.name, entry.mark);
     (item.children[2] as HTMLElement).textContent = groupDigits(entry.score);
     boardListEl.appendChild(item);
   }
@@ -672,13 +686,15 @@ function showFails(): void {
 /** Счёт соперника — третьим полем приборной строки, только в дуэли. */
 function showVersus(name: string, opponentScore: number): void {
   vsFieldEl.hidden = false;
-  vsNameEl.textContent = name;
+  nameWithMark(vsNameEl, name, opponentMark);
   vsScoreEl.textContent = String(opponentScore);
   // Кто впереди, видно по цвету: отставание горит акцентом.
   vsFieldEl.className = `field${session.score < opponentScore ? ' warn' : ''}`;
 }
 
 let opponentName = 'Соперник';
+/** Шильдик соперника — единственное, чем он помечен на твоём приборе. */
+let opponentMark: string | null = null;
 let opponentScore = 0;
 /** Код соперника по текущему матчу: по нему его добавляют в друзья. */
 let opponentCode: string | null = null;
@@ -730,6 +746,7 @@ function handleDuelMessage(message: DuelServerMessage): void {
       updateGoKey();
       // Честно помечаем запись: игрок должен знать, что соперник не живой.
       opponentName = message.ghost ? `${message.opponent} · запись` : message.opponent;
+      opponentMark = message.opponentMark;
       opponentScore = 0;
       opponentCode = message.opponentCode ?? null;
       mode = 'duel';
@@ -749,6 +766,7 @@ function handleDuelMessage(message: DuelServerMessage): void {
       updateGoKey();
       duelDuration = Math.max(1, Math.round(message.remaining));
       opponentName = message.ghost ? `${message.opponent} · запись` : message.opponent;
+      opponentMark = message.opponentMark;
       opponentScore = message.opponentScore;
       opponentCode = message.opponentCode ?? null;
       mode = 'duel';
@@ -896,7 +914,7 @@ function renderRatingBoard(board: RatingLeaderboardResponse): void {
       `<span class="who"><span class="who-name"></span><span class="who-league"></span></span>` +
       `<span class="pts"></span>`;
     const who = item.children[1] as HTMLElement;
-    (who.children[0] as HTMLElement).textContent = entry.name;
+    nameWithMark(who.children[0] as HTMLElement, entry.name, entry.mark);
     // Лига подписью под именем: на телефоне подсказки по наведению не работают.
     (who.children[1] as HTMLElement).textContent = entry.league;
     (item.children[2] as HTMLElement).textContent = String(entry.rating);
@@ -1041,7 +1059,7 @@ function renderOrderBoard(board: OrderLeaderboardResponse): void {
       `<span class="who"><span class="who-name"></span><span class="who-league"></span></span>` +
       `<span class="pts"></span>`;
     const who = item.children[1] as HTMLElement;
-    (who.children[0] as HTMLElement).textContent = entry.name;
+    nameWithMark(who.children[0] as HTMLElement, entry.name, entry.mark);
     // Заказы подписью под именем: по ним видно, из чего сложился счёт.
     (who.children[1] as HTMLElement).textContent = orderWord(entry.orders);
     (item.children[2] as HTMLElement).textContent = groupDigits(entry.score);
@@ -1471,6 +1489,10 @@ const cabinet = new Cabinet({
   onSprintBoard: () => void showSprintBoard(),
   onOrderBoard: () => void showOrderBoard(),
   onInvite: (friendCode) => void inviteToRoom(friendCode),
+  onMarks: (marks) => {
+    savePlate(marks);
+    showPlate(plateMarksEl, marks);
+  },
 });
 
 /**
@@ -1616,6 +1638,8 @@ else openMenu();
 el<HTMLSpanElement>('brand').innerHTML = brandLockup(88);
 el<HTMLSpanElement>('menu-brand').innerHTML = brandLockup(96);
 renderer.setMarks(loadMarks());
+// Корпус помечен ещё до всякого входа: выбор лежит и у нас, и на сервере.
+showPlate(plateMarksEl, loadPlate());
 el<HTMLButtonElement>('mark-toggle').classList.toggle('on', loadMarks());
 el<HTMLButtonElement>('theme-toggle').classList.toggle('on', themeName === 'graphite');
 

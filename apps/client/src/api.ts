@@ -160,6 +160,14 @@ export function getMe(): Promise<MeResponse> {
   return request<MeResponse>('/api/me');
 }
 
+/** Шильдики корпуса: сервер хранит их, чтобы показать сопернику. */
+export function setMarks(marks: (string | null)[]): Promise<{ marks: (string | null)[] }> {
+  return request<{ marks: (string | null)[] }>('/api/me/marks', {
+    method: 'PUT',
+    body: JSON.stringify({ marks }),
+  });
+}
+
 export function getRatingBoard(): Promise<RatingLeaderboardResponse> {
   return request<RatingLeaderboardResponse>('/api/rating');
 }

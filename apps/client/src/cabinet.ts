@@ -1,7 +1,9 @@
+import { cleanMarks, markById, MARKS } from '@doton/core';
 import type { DuelHistoryEntry, FriendsResponse, MeResponse } from '@doton/protocol';
 import {
   addFriend,
   setAvatar,
+  setMarks,
   getFriends,
   getHistory,
   getMe,
@@ -11,6 +13,7 @@ import {
   telegramLinkUrl,
 } from './api';
 import { brandLockup } from './brand';
+import { markChip } from './plate';
 
 /**
  * Личный кабинет: кто я, какая лига, что сыграно.
@@ -19,6 +22,9 @@ import { brandLockup } from './brand';
  * ним не трогается. Наружу отдаёт только действия, которые меняют игру:
  * прокрутить матч и открыть таблицу рейтинга.
  */
+
+/** Что открыто в кабинете под шапкой профиля. */
+type CabTab = 'history' | 'friends' | 'marks';
 
 function el<T extends HTMLElement>(id: string): T {
   const found = document.getElementById(id);
@@ -63,6 +69,8 @@ export interface CabinetHandlers {
    * Код друга нужен, чтобы дослать приглашение сообщением в Telegram.
    */
   onInvite(friendCode: string): void;
+  /** Игрок сменил шильдики: корпус на игровом экране рисует не кабинет. */
+  onMarks(marks: (string | null)[]): void;
 }
 
 export class Cabinet {
@@ -77,12 +85,22 @@ export class Cabinet {
   private readonly recentListEl = el<HTMLOListElement>('recent-list');
   private readonly historyTab = el<HTMLButtonElement>('tab-history');
   private readonly friendsTab = el<HTMLButtonElement>('tab-friends');
+  private readonly marksTab = el<HTMLButtonElement>('tab-marks');
+  private readonly marksEl = el<HTMLDivElement>('cab-marks');
+  private readonly slotsEl = el<HTMLDivElement>('cab-slots');
+  private readonly slotHintEl = el<HTMLSpanElement>('cab-slot-hint');
+  private readonly catalogEl = el<HTMLDivElement>('cab-catalog');
+  /** Выбранные шильдики и ячейка, которую сейчас заполняют. */
+  private marks: (string | null)[] = cleanMarks([]);
+  private slot = 0;
   private miniApp: string | null = null;
 
   constructor(private readonly handlers: CabinetHandlers) {
     el<HTMLSpanElement>('cab-brand').innerHTML = brandLockup(116);
     this.historyTab.addEventListener('click', () => this.openTab('history'));
     this.friendsTab.addEventListener('click', () => this.openTab('friends'));
+    this.marksTab.addEventListener('click', () => this.openTab('marks'));
+    this.buildCatalog();
     el<HTMLButtonElement>('cab-add-friend').addEventListener('click', () => void this.addByCode());
     el<HTMLButtonElement>('cab-link-tg').addEventListener('click', () => void this.linkTelegram());
     el<HTMLButtonElement>('cab-rating-board').addEventListener('click', () => {
@@ -118,7 +136,7 @@ export class Cabinet {
   }
 
   /** Открывает кабинет и подтягивает свежие данные. */
-  async show(tab: 'history' | 'friends' = 'history'): Promise<void> {
+  async show(tab: CabTab = 'history'): Promise<void> {
     this.overlay.hidden = false;
     this.openTab(tab);
     this.historyEl.innerHTML = '<li class="empty">Загружаю…</li>';
@@ -132,12 +150,67 @@ export class Cabinet {
     await this.loadFriends();
   }
 
-  private openTab(tab: 'history' | 'friends'): void {
-    const friends = tab === 'friends';
-    this.historyEl.hidden = friends;
-    this.friendsEl.hidden = !friends;
-    this.historyTab.classList.toggle('active', !friends);
-    this.friendsTab.classList.toggle('active', friends);
+  private openTab(tab: CabTab): void {
+    this.historyEl.hidden = tab !== 'history';
+    this.friendsEl.hidden = tab !== 'friends';
+    this.marksEl.hidden = tab !== 'marks';
+    this.historyTab.classList.toggle('active', tab === 'history');
+    this.friendsTab.classList.toggle('active', tab === 'friends');
+    this.marksTab.classList.toggle('active', tab === 'marks');
+  }
+
+  /**
+   * Каталог шильдиков. Он не меняется от игрока к игроку, поэтому строится
+   * один раз при заводе кабинета; выбор потом только подсвечивается.
+   */
+  private buildCatalog(): void {
+    const clear = document.createElement('button');
+    clear.className = 'none';
+    clear.textContent = 'Пусто';
+    clear.addEventListener('click', () => void this.put(null));
+    this.catalogEl.appendChild(clear);
+    for (const mark of MARKS) {
+      const pick = document.createElement('button');
+      pick.className = 'pick';
+      pick.dataset.mark = mark.id;
+      pick.appendChild(markChip(mark));
+      pick.addEventListener('click', () => void this.put(mark.id));
+      this.catalogEl.appendChild(pick);
+    }
+  }
+
+  /** Ставит шильдик в выбранную ячейку и сразу шлёт корпус на сервер. */
+  private async put(id: string | null): Promise<void> {
+    const next = [...this.marks];
+    next[this.slot] = id;
+    this.showMarks(cleanMarks(next));
+    this.handlers.onMarks(this.marks);
+    try {
+      await setMarks(this.marks);
+    } catch {
+      // Не дошло — корпус свой мы уже перерисовали, соперник увидит позже.
+    }
+  }
+
+  /** Перерисовывает ячейки и подсветку каталога. */
+  private showMarks(marks: (string | null)[]): void {
+    this.marks = marks;
+    this.slotsEl.innerHTML = '';
+    marks.forEach((id, index) => {
+      const slot = document.createElement('button');
+      slot.className = `slot${index === this.slot ? ' on' : ''}`;
+      const mark = id === null ? undefined : markById(id);
+      if (mark) slot.appendChild(markChip(mark));
+      slot.addEventListener('click', () => {
+        this.slot = index;
+        this.showMarks(this.marks);
+      });
+      this.slotsEl.appendChild(slot);
+    });
+    this.slotHintEl.textContent = `Ячейка ${this.slot + 1} · выберите шильдик`;
+    for (const pick of this.catalogEl.querySelectorAll<HTMLElement>('.pick')) {
+      pick.classList.toggle('on', pick.dataset.mark === marks[this.slot]);
+    }
   }
 
   private async loadFriends(): Promise<void> {
@@ -225,6 +298,8 @@ export class Cabinet {
   }
 
   private renderProfile(me: MeResponse): void {
+    // Корпус игрока знает сервер: он же показывает его сопернику.
+    this.showMarks(cleanMarks(me.marks));
     this.nameEl.textContent = me.name;
     this.showAvatar(me.avatar ?? '');
     const logins = me.identities.map((identity) => LOGIN_NAMES[identity.kind] ?? identity.kind);

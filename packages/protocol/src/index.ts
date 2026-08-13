@@ -88,6 +88,14 @@ export const SubmitOrderRequestSchema = z.object({
 });
 
 /** Приглашение друга в комнату: код комнаты тот же, что у приватной дуэли. */
+/**
+ * Шильдики корпуса: три номера из каталога ядра. Что номер существует и
+ * положен игроку, проверяет уже сервер — схема ловит только форму.
+ */
+export const MarksRequestSchema = z.object({
+  marks: z.array(z.string().max(16).nullable()).max(3),
+});
+
 export const InviteRequestSchema = z.object({
   room: z.string().trim().min(4).max(16),
 });
@@ -129,10 +137,12 @@ export interface SubmitSprintResponse {
  */
 export type BoardPeriod = 'day' | 'all';
 
+/** Шильдик рядом с именем: номер из каталога ядра; null — корпус чист. */
 export interface SprintEntry {
   rank: number;
   name: string;
   score: number;
+  mark: string | null;
 }
 
 export interface SprintLeaderboardResponse {
@@ -159,6 +169,7 @@ export interface OrderEntry {
   score: number;
   /** Сколько заказов закрыто в рекордном заходе. */
   orders: number;
+  mark: string | null;
 }
 
 export interface OrderLeaderboardResponse {
@@ -171,6 +182,7 @@ export interface RatingEntry {
   name: string;
   rating: number;
   league: string;
+  mark: string | null;
 }
 
 /** Способ входа в аккаунт: с чего начали и что привязали потом. */
@@ -272,6 +284,8 @@ export interface MeResponse {
   sprint: { best: number; rank: number | null };
   /** Челлендж бесконечного режима: лучший ход и место в таблице. */
   order: { best: number; orders: number; rank: number | null };
+  /** Шильдики корпуса: три ячейки, пустая — null. */
+  marks: (string | null)[];
 }
 
 export interface RatingLeaderboardResponse {
@@ -330,6 +344,8 @@ export interface DuelSnapshot {
   score: number;
   opponentScore: number;
   opponent: string;
+  /** Шильдик соперника: номер из каталога ядра, null — корпус чист. */
+  opponentMark: string | null;
   ghost: boolean;
   /** Код соперника — по нему его можно добавить в друзья. */
   opponentCode?: string;
@@ -352,6 +368,8 @@ export type DuelServerMessage =
       /** Сколько секунд осталось до конца матча на момент старта. */
       duration: number;
       opponent: string;
+      /** Шильдик соперника: номер из каталога ядра, null — корпус чист. */
+      opponentMark: string | null;
       /** Матч против записанной попытки: соперник офлайн. */
       ghost: boolean;
       /** Код соперника — по нему его можно добавить в друзья. */

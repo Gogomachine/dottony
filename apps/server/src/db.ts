@@ -1,6 +1,6 @@
 import { randomInt } from 'node:crypto';
 import { createClient, type Client } from '@libsql/client';
-import { newRating, PLACEMENT_GAMES, type Rating } from '@doton/core';
+import { cleanMarks, newRating, PLACEMENT_GAMES, type Rating } from '@doton/core';
 import type { BoardPeriod } from '@doton/protocol';
 import { MIN_MOVE_GAP, MOVE_SLACK } from './limits.js';
 
@@ -220,6 +220,9 @@ export class Store {
     await this.addColumnIfMissing('users', 'scored_at', 'TEXT');
     // Смайлик на пропуске — единственное, что игрок рисует о себе сам.
     await this.addColumnIfMissing('users', 'avatar', 'TEXT');
+    // Шильдики корпуса: три номера из каталога ядра, одной строкой. Своей
+    // таблицы они не стоят — это три коротких значения, живущих с игроком.
+    await this.addColumnIfMissing('users', 'marks', 'TEXT');
     // Код друга: короткий, его диктуют вслух и шлют ссылкой.
     await this.addColumnIfMissing('users', 'friend_code', 'TEXT');
     // Заявки на цвет резонанса: общие для матча, поэтому лежат на дуэли,
@@ -470,15 +473,21 @@ export class Store {
   }
 
   /** Таблица лидеров по рейтингу: только прошедшие калибровку. */
-  async ratingLeaderboard(limit: number): Promise<{ name: string; rating: number }[]> {
+  async ratingLeaderboard(
+    limit: number,
+  ): Promise<{ name: string; rating: number; mark: string | null }[]> {
     const result = await this.client.execute({
-      sql: `SELECT name, rating FROM users
+      sql: `SELECT name, rating, marks FROM users
             WHERE rated_games >= ?
             ORDER BY rating DESC, name ASC
             LIMIT ?`,
       args: [PLACEMENT_GAMES, limit],
     });
-    return result.rows.map((row) => ({ name: String(row.name), rating: Number(row.rating) }));
+    return result.rows.map((row) => ({
+      name: String(row.name),
+      rating: Number(row.rating),
+      mark: this.firstMark(row.marks),
+    }));
   }
 
   /** Место игрока в рейтинге: 1 + число тех, кто выше. До калибровки — null. */
@@ -767,12 +776,12 @@ export class Store {
     board: Board,
     limit: number,
     period: BoardPeriod,
-  ): Promise<{ name: string; value: number; orders: number }[]> {
+  ): Promise<{ name: string; value: number; orders: number; mark: string | null }[]> {
     const { table, where } = this.source(board, period);
     // Заказы в спринтовых таблицах не хранятся — там их и не спрашивают.
     const extra = board === 'order' ? 'r.orders' : '0 AS orders';
     const result = await this.client.execute({
-      sql: `SELECT u.name, r.score AS value, ${extra}
+      sql: `SELECT u.name, u.marks, r.score AS value, ${extra}
             FROM ${table} r JOIN users u ON u.id = r.user_id
             WHERE ${where}
             ORDER BY r.score DESC, r.created_at ASC
@@ -783,6 +792,7 @@ export class Store {
       name: String(row.name),
       value: Number(row.value),
       orders: Number(row.orders),
+      mark: this.firstMark(row.marks),
     }));
   }
 
@@ -864,9 +874,14 @@ export class Store {
   async orderTop(
     limit: number,
     period: BoardPeriod = 'all',
-  ): Promise<{ name: string; score: number; orders: number }[]> {
+  ): Promise<{ name: string; score: number; orders: number; mark: string | null }[]> {
     const rows = await this.top('order', limit, period);
-    return rows.map((row) => ({ name: row.name, score: row.value, orders: row.orders }));
+    return rows.map((row) => ({
+      name: row.name,
+      score: row.value,
+      orders: row.orders,
+      mark: row.mark,
+    }));
   }
 
   /** Личный рекорд спринта; 0 — заходов ещё не было. */
@@ -902,9 +917,12 @@ export class Store {
     return this.rank('sprint', userId, period);
   }
 
-  async sprintTop(limit: number, period: BoardPeriod = 'all'): Promise<{ name: string; score: number }[]> {
+  async sprintTop(
+    limit: number,
+    period: BoardPeriod = 'all',
+  ): Promise<{ name: string; score: number; mark: string | null }[]> {
     const rows = await this.top('sprint', limit, period);
-    return rows.map((row) => ({ name: row.name, score: row.value }));
+    return rows.map((row) => ({ name: row.name, score: row.value, mark: row.mark }));
   }
 
   async createUser(id: string, name: string, identity: Identity): Promise<UserRow> {
@@ -1032,6 +1050,45 @@ export class Store {
     });
     const value = result.rows[0]?.avatar;
     return value === null || value === undefined ? null : String(value);
+  }
+
+  /**
+   * Первый занятый шильдик игрока — тот, что едет рядом с именем в чужие
+   * таблицы. Хранится строкой, поэтому разбор в одном месте.
+   */
+  private firstMark(raw: unknown): string | null {
+    if (typeof raw !== 'string') return null;
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return null;
+      return cleanMarks(parsed as (string | null)[]).find((id) => id !== null) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Шильдики игрока: три ячейки, пустая — null. */
+  async marksOf(userId: string): Promise<(string | null)[]> {
+    const result = await this.client.execute({
+      sql: 'SELECT marks FROM users WHERE id = ?',
+      args: [userId],
+    });
+    const raw = result.rows[0]?.marks;
+    if (typeof raw !== 'string') return cleanMarks([]);
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      // Каталог мог с тех пор смениться — приводим к нему на чтении.
+      return cleanMarks(Array.isArray(parsed) ? (parsed as (string | null)[]) : []);
+    } catch {
+      return cleanMarks([]);
+    }
+  }
+
+  async setMarks(userId: string, marks: (string | null)[]): Promise<void> {
+    await this.client.execute({
+      sql: 'UPDATE users SET marks = ? WHERE id = ?',
+      args: [JSON.stringify(cleanMarks(marks)), userId],
+    });
   }
 
   async setAvatar(userId: string, avatar: string): Promise<void> {

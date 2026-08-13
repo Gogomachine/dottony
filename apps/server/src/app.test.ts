@@ -13,6 +13,7 @@ import {
   seedRng,
   startOrder,
   tapOrder,
+  MARKS,
   tapGroup,
   DEFAULT_CONFIG,
   type Board,
@@ -924,8 +925,8 @@ describe('API', () => {
       entries: { rank: number; name: string; score: number }[];
       me: { rank: number; name: string; score: number } | null;
     };
-    expect(leaderboard.entries).toEqual([{ rank: 1, name: 'Вольт', score }]);
-    expect(leaderboard.me).toEqual({ rank: 1, name: 'Вольт', score });
+    expect(leaderboard.entries).toEqual([{ rank: 1, name: 'Вольт', score, mark: null }]);
+    expect(leaderboard.me).toEqual({ rank: 1, name: 'Вольт', score, mark: null });
   });
 
   it('спринт: попыток сколько угодно, в таблице остаётся лучшая', async () => {
@@ -1039,8 +1040,8 @@ describe('API', () => {
       entries: { name: string; score: number; rank: number }[];
       me: { rank: number; score: number } | null;
     };
-    expect(entries).toEqual([{ rank: 1, name: 'Ада', score, orders }]);
-    expect(mine).toEqual({ rank: 1, name: 'Ада', score, orders });
+    expect(entries).toEqual([{ rank: 1, name: 'Ада', score, orders, mark: null }]);
+    expect(mine).toEqual({ rank: 1, name: 'Ада', score, orders, mark: null });
   });
 
   it('заказы: рекорд не понижается слабым заходом', async () => {
@@ -1117,8 +1118,63 @@ describe('API', () => {
       me: { rank: number } | null;
     };
     // Слабый заход в вечную таблицу не попал вовсе: там нечего показывать.
-    expect(entries).toEqual([{ rank: 1, name: 'Сильный', score, orders }]);
+    expect(entries).toEqual([{ rank: 1, name: 'Сильный', score, orders, mark: null }]);
     expect(me).toBeNull();
+  });
+
+  it('шильдики: выбор сохраняется и приходит в карточку', async () => {
+    const token = await guestToken('Ада');
+    const mine = [MARKS[0]!.id, MARKS[20]!.id] as const;
+
+    const saved = await app.inject({
+      method: 'PUT',
+      url: '/api/me/marks',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { marks: mine },
+    });
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json()).toEqual({ marks: [mine[0], mine[1], null] });
+
+    const me = await app.inject({
+      method: 'GET',
+      url: '/api/me',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect((me.json() as { marks: unknown }).marks).toEqual([mine[0], mine[1], null]);
+  });
+
+  it('шильдики: выдуманный номер и повтор не проходят', async () => {
+    const token = await guestToken('Мошенник');
+    const put = async (marks: unknown): Promise<unknown> => {
+      const response = await app.inject({
+        method: 'PUT',
+        url: '/api/me/marks',
+        headers: { authorization: `Bearer ${token}` },
+        payload: { marks },
+      });
+      return response.json();
+    };
+
+    const id = MARKS[0]!.id;
+    // Номера не из каталога гасят ячейку, а не занимают её.
+    expect(await put([id, 'p999', id])).toEqual({ marks: [id, null, null] });
+    // Больше трёх корпус не примет вовсе.
+    const тесно = await app.inject({
+      method: 'PUT',
+      url: '/api/me/marks',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { marks: [id, id, id, id] },
+    });
+    expect(тесно.statusCode).toBe(400);
+  });
+
+  it('шильдики: без токена не поставить', async () => {
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/api/me/marks',
+      payload: { marks: [MARKS[0]!.id] },
+    });
+    expect(response.statusCode).toBe(401);
   });
 
   it('друг добавляется по коду — сразу с обеих сторон', async () => {
@@ -1829,16 +1885,16 @@ describe('таблицы за день и за всё время', () => {
     });
 
     const today = await board('day', ada.token);
-    expect(today.entries).toEqual([{ rank: 1, name: 'Боб', score: bobScore }]);
+    expect(today.entries).toEqual([{ rank: 1, name: 'Боб', score: bobScore, mark: null }]);
     // Своей строки у Ады сегодня нет — она сегодня не играла.
     expect(today.me).toBeNull();
 
     const always = await board('all', ada.token);
     expect(always.entries).toEqual([
-      { rank: 1, name: 'Ада', score: adaScore },
-      { rank: 2, name: 'Боб', score: bobScore },
+      { rank: 1, name: 'Ада', score: adaScore, mark: null },
+      { rank: 2, name: 'Боб', score: bobScore, mark: null },
     ]);
-    expect(always.me).toEqual({ rank: 1, name: 'Ада', score: adaScore });
+    expect(always.me).toEqual({ rank: 1, name: 'Ада', score: adaScore, mark: null });
   });
 
   it('без периода отвечает вечной таблицей — как до появления дневной', async () => {
@@ -1851,7 +1907,7 @@ describe('таблицы за день и за всё время', () => {
 
     const response = await app.inject({ method: 'GET', url: '/api/sprint/leaderboard' });
     expect((response.json() as { entries: unknown[] }).entries).toEqual([
-      { rank: 1, name: 'Ада', score },
+      { rank: 1, name: 'Ада', score, mark: null },
     ]);
   });
 
@@ -1861,7 +1917,7 @@ describe('таблицы за день и за всё время', () => {
     const weaker = await sprint(ada.token, 999, 3);
     expect(weaker).toBeLessThan(best);
 
-    expect((await board('day')).entries).toEqual([{ rank: 1, name: 'Ада', score: best }]);
+    expect((await board('day')).entries).toEqual([{ rank: 1, name: 'Ада', score: best, mark: null }]);
   });
 
   it('заказы считаются по тем же двум периодам', async () => {
@@ -1876,7 +1932,7 @@ describe('таблицы за день и за всё время', () => {
 
     const day = await app.inject({ method: 'GET', url: '/api/order/leaderboard?period=day' });
     expect((day.json() as { entries: unknown[] }).entries).toEqual([
-      { rank: 1, name: 'Ада', score, orders },
+      { rank: 1, name: 'Ада', score, orders, mark: null },
     ]);
 
     await raw.execute({
@@ -1888,7 +1944,7 @@ describe('таблицы за день и за всё время', () => {
 
     const always = await app.inject({ method: 'GET', url: '/api/order/leaderboard?period=all' });
     expect((always.json() as { entries: unknown[] }).entries).toEqual([
-      { rank: 1, name: 'Ада', score, orders },
+      { rank: 1, name: 'Ада', score, orders, mark: null },
     ]);
   });
 });

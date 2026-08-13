@@ -147,6 +147,35 @@
     /* Фирменный блок вместо набранного имени: знак и вывеска из файла. */
     .brand-mark { display: block; margin-bottom: 5px; }
     .brand-mark svg { display: block; }
+    /* Шильдики на корпусе: полоса под маркой прибора. */
+    .marks { display: flex; gap: 4px; margin-top: 5px; }
+    .mark {
+      font-style: normal;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: 17px;
+      min-width: 17px;
+      padding: 0 4px;
+      line-height: 1;
+      letter-spacing: 0.06em;
+    }
+    /* Служебный — краска по корпусу; наклейка — бумажка поверх него. */
+    .mark.tag {
+      border: 1px solid var(--edge);
+      border-radius: 3px;
+      font-family: var(--mono);
+      font-size: 9px;
+      color: var(--silk-2);
+    }
+    .mark.sticker {
+      background: #f6f4ee;
+      border-radius: 4px;
+      font-size: 11px;
+      letter-spacing: 0;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
+    }
+
     .micro { display: flex; gap: 6px; }
     .mbtn {
       width: 30px;
@@ -878,6 +907,55 @@
     }
 
     /* Кнопок таблиц три — в одну строку они не читаются, поэтому переносим. */
+    /* Ячейки корпуса в кабинете и каталог под ними. */
+    .slots { display: flex; gap: 8px; margin-bottom: 8px; }
+    .slots .slot {
+      flex: 1;
+      height: 46px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px dashed var(--edge);
+      border-radius: 8px;
+      background: var(--case-2);
+      cursor: pointer;
+    }
+    .slots .slot.on { border-style: solid; border-color: var(--acc); }
+    .slots .slot .mark { transform: scale(1.5); }
+    .slot-hint {
+      display: block;
+      font-family: var(--mono);
+      font-size: 9.5px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--silk-2);
+      margin-bottom: 8px;
+    }
+    .catalog { display: flex; flex-wrap: wrap; gap: 6px; }
+    /* Имя со шильдиком: значок идёт перед именем, не разрывая строки. */
+    .who-name, .who-line, #vs-name { display: inline-flex; align-items: center; gap: 5px; }
+    .catalog .pick {
+      border: 0;
+      background: transparent;
+      padding: 3px;
+      cursor: pointer;
+      border-radius: 6px;
+    }
+    .catalog .pick.on { background: rgba(232, 75, 35, 0.16); }
+    .catalog .pick .mark { transform: scale(1.25); }
+    .catalog .none {
+      font-family: var(--mono);
+      font-size: 9.5px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--silk-2);
+      background: transparent;
+      border: 1px dashed var(--edge);
+      border-radius: 6px;
+      padding: 4px 8px;
+      cursor: pointer;
+    }
+
     .cab-actions { display: flex; flex-wrap: wrap; gap: 8px; }
     .cab-actions button { flex: 1 1 44%; }
 
@@ -1026,7 +1104,8 @@
 <body>
   <div class="device">
     <div class="plate">
-      <span class="id"><span id="brand" class="brand-mark"></span>Dotoscope · <b>model 36</b></span>
+      <span class="id"><span id="brand" class="brand-mark"></span>Dotoscope · <b>model 36</b>
+        <span class="marks" id="plate-marks"></span></span>
       <span class="micro">
         <button class="mbtn" id="mark-toggle" title="Метки цвета">◍</button>
         <button class="mbtn" id="theme-toggle" title="Свет">◐</button>
@@ -1231,9 +1310,20 @@
             <div class="cab-tabs">
               <button id="tab-history" class="tab active">Матчи</button>
               <button id="tab-friends" class="tab">Друзья</button>
+              <button id="tab-marks" class="tab">Шильдики</button>
             </div>
 
             <ol id="cab-history" class="history"></ol>
+
+            <div id="cab-marks" hidden>
+              <!--
+                Три ячейки корпуса и каталог под ними. Ячейка — кнопка:
+                нажал, выбрал в каталоге, готово.
+              -->
+              <div class="slots" id="cab-slots"></div>
+              <span class="slot-hint" id="cab-slot-hint">Ячейка 1 · выберите шильдик</span>
+              <div class="catalog" id="cab-catalog"></div>
+            </div>
 
             <div id="cab-friends" hidden>
               <button id="cab-add-friend">Добавить друга по коду</button>

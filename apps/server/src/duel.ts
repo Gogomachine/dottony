@@ -33,6 +33,8 @@ export interface DuelClaim extends Claim {
 export interface DuelPlayer {
   id: string;
   name: string;
+  /** Шильдик корпуса: единственное, чем игрок помечен для соперника. */
+  mark?: string | null;
   /** Код друга: сопернику его показывают после матча. */
   code?: string;
   send(message: DuelServerMessage): void;
@@ -137,6 +139,7 @@ export class Duel {
         seed: this.seed,
         duration: DUEL_SECONDS,
         opponent: opponent.player.name,
+        opponentMark: opponent.player.mark ?? null,
         ghost: opponent.ghost,
         ...(opponent.ghost || !opponent.player.code
           ? {}
@@ -228,6 +231,7 @@ export class Duel {
       score: state.score,
       opponentScore: opponent.score,
       opponent: opponent.player.name,
+      opponentMark: opponent.player.mark ?? null,
       ghost: opponent.ghost,
       ...(opponent.ghost || !opponent.player.code ? {} : { opponentCode: opponent.player.code }),
       remaining: Math.max(0, DUEL_SECONDS - this.elapsed(now)),
