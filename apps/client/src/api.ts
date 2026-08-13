@@ -1,8 +1,8 @@
 import type {
   AuthResponse,
   BoardPeriod,
-  ComboLeaderboardResponse,
-  ComboMove,
+  OrderLeaderboardResponse,
+  OrderMove,
   DuelHistoryResponse,
   FriendsResponse,
   MeResponse,
@@ -10,7 +10,7 @@ import type {
   RatingLeaderboardResponse,
   ReplayResponse,
   SprintLeaderboardResponse,
-  SubmitComboResponse,
+  SubmitOrderResponse,
   SubmitSprintResponse,
 } from '@doton/protocol';
 
@@ -165,18 +165,18 @@ export function getRatingBoard(): Promise<RatingLeaderboardResponse> {
 }
 
 /**
- * Отправляет заход бесконечного режима на проверку. Комбо считает сервер:
- * он переигрывает ходы ядром, поэтому своё число слать незачем.
+ * Отправляет заход заказов на проверку. Счёт считает сервер: он
+ * переигрывает касания ядром, поэтому своё число слать незачем.
  */
-export function submitCombo(seed: number, moves: ComboMove[]): Promise<SubmitComboResponse> {
-  return request<SubmitComboResponse>('/api/combo', {
+export function submitOrder(seed: number, moves: OrderMove[]): Promise<SubmitOrderResponse> {
+  return request<SubmitOrderResponse>('/api/order', {
     method: 'POST',
     body: JSON.stringify({ seed, moves }),
   });
 }
 
-export function getComboBoard(period: BoardPeriod = 'all'): Promise<ComboLeaderboardResponse> {
-  return request<ComboLeaderboardResponse>(`/api/combo/leaderboard?period=${period}`);
+export function getOrderBoard(period: BoardPeriod = 'all'): Promise<OrderLeaderboardResponse> {
+  return request<OrderLeaderboardResponse>(`/api/order/leaderboard?period=${period}`);
 }
 
 /**

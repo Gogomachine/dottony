@@ -4,8 +4,15 @@ export { createBoard, collapse, cellAt, dot } from './board.js';
 export { areNeighbors, validatePath, applyMove, applyTap, tapGroup, chainPoints } from './move.js';
 export { phaseColorAt, phaseStateAt, claimWindowAt, claimFrom, bestClaim } from './phase.js';
 export type { PhaseState, Claim, ClaimWindow } from './phase.js';
-export { nextOrderColor, orderReward } from './order.js';
-export type { OrderState } from './order.js';
+export {
+  nextOrderColor,
+  orderReward,
+  startOrder,
+  orderWindow,
+  tickOrder,
+  tapOrder,
+} from './order.js';
+export type { OrderState, OrderRun, OrderFire, OrderTap } from './order.js';
 export {
   newRating,
   updateRating,

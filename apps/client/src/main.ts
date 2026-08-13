@@ -1,5 +1,4 @@
 import {
-  COMBO_CARRY_CHAIN,
   DEFAULT_CONFIG,
   type Cell,
   type Color,
@@ -7,9 +6,9 @@ import {
 } from '@doton/core';
 import type {
   BoardPeriod,
-  ComboLeaderboardResponse,
-  ComboMove,
   MoveLog,
+  OrderLeaderboardResponse,
+  OrderMove,
   RatingLeaderboardResponse,
   SprintLeaderboardResponse,
 } from '@doton/protocol';
@@ -19,7 +18,7 @@ import {
   apiAvailable,
   ensureAuth,
   getConfig,
-  getComboBoard,
+  getOrderBoard,
   getRatingBoard,
   getReplay,
   getSprintBoard,
@@ -30,7 +29,7 @@ import {
   syncTelegramTheme,
   resetAuth,
   savedName,
-  submitCombo,
+  submitOrder,
   submitSprint,
   ApiError,
 } from './api';
@@ -145,35 +144,20 @@ function syncTap(): void {
 let sprintRun: { seed: number; moves: MoveLog[] } | null = null;
 
 /**
- * Челлендж бесконечного режима — лучший потенциал за один ход.
+ * Журнал захода заказов. Ход здесь — одно касание, и по журналу сервер
+ * переигрывает заход ядром: в таблицу идёт только пересчитанный им счёт.
  *
- * Цена хода зависит от состояния поля, поэтому доказать рекорд можно
- * только журналом ходов: сервер переигрывает заход от сида и считает
- * комбо сам. Журнал ограничен — с какого-то момента заход перестаёт быть
- * доказуемым, и это честнее, чем принимать число на слово.
+ * Журнал ограничен: с какого-то момента заход перестаёт быть доказуемым,
+ * и это честнее, чем принимать число на слово.
  */
-let comboRun:
-  | {
-      seed: number;
-      moves: ComboMove[];
-      best: number;
-      /** Потенциал хода, продлившего комбо; 0 — предыдущий ход его не продлевал. */
-      carried: number;
-      sent: number;
-      full: boolean;
-    }
-  | null = null;
-let comboTimer = 0;
+let orderRun: { seed: number; moves: OrderMove[]; full: boolean } | null = null;
 
 /**
  * Потолок журнала захода. Значение то же, что в схеме протокола, но
  * значением его оттуда не берём: любой не-type импорт из @doton/protocol
  * затащил бы в бандл клиента ещё и zod.
  */
-const COMBO_MOVE_LIMIT = 1200;
-
-/** Не чаще раза в столько секунд отправляем заход на проверку. */
-const COMBO_SEND_GAP = 20_000;
+const ORDER_MOVE_LIMIT = 1200;
 
 /**
  * Идёт ли сейчас дуэль и сколько она длится (сервер сообщает при старте).
@@ -190,19 +174,15 @@ function newSession(seed?: number): Session {
 }
 
 function startGame(seed?: number): void {
-  void sendCombo();
   // Способ хода ставим до партии: сессия, ввод и рендер читают один конфиг,
   // и режим заказов меняет его для себя.
   syncTap();
   session = newSession(seed);
-  // Новый образец снимает стоп-кадр: партия другая, запрет от старой не её.
+  // Новый образец снимает запрет ввода: партия другая, запрет от старой не её.
   if (!replay) input.enabled = true;
-  // Челлендж живёт только в бесконечном режиме: в остальных заход кончается
-  // сам, и мерить в них рекорд серии — другая игра.
-  comboRun =
-    session.mode === 'free'
-      ? { seed: session.seed, moves: [], best: 0, carried: 0, sent: 0, full: false }
-      : null;
+  // Заказы пишутся целиком: заход кончается сбоями, и тогда журнал уходит
+  // на проверку одним куском.
+  orderRun = session.mode === 'order' ? { seed: session.seed, moves: [], full: false } : null;
   // Спринт пишется весь: без журнала рекорд нечем подтвердить.
   sprintRun =
     session.mode === 'sprint' && !replay ? { seed: session.seed, moves: [] } : null;
@@ -232,6 +212,16 @@ function updateStreak(streak: number): void {
   if (active) gainEl.textContent = ` ×${streak + 1}`;
 }
 
+/** «1 заказ», «4 заказа», «7 заказов» — число решает окончание. */
+function orderWord(count: number): string {
+  const teens = count % 100;
+  const last = count % 10;
+  if (teens >= 11 && teens <= 14) return `${count} заказов`;
+  if (last === 1) return `${count} заказ`;
+  if (last >= 2 && last <= 4) return `${count} заказа`;
+  return `${count} заказов`;
+}
+
 /** «10 000» — крупные числа читаются только с разрядами. */
 function groupDigits(value: number): string {
   return value.toLocaleString('ru-RU');
@@ -251,7 +241,7 @@ function updateHud(): void {
     // и есть таймер, только не всей партии, а текущего резонанса.
     showFails();
     timeLabelEl.textContent = 'Заказы';
-    timeEl.textContent = String(session.ordersDone);
+    timeEl.textContent = String((session.run?.orders ?? 0));
     const lit = Math.round((order.remaining / session.cfg.orderWindow) * TICKS);
     // Последние секунды окна шкала краснеет — это видно боковым зрением.
     const warn = order.remaining <= 5;
@@ -259,15 +249,6 @@ function updateHud(): void {
     tickEls.forEach((tick, i) => {
       tick.className = `tick${i < lit ? (warn ? ' warn' : ' on') : ''}`;
     });
-    return;
-  }
-  if (!session.timed) {
-    // В бесконечном режиме таймера нет, и его место занимает челлендж:
-    // лучший ход захода. Делений не зажигаем — запаса не бывает.
-    timeLabelEl.textContent = comboRun ? 'Комбо' : 'Время';
-    timeEl.textContent = comboRun ? groupDigits(comboRun.best) : '∞';
-    timeFieldEl.className = 'field right';
-    for (const tick of tickEls) tick.className = 'tick';
     return;
   }
 
@@ -516,9 +497,10 @@ async function finishSprint(run: { seed: number; moves: MoveLog[] }, score: numb
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
       resetAuth();
-      return;
     }
-    // Сеть подвела — партия сыграна, просто без места в таблице.
+    // Молчать нельзя: партия сыграна, а места в таблице нет — игрок должен
+    // видеть, что дело в отправке, а не в его счёте.
+    resultSubEl.textContent = 'Заход не дошёл до таблицы';
   }
 }
 
@@ -572,9 +554,9 @@ function renderSprintBoard(board: SprintLeaderboardResponse): void {
  */
 let boardPeriod: BoardPeriod = 'day';
 /** Какую таблицу перерисовывать при переключении периода. */
-let openBoard: 'sprint' | 'combo' | null = null;
+let openBoard: 'sprint' | 'order' | null = null;
 
-function showBoardTabs(board: 'sprint' | 'combo'): void {
+function showBoardTabs(board: 'sprint' | 'order'): void {
   openBoard = board;
   boardTabsEl.hidden = false;
   for (const button of boardTabsEl.querySelectorAll('button')) {
@@ -588,7 +570,7 @@ boardTabsEl.addEventListener('click', (event) => {
   if (period !== 'day' && period !== 'all') return;
   if (period === boardPeriod || openBoard === null) return;
   if (openBoard === 'sprint') void showSprintBoard(period);
-  else void showComboBoard(period);
+  else void showOrderBoard(period);
 });
 
 /** Изменение рейтинга за матч — как его присылает сервер. */
@@ -679,7 +661,7 @@ let connectionLost = false;
  * дуэли. Место одно: в заказах соперника нет, а в дуэли нет сбоев.
  */
 function showFails(): void {
-  const left = Math.max(0, session.cfg.orderLives - session.orderFails);
+  const left = Math.max(0, session.cfg.orderLives - (session.run?.fails ?? 0));
   vsFieldEl.hidden = false;
   vsNameEl.textContent = 'Запас';
   vsScoreEl.textContent = `${left} / ${session.cfg.orderLives}`;
@@ -965,83 +947,36 @@ async function flushScore(): Promise<void> {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'hidden') return;
   void flushScore();
-  void sendCombo();
 });
 
-// ---------- Челлендж: максимальное комбо ----------
+// ---------- Заказы: журнал и рекорд ----------
 
 /**
- * Записывает ход в журнал захода и следит за рекордом серии.
- *
- * Журнал не бесконечен, а заход — бесконечен. Когда журнал полон, заход
- * перестаёт быть доказуемым: продолжать играть можно, но новые рекорды
- * уже не в счёт. Молчать об этом нельзя — игрок должен понимать, почему
- * его серия не попала в таблицу.
+ * Записывает касание в журнал захода. Журнал не бесконечен, а хороший
+ * заход — почти: когда он полон, заход перестаёт быть доказуемым, и
+ * молчать об этом нельзя — рекорд просто не примут.
  */
-function countCombo(path: Cell[], t: number, points: number, chain: number): void {
-  const run = comboRun;
+function countOrder(cell: Cell, t: number): void {
+  const run = orderRun;
   if (!run) return;
-
-  if (run.moves.length >= COMBO_MOVE_LIMIT) {
+  if (run.moves.length >= ORDER_MOVE_LIMIT) {
     if (!run.full) {
       run.full = true;
-      void sendCombo();
-      setStat('Журнал захода полон — новый образец для нового рекорда', 'warn');
+      setStat('Журнал захода полон — этот заход в таблицу не пойдёт', 'warn');
     }
     return;
   }
-
-  run.moves.push({ path: path.map((cell) => ({ ...cell })), t: Number(t.toFixed(3)) });
-
-  // Длинная цепочка продлевает комбо ровно на один ход: его потенциал
-  // сложится с этим. Продление одноразовое — дальше отсчёт с нуля.
-  const combo = run.carried + points;
-  const carries = chain >= COMBO_CARRY_CHAIN;
-  run.carried = carries ? points : 0;
-
-  if (combo > run.best) {
-    run.best = combo;
-    updateHud();
-    setStat(`Комбо ${groupDigits(combo)} — рекорд захода`, 'live');
-    scheduleCombo();
-    return;
-  }
-  // Продление важнее отчёта о ходе: игрок должен знать, что следующая
-  // цепочка ляжет в то же комбо.
-  if (carries) setStat(`Цепь ${chain} — следующий ход идёт в это же комбо`, 'live');
+  run.moves.push({ cell: { ...cell }, t: Number(t.toFixed(3)) });
 }
 
 /**
- * Отправку рекорда придерживаем: в разгоне рекорд обновляется ходом за
- * ходом. Слать заход на каждый было бы расточительно, ведь журнал уходит
- * целиком.
+ * Конец захода: отдаём журнал на проверку и показываем место. Своего числа
+ * не шлём вовсе — сервер переигрывает касания ядром и считает счёт сам,
+ * так рекорд остаётся доказанным, а не заявленным.
  */
-function scheduleCombo(): void {
-  if (comboTimer !== 0) return;
-  const run = comboRun;
-  if (!run) return;
-  const wait = Math.max(0, run.sent + COMBO_SEND_GAP - Date.now());
-  comboTimer = window.setTimeout(() => {
-    comboTimer = 0;
-    void sendCombo();
-  }, wait);
-}
-
-/**
- * Отдаёт заход на проверку. Своё число не шлём вовсе: сервер переигрывает
- * ходы ядром и сам решает, какое там комбо, — так рекорд остаётся
- * доказанным, а не заявленным.
- */
-async function sendCombo(): Promise<void> {
-  if (comboTimer !== 0) {
-    clearTimeout(comboTimer);
-    comboTimer = 0;
-  }
-  const run = comboRun;
-  if (!run || run.best <= 0 || run.moves.length === 0) return;
-  if (!apiAvailable) return;
-  // Рекорд идёт в общую таблицу, поэтому имя тут спросить уместно: до
-  // первой серии игрок мог ни разу не заходить на сервер.
+async function finishOrder(run: { seed: number; moves: OrderMove[]; full: boolean }): Promise<void> {
+  if (!apiAvailable || run.full || run.moves.length === 0) return;
+  // Рекорд идёт в общую таблицу, поэтому имя тут спросить уместно.
   if (!hasAuth()) {
     try {
       await ensureAuth(guestName);
@@ -1050,46 +985,49 @@ async function sendCombo(): Promise<void> {
     }
   }
 
-  run.sent = Date.now();
   try {
-    const result = await submitCombo(run.seed, run.moves);
-    if (result.record) {
-      setStat(`Комбо ${groupDigits(result.combo)} · ${result.rank}-е место`, 'live');
+    const result = await submitOrder(run.seed, run.moves);
+    resultSubEl.textContent = result.record
+      ? `Рекорд · ${result.rank}-е место`
+      : `${result.rank}-е место · рекорд ${groupDigits(result.best)}`;
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      resetAuth();
     }
-  } catch {
-    // Не дошло — заход не потерян: журнал на месте, отправим со следующим
-    // рекордом или при уходе из режима.
+    // Молчать нельзя: заход сыгран, а места в таблице нет — игрок должен
+    // видеть, что дело в отправке, а не в его счёте.
+    resultSubEl.textContent = 'Заход не дошёл до таблицы';
   }
 }
 
-async function showComboBoard(period: BoardPeriod = boardPeriod): Promise<void> {
+async function showOrderBoard(period: BoardPeriod = boardPeriod): Promise<void> {
   boardPeriod = period;
-  showOverModal({ title: 'Максимальное комбо', note: 'Загружаю таблицу…', viewing: true });
-  showBoardTabs('combo');
+  showOverModal({ title: 'Рекорды заказов', note: 'Загружаю таблицу…', viewing: true });
+  showBoardTabs('order');
   try {
-    const board = await getComboBoard(period);
+    const board = await getOrderBoard(period);
     if (board.entries.length === 0) {
       overNoteEl.hidden = false;
       overNoteEl.textContent =
         period === 'day'
-          ? 'Сегодня рекордов ещё нет. Считается потенциал одного хода в бесконечном режиме.'
-          : 'Таблица пока пуста. Считается потенциал одного хода в бесконечном режиме.';
+          ? 'Сегодня заказов ещё никто не сдавал. Закрой хоть один — и ты первый.'
+          : 'Таблица пока пуста. Считается счёт захода: 25 точек цвета окна за одно касание.';
       boardListEl.hidden = true;
       return;
     }
     overNoteEl.hidden = false;
     overNoteEl.textContent = board.me
-      ? `${period === 'day' ? 'Сегодня' : 'Твой рекорд'} ${groupDigits(board.me.combo)} · ${board.me.rank}-е место`
-      : 'Сделай дорогой ход в бесконечном режиме, чтобы попасть в таблицу.';
-    renderComboBoard(board);
+      ? `${period === 'day' ? 'Сегодня' : 'Твой рекорд'} ${groupDigits(board.me.score)} · ${board.me.rank}-е место`
+      : 'Сдай заход заказов, чтобы попасть в таблицу.';
+    renderOrderBoard(board);
   } catch {
     overNoteEl.hidden = false;
-    overNoteEl.textContent = 'Таблица комбо недоступна. Попробуй позже.';
+    overNoteEl.textContent = 'Таблица заказов недоступна. Попробуй позже.';
     boardListEl.hidden = true;
   }
 }
 
-function renderComboBoard(board: ComboLeaderboardResponse): void {
+function renderOrderBoard(board: OrderLeaderboardResponse): void {
   boardListEl.hidden = false;
   boardListEl.innerHTML = '';
   const rows = [...board.entries];
@@ -1099,9 +1037,14 @@ function renderComboBoard(board: ComboLeaderboardResponse): void {
     const item = document.createElement('li');
     if (board.me && entry.rank === board.me.rank) item.className = 'me';
     item.innerHTML =
-      `<span class="rank">${entry.rank}</span><span></span><span class="pts"></span>`;
-    (item.children[1] as HTMLElement).textContent = entry.name;
-    (item.children[2] as HTMLElement).textContent = groupDigits(entry.combo);
+      `<span class="rank">${entry.rank}</span>` +
+      `<span class="who"><span class="who-name"></span><span class="who-league"></span></span>` +
+      `<span class="pts"></span>`;
+    const who = item.children[1] as HTMLElement;
+    (who.children[0] as HTMLElement).textContent = entry.name;
+    // Заказы подписью под именем: по ним видно, из чего сложился счёт.
+    (who.children[1] as HTMLElement).textContent = orderWord(entry.orders);
+    (item.children[2] as HTMLElement).textContent = groupDigits(entry.score);
     boardListEl.appendChild(item);
   }
 }
@@ -1221,7 +1164,7 @@ function reportOrder(removed: number): boolean {
   } else if (fire.reward > 0) {
     // Заказ закрыт — окно вместе с ним: цвет уже сменился, и говорить об
     // этом отдельной строкой не нужно, серия дописывается сюда же.
-    const run = session.orderStreak > 1 ? ` · серия ${session.orderStreak}` : '';
+    const run = (session.run?.streak ?? 0) > 1 ? ` · серия ${(session.run?.streak ?? 0)}` : '';
     setStat(`Заказ · ${fire.size} точек · +${groupDigits(fire.reward)}${run}`, 'live');
     if (navigator.vibrate) navigator.vibrate(FEEL.hapticMax);
   } else {
@@ -1242,12 +1185,12 @@ function watchWindow(): void {
   if (!order || session.over || order.cycle === shownWindow) return;
   const first = shownWindow < 0;
   shownWindow = order.cycle;
-  if (first || !session.started || session.lastWindow !== 'missed') return;
-  const left = session.cfg.orderLives - session.orderFails;
+  if (first || !session.started || session.run?.lastWindow !== 'missed') return;
+  const left = session.cfg.orderLives - (session.run?.fails ?? 0);
   setStat(
     left === 1
       ? 'Окно упущено · остался последний запас'
-      : `Окно упущено · сбой ${session.orderFails} из ${session.cfg.orderLives}`,
+      : `Окно упущено · сбой ${(session.run?.fails ?? 0)} из ${session.cfg.orderLives}`,
     'warn',
   );
   flashMini();
@@ -1295,8 +1238,8 @@ const input = new ChainInput(
     if (claimAfter !== null && claimAfter !== claimBefore) {
       announceClaim(true, claimAfter.length, false);
     }
-    // Последним: рекорд и продление комбо должны перебивать отчёт о ходе.
-    countCombo(path, elapsed, result.points, result.removed.length);
+    // Заказы пишем последними: в журнал идёт то же касание, что и в ход.
+    countOrder(path[0]!, elapsed);
   },
   (length: number) => {
     // Чем длиннее цепочка, тем ощутимее отклик — рука чувствует прогресс.
@@ -1341,10 +1284,6 @@ function showResult(cap: string, score: number): void {
  * просто закрывает стекло заслонкой. Партия под ней остаётся на месте.
  */
 function openMenu(): void {
-  if (canPause()) freeze();
-  // Игрок отошёл от доски — удобный момент досдать заход: в кабинете и
-  // таблице он должен увидеть свой сегодняшний рекорд, а не прошлый.
-  void sendCombo();
   resultEl.hidden = true;
   menuEl.hidden = false;
   // Текущий режим отмечаем, а не предлагаем заново: игрок уже в нём.
@@ -1358,7 +1297,6 @@ function openMenu(): void {
 
 function closeMenu(): void {
   menuEl.hidden = true;
-  unfreeze();
   if (!session.over) setStat(session.started ? 'Наблюдение идёт' : 'Готов к наблюдению', session.started ? 'live' : '');
 }
 
@@ -1387,10 +1325,6 @@ const MENU_ACTIONS: Record<string, () => void> = {
   sprint: () => {
     menuEl.hidden = true;
     setMode('sprint');
-  },
-  free: () => {
-    menuEl.hidden = true;
-    setMode('free');
   },
   order: () => {
     menuEl.hidden = true;
@@ -1448,31 +1382,6 @@ el<HTMLButtonElement>('join-code').addEventListener('click', () => {
 });
 
 /**
- * Стоп-кадр — только для режимов без часов. В дуэли время общее с
- * соперником, а спринт стал соревновательным: там остановка часов дала бы
- * фору — думай сколько хочешь, а таймер стоит. Где часов нет, отнимать
- * нечего: и комбо, и заказ считаются за ход, а не за секунду.
- */
-function canPause(): boolean {
-  return !session.timed && replay === null && !session.over && session.started;
-}
-
-/**
- * Стоп-кадр замораживает партию целиком: часы стоят и стекло закрыто.
- * Одних часов мало — на замершем поле цепочки собирались бы дальше.
- */
-function freeze(): void {
-  session.pause();
-  input.enabled = false;
-}
-
-function unfreeze(): void {
-  session.resume();
-  // В реплее поле не игрока: запрет там снимает только stopReplay().
-  if (!replay) input.enabled = true;
-}
-
-/**
  * Закрывает открытое окно прибора, какое бы это ни было. Возвращает true,
  * если что-то закрыла: клавише этого достаточно, чтобы считать нажатие
  * потраченным. Окна лежат внутри окуляра и накрывают меню, поэтому без
@@ -1502,10 +1411,6 @@ function closeWindows(): boolean {
 /**
  * «Профиль» — прямой путь к своим числам: рекорды, таблицы, друзья.
  * Повторное нажатие закрывает кабинет, как и любая другая клавиша.
- *
- * Отдельного стоп-кадра у прибора больше нет: партию замораживает само
- * открытие панели управления, и держать под это отдельную клавишу — значит
- * занимать треть клавиатуры тем, что уже делает соседняя.
  */
 el<HTMLDivElement>('key-profile').addEventListener('click', () => {
   if (cabinet.visible) {
@@ -1564,7 +1469,7 @@ const cabinet = new Cabinet({
   onReplay: (duelId) => void startReplay(duelId),
   onRatingBoard: () => void showRatingBoard(),
   onSprintBoard: () => void showSprintBoard(),
-  onComboBoard: () => void showComboBoard(),
+  onOrderBoard: () => void showOrderBoard(),
   onInvite: (friendCode) => void inviteToRoom(friendCode),
 });
 
@@ -1672,8 +1577,11 @@ function frame(now: number): void {
       // дорисовываем сам: обычное обновление приборной строки мёртвый
       // заход уже не трогает, и на нём остался бы последний живой отсчёт.
       showFails();
-      showResult(`Прибор сбоит · ${session.ordersDone} заказов`, session.score);
+      showResult(`Прибор сбоит · ${orderWord(session.run?.orders ?? 0)}`, session.score);
       setStat('Запас сбоев исчерпан — заход окончен', 'warn');
+      // Заход кончился — его и отдаём на проверку: счёт в таблицу ставит
+      // сервер, переиграв присланные касания.
+      if (orderRun) void finishOrder(orderRun);
     } else {
       // Соло-итог показываем прямо в окуляре — как показание прибора.
       showResult('Наблюдение завершено', session.score);

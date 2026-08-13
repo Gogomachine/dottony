@@ -5,8 +5,10 @@ import {
   claimFrom,
   claimWindowAt,
   createBoard,
-  nextOrderColor,
-  orderReward,
+  orderWindow,
+  startOrder,
+  tapOrder,
+  tickOrder,
   phaseColorAt,
   phaseStateAt,
   seedRng,
@@ -19,12 +21,14 @@ import {
   type GameConfig,
   type MoveError,
   type MoveResult,
+  type OrderFire,
+  type OrderRun,
   type OrderState,
   type PhaseState,
   type Color,
 } from '@doton/core';
 
-export type Mode = 'sprint' | 'free' | 'duel' | 'order';
+export type Mode = 'sprint' | 'duel' | 'order';
 
 // Длительность спринта задаёт ядро — клиент и сервер меряют заход одним
 // числом. Переэкспорт, чтобы экран не лез в ядро за одной константой.
@@ -59,22 +63,14 @@ export class Session {
    * решает сравнение, и заявка соперника может прийти после твоей.
    */
   private readonly claims: SessionClaim[] = [];
-  /** Закрыто заказов за заход и сколько окон подряд закрыто хотя бы одним. */
-  ordersDone = 0;
-  orderStreak = 0;
   /**
-   * Сбои: окна, закрытые без единого заказа. Их запас и есть конец захода —
-   * иначе заказы шли бы бесконечно и заход нечем было бы мерить.
+   * Заход заказов целиком: окна, счёт, запас сбоев. Правило живёт в ядре —
+   * сервер переигрывает журнал ходов тем же кодом, и число сходится.
+   * null — режим не тот.
    */
-  orderFails = 0;
-  /** Номер окна, которое идёт сейчас, и секунда, с которой оно пошло. */
-  orderCycle = 0;
-  private orderSince = 0;
-  private orderColor: Color = 0;
-  /** Чем кончилось прошлое окно: закрыто или упущено. */
-  lastWindow: 'done' | 'missed' | null = null;
+  run: OrderRun | null = null;
   /** Последний ход цветом окна: сколько снял и сколько за это дали. */
-  lastFire: { size: number; reward: number } | null = null;
+  lastFire: OrderFire | null = null;
   over = false;
   /**
    * Момент старта по стенным часам. Время партии считаем от него, а не
@@ -105,46 +101,23 @@ export class Session {
     this.duration =
       mode === 'sprint' ? SPRINT_SECONDS : mode === 'duel' ? (duration ?? 90) : Infinity;
     this.timeLeft = this.duration;
-    if (mode === 'order') this.orderColor = nextOrderColor(seed, 0, null, cfg);
+    if (mode === 'order') {
+      this.run = startOrder(seed, cfg);
+      // Поле у захода своё, но из того же сида: держим одно на двоих.
+      this.board = this.run.board;
+    }
   }
 
   /** Окно заказа на текущей секунде; null — режим не тот. */
   order(): OrderState | null {
-    if (this.mode !== 'order') return null;
-    return {
-      color: this.orderColor,
-      cycle: this.orderCycle,
-      remaining: this.orderSince + this.cfg.orderWindow - this.elapsed,
-    };
+    return this.run === null ? null : orderWindow(this.run, this.elapsed, this.cfg);
   }
 
-  /**
-   * Закрывает окно и открывает следующее — с новым цветом и полным
-   * отсчётом. Закрытый заказ окно исчерпывает: цвет отработан, тянуть его
-   * до конца отсчёта незачем. Значит и досидеть до конца может только
-   * пустое окно, а пустое окно — сбой прибора.
-   */
-  private nextWindow(done: boolean): void {
-    this.lastWindow = done ? 'done' : 'missed';
-    this.orderStreak = done ? this.orderStreak + 1 : 0;
-    if (!done) {
-      this.orderFails += 1;
-      // Запас кончился — заход тоже: следующего окна уже не будет.
-      if (this.orderFails >= this.cfg.orderLives) {
-        this.over = true;
-        return;
-      }
-    }
-    this.orderCycle += 1;
-    this.orderSince = this.elapsed;
-    this.orderColor = nextOrderColor(this.seed, this.orderCycle, this.orderColor, this.cfg);
-  }
-
-  /** Часы окна вышли. Возвращение из свёрнутой вкладки стоит одного сбоя. */
+  /** Догоняет окна по часам: просроченные — сбои, на последнем заход кончен. */
   private syncOrder(): void {
-    const state = this.order();
-    if (state === null || state.remaining > 0) return;
-    this.nextWindow(false);
+    if (this.run === null) return;
+    this.run = tickOrder(this.run, this.elapsed, this.cfg);
+    if (this.run.over) this.over = true;
   }
 
   /** Партия идёт на время. */
@@ -194,10 +167,18 @@ export class Session {
   tryTap(cell: Cell): MoveResult | SessionMoveError {
     const stop = this.blocked();
     if (stop) return stop;
-    // Прибор притягивает цвет окна: досыпка отдаёт ему вес против единицы
-    // у прочих. Без этого пятно до цели не дорастает.
-    const window = this.order();
-    return this.commit(applyTap(this.board, cell, this.cfg, this.phaseNow(), window?.color ?? null));
+    // В заказах ход целиком считает ядро: и притяжение цвета досыпкой, и
+    // награду, и смену окна — тем же кодом, каким его проверит сервер.
+    if (this.run !== null) {
+      const out = tapOrder(this.run, cell, this.elapsed, this.cfg);
+      if (typeof out === 'string') return out;
+      this.run = out.run;
+      this.board = out.run.board;
+      this.score = out.run.score;
+      this.lastFire = out.fire;
+      return out.move;
+    }
+    return this.commit(applyTap(this.board, cell, this.cfg, this.phaseNow()));
   }
 
   /** Почему партия не примет ход прямо сейчас; null — примет. */
@@ -228,12 +209,6 @@ export class Session {
   private commit(result: MoveResult | MoveError): MoveResult | SessionMoveError {
     if (typeof result === 'string') return result;
     this.board = result.board;
-    // В заказах счёт — это награды за закрытые заказы: потенциал обычного
-    // хода там на два порядка крупнее и просто затопил бы их.
-    if (this.mode === 'order') {
-      this.fire(result);
-      return result;
-    }
     this.score += result.points;
     // Заявку на цвет в дуэли объявляет сервер: окно там решают его часы,
     // и ход у самой границы окна иначе разошёлся бы с сервером. В
@@ -250,28 +225,6 @@ export class Session {
       if (claim) this.claims.push({ ...claim, mine: true });
     }
     return result;
-  }
-
-  /**
-   * Считает ход по заказу. В счёт идёт только сама группа: взрыв заряда
-   * сносит что попало, и пускать его в заказ значило бы отдать решающий
-   * ход лотерее. Ход чужого цвета или мимо цели не стоит ничего — линия
-   * резкая, в ней вся ставка.
-   */
-  private fire(result: MoveResult): void {
-    this.syncOrder();
-    const window = this.order();
-    if (window === null || result.color !== window.color) {
-      this.lastFire = null;
-      return;
-    }
-    const size = result.removed.length;
-    const reward = orderReward(size, this.cfg);
-    this.lastFire = { size, reward };
-    if (reward === 0) return;
-    this.score += reward;
-    this.ordersDone += 1;
-    this.nextWindow(true);
   }
 
   /**

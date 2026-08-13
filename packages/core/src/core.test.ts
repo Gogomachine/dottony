@@ -9,7 +9,14 @@ import {
   phaseStateAt,
   type Claim,
 } from './phase.js';
-import { nextOrderColor, orderReward } from './order.js';
+import {
+  nextOrderColor,
+  orderReward,
+  startOrder,
+  tapOrder,
+  tickOrder,
+  type OrderRun,
+} from './order.js';
 import { nextInt, seedRng } from './rng.js';
 import {
   DEFAULT_CONFIG,
@@ -613,6 +620,102 @@ describe('заказ', () => {
     expect(orderReward(cfg.orderTarget, cfg)).toBe(cfg.orderReward);
     expect(orderReward(cfg.orderTarget + 1, cfg)).toBe(cfg.orderReward * 2);
     expect(orderReward(cfg.orderTarget + 5, cfg)).toBe(cfg.orderReward * 6);
+  });
+
+  /**
+   * Самая большая снимаемая группа: заданного цвета или, если цвет null,
+   * любого, кроме цвета окна.
+   */
+  function biggest(run: OrderRun, color: Color | null): { cell: Cell; size: number } | null {
+    let best: { cell: Cell; size: number } | null = null;
+    for (let r = 0; r < cfg.rows; r++) {
+      for (let c = 0; c < cfg.cols; c++) {
+        const dot = run.board.grid[r]![c]!.color;
+        if (color === null ? dot === run.color : dot !== color) continue;
+        const size = tapGroup(run.board, { r, c }, cfg).length;
+        if (size >= cfg.minChain && (best === null || size > best.size)) {
+          best = { cell: { r, c }, size };
+        }
+      }
+    }
+    return best;
+  }
+
+  it('заход начинается с первого окна и живого запаса', () => {
+    const run = startOrder(11, cfg);
+    expect(run.cycle).toBe(0);
+    expect(run.since).toBe(0);
+    expect(run.over).toBe(false);
+    expect(run.fails).toBe(0);
+    expect(run.board.grid).toHaveLength(cfg.rows);
+  });
+
+  it('просроченное окно — сбой, и каждое считается отдельно', () => {
+    const run = startOrder(11, cfg);
+    expect(tickOrder(run, cfg.orderWindow - 0.1, cfg).fails).toBe(0);
+
+    const one = tickOrder(run, cfg.orderWindow, cfg);
+    expect(one.fails).toBe(1);
+    expect(one.cycle).toBe(1);
+    expect(one.lastWindow).toBe('missed');
+    // Окно считается от границы прошлого, а не от секунды, когда спохватились.
+    expect(one.since).toBe(cfg.orderWindow);
+    expect(one.color).not.toBe(run.color);
+
+    // Долгий простой стоит всех окон, которые за него прошли.
+    const dead = tickOrder(run, cfg.orderWindow * cfg.orderLives, cfg);
+    expect(dead.fails).toBe(cfg.orderLives);
+    expect(dead.over).toBe(true);
+  });
+
+  it('заказ в цель закрывает окно и открывает следующее', () => {
+    // Растим пятно, разбирая всё, кроме него, и жмём, когда дорастёт.
+    let run = startOrder(3, cfg);
+    let t = 0;
+    let fired: { size: number; reward: number } | null = null;
+    for (let move = 0; move < 120 && fired === null; move++) {
+      const mine = biggest(run, run.color);
+      const cell =
+        mine !== null && mine.size >= cfg.orderTarget
+          ? mine.cell
+          : (biggest(run, null)?.cell ?? mine?.cell ?? null);
+      if (cell === null) break;
+      // Время двигаем по чуть-чуть: окно за такой заход не истечёт.
+      t += 0.05;
+      const out = tapOrder(run, cell, t, cfg);
+      if (typeof out === 'string') throw new Error(out);
+      run = out.run;
+      if (out.fire !== null && out.fire.reward > 0) fired = out.fire;
+    }
+
+    expect(fired).not.toBeNull();
+    expect(fired!.size).toBeGreaterThanOrEqual(cfg.orderTarget);
+    expect(run.orders).toBe(1);
+    expect(run.streak).toBe(1);
+    expect(run.fails).toBe(0);
+    expect(run.score).toBe(orderReward(fired!.size, cfg));
+    expect(run.cycle).toBe(1);
+    expect(run.lastWindow).toBe('done');
+    // Новое окно пошло от секунды заказа: отсчёт полный.
+    expect(run.since).toBe(t);
+    expect(run.over).toBe(false);
+  });
+
+  it('недобор цветом окна ничего не меняет, кроме поля', () => {
+    let run = startOrder(5, cfg);
+    const mine = biggest(run, run.color);
+    if (mine === null) throw new Error('нет группы своего цвета');
+    const out = tapOrder(run, mine.cell, 1, cfg);
+    if (typeof out === 'string') throw new Error(out);
+    expect(out.fire).toEqual({ size: mine.size, reward: 0 });
+    expect(out.run.score).toBe(0);
+    expect(out.run.orders).toBe(0);
+    expect(out.run.cycle).toBe(0);
+  });
+
+  it('в мёртвом заходе ходов не бывает', () => {
+    const run = { ...startOrder(5, cfg), over: true };
+    expect(tapOrder(run, { r: 0, c: 0 }, 1, cfg)).toBe('too-short');
   });
 
   it('притянутый цвет сыплется чаще прочих, но не вытесняет их', () => {

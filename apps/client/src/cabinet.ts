@@ -56,8 +56,8 @@ export interface CabinetHandlers {
   onRatingBoard(): void;
   /** Таблица рекордов спринта. */
   onSprintBoard(): void;
-  /** Таблица челленджа бесконечного режима. */
-  onComboBoard(): void;
+  /** Таблица рекордов заказов. */
+  onOrderBoard(): void;
   /**
    * Позвать друга в матч: снаружи это открывает приватную комнату.
    * Код друга нужен, чтобы дослать приглашение сообщением в Telegram.
@@ -93,9 +93,9 @@ export class Cabinet {
       this.hide();
       handlers.onSprintBoard();
     });
-    el<HTMLButtonElement>('cab-combo-board').addEventListener('click', () => {
+    el<HTMLButtonElement>('cab-order-board').addEventListener('click', () => {
       this.hide();
-      handlers.onComboBoard();
+      handlers.onOrderBoard();
     });
     el<HTMLButtonElement>('cab-rename').addEventListener('click', () => void this.rename());
     el<HTMLDivElement>('cab-photo').addEventListener('click', () => void this.pickAvatar());
@@ -245,10 +245,10 @@ export class Cabinet {
     el<HTMLSpanElement>('cab-sprint-rank').textContent =
       me.sprint.rank === null ? 'спринт' : `спринт · #${me.sprint.rank}`;
     // Комбо показываем вместе с местом: рекорд интересен в сравнении.
-    el<HTMLSpanElement>('cab-combo').textContent =
-      me.combo.best === 0 ? '—' : groupDigits(me.combo.best);
-    el<HTMLSpanElement>('cab-combo-rank').textContent =
-      me.combo.rank === null ? 'комбо' : `комбо · #${me.combo.rank}`;
+    el<HTMLSpanElement>('cab-order').textContent =
+      me.order.best === 0 ? '—' : groupDigits(me.order.best);
+    el<HTMLSpanElement>('cab-order-rank').textContent =
+      me.order.rank === null ? 'заказы' : `заказы · #${me.order.rank}`;
 
     this.leagueEl.innerHTML =
       '<span class="league-name"></span>' +

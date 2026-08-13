@@ -68,23 +68,23 @@ export const AddScoreRequestSchema = z.object({
 });
 
 /**
- * Челлендж бесконечного режима — лучший потенциал за один ход. Ходы
- * присылаются целиком: цена хода зависит от состояния поля, а его не
- * восстановить иначе как переиграв заход от сида. Числу клиента сервер не
- * верит вовсе — он считает комбо сам.
+ * Заход режима заказов. Ход здесь — одно касание, поэтому и присылается
+ * одна клетка: остальное — группу под ней, награду, смену окна — сервер
+ * считает сам, переигрывая заход ядром от сида. Числу клиента он не верит
+ * вовсе.
  */
-export const ComboMoveSchema = z.object({
-  path: z.array(CellSchema).min(3).max(64),
-  /** Секунда захода. В бесконечном режиме партия идёт хоть сутки. */
+export const OrderMoveSchema = z.object({
+  cell: CellSchema,
+  /** Секунда захода. Заход кончается сбоями, а не часами. */
   t: z.number().min(0).max(86_400),
 });
 
 /** Потолок журнала захода: столько ходов клиент готов доказать. */
-export const COMBO_MOVE_LIMIT = 1200;
+export const ORDER_MOVE_LIMIT = 1200;
 
-export const SubmitComboRequestSchema = z.object({
+export const SubmitOrderRequestSchema = z.object({
   seed: z.number().int().min(0).max(0xffffffff),
-  moves: z.array(ComboMoveSchema).min(1).max(COMBO_MOVE_LIMIT),
+  moves: z.array(OrderMoveSchema).min(1).max(ORDER_MOVE_LIMIT),
 });
 
 /** Приглашение друга в комнату: код комнаты тот же, что у приватной дуэли. */
@@ -104,7 +104,7 @@ export const TelegramAuthRequestSchema = z.object({
  */
 export type Cell = z.infer<typeof CellSchema>;
 export type MoveLog = z.infer<typeof MoveLogSchema>;
-export type ComboMove = z.infer<typeof ComboMoveSchema>;
+export type OrderMove = z.infer<typeof OrderMoveSchema>;
 
 export interface AuthResponse {
   token: string;
@@ -141,9 +141,11 @@ export interface SprintLeaderboardResponse {
 }
 
 /** Ответ на присланный заход: что насчитало ядро и куда это ставит игрока. */
-export interface SubmitComboResponse {
-  /** Лучший потенциал за один ход в этом заходе — по пересчёту сервера. */
-  combo: number;
+export interface SubmitOrderResponse {
+  /** Счёт захода — по пересчёту сервера. */
+  score: number;
+  /** Сколько заказов в нём закрыто. */
+  orders: number;
   /** Личный рекорд после захода. */
   best: number;
   /** Рекорд обновлён. */
@@ -151,15 +153,17 @@ export interface SubmitComboResponse {
   rank: number;
 }
 
-export interface ComboEntry {
+export interface OrderEntry {
   rank: number;
   name: string;
-  combo: number;
+  score: number;
+  /** Сколько заказов закрыто в рекордном заходе. */
+  orders: number;
 }
 
-export interface ComboLeaderboardResponse {
-  entries: ComboEntry[];
-  me: ComboEntry | null;
+export interface OrderLeaderboardResponse {
+  entries: OrderEntry[];
+  me: OrderEntry | null;
 }
 
 export interface RatingEntry {
@@ -267,7 +271,7 @@ export interface MeResponse {
   /** Спринт: личный рекорд за три минуты и место в таблице. */
   sprint: { best: number; rank: number | null };
   /** Челлендж бесконечного режима: лучший ход и место в таблице. */
-  combo: { best: number; rank: number | null };
+  order: { best: number; orders: number; rank: number | null };
 }
 
 export interface RatingLeaderboardResponse {
