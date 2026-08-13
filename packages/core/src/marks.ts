@@ -15,13 +15,17 @@ export type MarkKind =
   /** Служебный шильдик: набитая на корпусе краска. Есть у всех. */
   | 'plate'
   /** Наклейка: смайл на маленькой белой наклейке. Есть у всех. */
-  | 'sticker';
+  | 'sticker'
+  /** Отметка за игру: выдаётся прибором, купить нельзя. */
+  | 'earned';
 
 export interface Mark {
   id: string;
   kind: MarkKind;
   /** Что нарисовано: надпись для шильдика, смайл для наклейки. */
   glyph: string;
+  /** За что выдаётся — только у отметок за игру. */
+  needs?: string;
 }
 
 /** Сколько шильдиков помещается на корпусе. */
@@ -60,8 +64,30 @@ const STICKERS: readonly string[] = [
   '🤖', '👾', '🧿', '🎧', '📻', '☕️',
 ];
 
+/**
+ * Отметки за игру. Их не выбирают — их получают, и в этом вся их цена:
+ * купить такую нельзя, и повторить чужую нельзя тоже.
+ *
+ * Номера здесь заданы руками, а не позицией в списке: по ним прибор
+ * помнит, кому что выдал, и переставлять их местами уже нельзя.
+ */
+const EARNED: readonly Mark[] = [
+  { id: 'e-order', kind: 'earned', glyph: '#1 ЗАКАЗЫ', needs: 'Первое место дня в заказах' },
+  { id: 'e-sprint', kind: 'earned', glyph: '#1 СПРИНТ', needs: 'Первое место дня в спринте' },
+  { id: 'e-lg1', kind: 'earned', glyph: 'МНС', needs: 'Лига «младший научный сотрудник»' },
+  { id: 'e-lg2', kind: 'earned', glyph: 'ЛАБОРАНТ', needs: 'Лига «лаборант»' },
+  { id: 'e-lg3', kind: 'earned', glyph: 'УЧЁНЫЙ', needs: 'Лига «учёный»' },
+  { id: 'e-lg4', kind: 'earned', glyph: 'ФРИМЕН', needs: 'Лига «гордон фримен»' },
+];
+
+/** Отметка за лигу по её порядковому номеру; 0 — начальная, за неё не дают. */
+export function leagueMark(tier: number): string | null {
+  return tier >= 1 && tier <= 4 ? `e-lg${tier}` : null;
+}
+
 /** Весь каталог: номер шильдика — его место в этом списке. */
 export const MARKS: readonly Mark[] = [
+  ...EARNED,
   ...PLATES.map((glyph, index) => ({ id: `p${index}`, kind: 'plate' as const, glyph })),
   ...STICKERS.map((glyph, index) => ({ id: `s${index}`, kind: 'sticker' as const, glyph })),
 ];
@@ -73,12 +99,13 @@ export function markById(id: string): Mark | undefined {
 }
 
 /**
- * Положен ли шильдик игроку. Пока весь каталог бесплатный, но проверка
- * живёт здесь с самого начала: отметки за игру добавятся сюда же, и
- * сервер не должен будет вспоминать, где у него это правило.
+ * Положен ли шильдик игроку. Служебные и наклейки — всем; отметку за игру
+ * носит только тот, кому прибор её выдал.
  */
-export function markAllowed(id: string): boolean {
-  return BY_ID.has(id);
+export function markAllowed(id: string, earned: readonly string[] = []): boolean {
+  const mark = BY_ID.get(id);
+  if (!mark) return false;
+  return mark.kind !== 'earned' || earned.includes(id);
 }
 
 /**
@@ -89,7 +116,9 @@ export function cleanMarks(slots: readonly (string | null)[]): (string | null)[]
   const seen = new Set<string>();
   const out: (string | null)[] = [];
   for (const id of slots.slice(0, MARK_SLOTS)) {
-    if (id === null || !markAllowed(id) || seen.has(id)) {
+    // Права здесь не проверяем: их знает только сервер, а привести чужой
+    // или устаревший список к форме корпуса нужно и клиенту.
+    if (id === null || !BY_ID.has(id) || seen.has(id)) {
       out.push(null);
       continue;
     }

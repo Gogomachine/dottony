@@ -17,7 +17,7 @@ import {
   tickOrder,
   type OrderRun,
 } from './order.js';
-import { cleanMarks, markAllowed, markById, MARKS, MARK_SLOTS } from './marks.js';
+import { cleanMarks, leagueMark, markAllowed, markById, MARKS, MARK_SLOTS } from './marks.js';
 import { nextInt, seedRng } from './rng.js';
 import {
   DEFAULT_CONFIG,
@@ -756,20 +756,38 @@ describe('шильдики', () => {
   });
 
   it('находит по номеру и отвергает выдуманный', () => {
-    const first = MARKS[0]!;
-    expect(markById(first.id)).toEqual(first);
+    const free = MARKS.find((mark) => mark.kind !== 'earned')!;
+    expect(markById(free.id)).toEqual(free);
     expect(markById('нет-такого')).toBeUndefined();
-    expect(markAllowed(first.id)).toBe(true);
+    expect(markAllowed(free.id)).toBe(true);
     expect(markAllowed('нет-такого')).toBe(false);
   });
 
+  it('отметку за игру носит только тот, кому её выдали', () => {
+    const earned = MARKS.find((mark) => mark.kind === 'earned')!;
+    expect(earned.needs).toBeTruthy();
+    expect(markAllowed(earned.id)).toBe(false);
+    expect(markAllowed(earned.id, [earned.id])).toBe(true);
+    // Чужая выданная отметка своей не делает.
+    expect(markAllowed(earned.id, ['e-нет'])).toBe(false);
+  });
+
+  it('лига даёт отметку со второй ступени', () => {
+    expect(leagueMark(0)).toBeNull();
+    expect(leagueMark(1)).toBe('e-lg1');
+    expect(leagueMark(4)).toBe('e-lg4');
+    expect(leagueMark(5)).toBeNull();
+    for (const tier of [1, 2, 3, 4]) expect(markById(leagueMark(tier)!)).toBeDefined();
+  });
+
   it('выбор приводится к корпусу: три ячейки, без повторов и выдумок', () => {
-    const [a, b] = [MARKS[0]!.id, MARKS[1]!.id];
+    const free = MARKS.filter((mark) => mark.kind !== 'earned');
+    const [a, b] = [free[0]!.id, free[1]!.id];
     expect(cleanMarks([a, b])).toEqual([a, b, null]);
     // Повтор и несуществующий номер гасят ячейку, а не занимают её.
     expect(cleanMarks([a, a, 'нет-такого'])).toEqual([a, null, null]);
     // Лишнее за край корпуса просто не помещается.
-    expect(cleanMarks(MARKS.slice(0, 5).map((mark) => mark.id))).toHaveLength(MARK_SLOTS);
+    expect(cleanMarks(free.slice(0, 5).map((mark) => mark.id))).toHaveLength(MARK_SLOTS);
     expect(cleanMarks([])).toEqual([null, null, null]);
   });
 });

@@ -148,7 +148,8 @@
     .brand-mark { display: block; margin-bottom: 5px; }
     .brand-mark svg { display: block; }
     /* Шильдики на корпусе: полоса под маркой прибора. */
-    .marks { display: flex; gap: 4px; margin-top: 5px; }
+    /* Переносим: три длинные отметки за игру в одну строку не влезут. */
+    .marks { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
     .mark {
       font-style: normal;
       display: inline-flex;
@@ -167,6 +168,14 @@
       font-family: var(--mono);
       font-size: 9px;
       color: var(--silk-2);
+    }
+    /* Отметка за игру: акцентная краска — её не купишь и не повторишь. */
+    .mark.earned {
+      border: 1px solid var(--acc);
+      border-radius: 3px;
+      font-family: var(--mono);
+      font-size: 8.5px;
+      color: var(--acc);
     }
     .mark.sticker {
       background: #f6f4ee;
@@ -942,6 +951,8 @@
       border-radius: 6px;
     }
     .catalog .pick.on { background: rgba(232, 75, 35, 0.16); }
+    /* Невыданная отметка видна, но приглушена: это ещё и список целей. */
+    .catalog .pick.locked { opacity: 0.32; }
     .catalog .pick .mark { transform: scale(1.25); }
     .catalog .none {
       font-family: var(--mono);

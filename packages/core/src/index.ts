@@ -13,7 +13,7 @@ export {
   tapOrder,
 } from './order.js';
 export type { OrderState, OrderRun, OrderFire, OrderTap } from './order.js';
-export { MARKS, MARK_SLOTS, markById, markAllowed, cleanMarks } from './marks.js';
+export { MARKS, MARK_SLOTS, markById, markAllowed, leagueMark, cleanMarks } from './marks.js';
 export type { Mark, MarkKind } from './marks.js';
 export {
   newRating,

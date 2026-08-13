@@ -33,7 +33,10 @@ import {
 } from '@doton/protocol';
 import {
   cleanMarks,
+  leagueMark,
+  markAllowed,
   decayDeviation,
+  LEAGUES,
   leagueOf,
   nextLeague,
   updateRating,
@@ -184,6 +187,10 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       updates.map(async ({ outcome, before: was, played, after }) => {
         await store.saveRating(outcome.playerId, after);
         await store.saveRatingChange(result.duelId, outcome.playerId, was.rating, after.rating);
+        // Лига даёт отметку на корпус. Выданное не отбирается: рейтинг
+        // просядет, а то, что человек там был, — уже случилось.
+        const badge = leagueMark(LEAGUES.indexOf(leagueOf(after.rating)));
+        if (badge) await store.grantMark(outcome.playerId, badge);
         outcome.player.send({
           type: 'finished',
           score: outcome.score,
@@ -344,7 +351,12 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     const user = await requireUser(request);
     const parsed = MarksRequestSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
-    const marks = cleanMarks(parsed.data.marks);
+    const earned = await store.earnedMarks(user.sub);
+    // Отметку за игру носит только тот, кому её выдали: чужую гасим, а не
+    // отказываем всему корпусу — остальные ячейки игрок выбрал честно.
+    const marks = cleanMarks(parsed.data.marks).map((id) =>
+      id !== null && markAllowed(id, earned) ? id : null,
+    );
     await store.setMarks(user.sub, marks);
     return { marks };
   });
@@ -381,6 +393,11 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       parsed.data.seed,
       JSON.stringify(parsed.data.moves),
     );
+    // Первое место дня — отметка на корпус. Считаем по дневной таблице:
+    // вечная слишком неподвижна, чтобы за неё что-то выдавать.
+    if ((await store.sprintRank(user.sub, 'day')) === 1) {
+      await store.grantMark(user.sub, 'e-sprint');
+    }
     const response: SubmitSprintResponse = {
       score: replay.score,
       best: saved.best,
@@ -440,6 +457,9 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       parsed.data.seed,
       JSON.stringify(parsed.data.moves),
     );
+    if ((await store.orderRank(user.sub, 'day')) === 1) {
+      await store.grantMark(user.sub, 'e-order');
+    }
     const response: SubmitOrderResponse = {
       score: replay.score,
       orders: replay.orders,
@@ -524,6 +544,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       orders,
       orderRank,
       marks,
+      earned,
     ] = await Promise.all([
         store.ratingOf(user.sub),
         store.ratingRank(user.sub),
@@ -537,6 +558,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         store.ordersOf(user.sub),
         store.orderRank(user.sub),
         store.marksOf(user.sub),
+        store.earnedMarks(user.sub),
       ]);
     const up = nextLeague(rating.rating);
     const league = leagueOf(rating.rating);
@@ -559,6 +581,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       sprint: { best: sprint, rank: sprintRank },
       order: { best: order, orders, rank: orderRank },
       marks,
+      earned,
     };
   });
 

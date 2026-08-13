@@ -37,7 +37,8 @@ export function markChip(mark: Mark): HTMLElement {
   const chip = document.createElement('i');
   // Класс не совпадает с названием вида нарочно: `plate` на корпусе уже
   // занят самой полосой шильдика, и стиль полосы налез бы на значок.
-  chip.className = `mark ${mark.kind === 'plate' ? 'tag' : 'sticker'}`;
+  const look = mark.kind === 'plate' ? 'tag' : mark.kind;
+  chip.className = `mark ${look}`;
   chip.textContent = mark.glyph;
   return chip;
 }

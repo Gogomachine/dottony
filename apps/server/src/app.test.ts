@@ -1124,7 +1124,8 @@ describe('API', () => {
 
   it('шильдики: выбор сохраняется и приходит в карточку', async () => {
     const token = await guestToken('Ада');
-    const mine = [MARKS[0]!.id, MARKS[20]!.id] as const;
+    const free = MARKS.filter((mark) => mark.kind !== 'earned');
+    const mine = [free[0]!.id, free[20]!.id] as const;
 
     const saved = await app.inject({
       method: 'PUT',
@@ -1155,7 +1156,7 @@ describe('API', () => {
       return response.json();
     };
 
-    const id = MARKS[0]!.id;
+    const id = MARKS.find((mark) => mark.kind !== 'earned')!.id;
     // Номера не из каталога гасят ячейку, а не занимают её.
     expect(await put([id, 'p999', id])).toEqual({ marks: [id, null, null] });
     // Больше трёх корпус не примет вовсе.
@@ -1168,11 +1169,54 @@ describe('API', () => {
     expect(тесно.statusCode).toBe(400);
   });
 
+  it('шильдики: отметку за игру дают за первое место дня', async () => {
+    const { seed, moves, score } = seedWithOrders(1);
+    const token = await guestToken('Ада');
+    expect(score).toBeGreaterThan(0);
+
+    const before = await app.inject({
+      method: 'GET',
+      url: '/api/me',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect((before.json() as { earned: string[] }).earned).toEqual([]);
+    // Пока не выдана — на корпус её не поставить.
+    const early = await app.inject({
+      method: 'PUT',
+      url: '/api/me/marks',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { marks: ['e-order'] },
+    });
+    expect(early.json()).toEqual({ marks: [null, null, null] });
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/order',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { seed, moves },
+    });
+
+    const after = await app.inject({
+      method: 'GET',
+      url: '/api/me',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect((after.json() as { earned: string[] }).earned).toEqual(['e-order']);
+
+    const put = await app.inject({
+      method: 'PUT',
+      url: '/api/me/marks',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { marks: ['e-order'] },
+    });
+    expect(put.json()).toEqual({ marks: ['e-order', null, null] });
+  });
+
   it('шильдики: без токена не поставить', async () => {
     const response = await app.inject({
       method: 'PUT',
       url: '/api/me/marks',
-      payload: { marks: [MARKS[0]!.id] },
+      payload: { marks: [MARKS.find((mark) => mark.kind !== 'earned')!.id] },
     });
     expect(response.statusCode).toBe(401);
   });

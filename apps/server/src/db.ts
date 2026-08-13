@@ -223,6 +223,16 @@ export class Store {
     // Шильдики корпуса: три номера из каталога ядра, одной строкой. Своей
     // таблицы они не стоят — это три коротких значения, живущих с игроком.
     await this.addColumnIfMissing('users', 'marks', 'TEXT');
+    // А вот выданные отметки — стоят: их список растёт, и каждая помнит,
+    // когда её выдали. Выданное не отбирается, даже если рейтинг просел.
+    await this.client.execute(
+      `CREATE TABLE IF NOT EXISTS user_marks (
+         user_id TEXT NOT NULL REFERENCES users(id),
+         mark_id TEXT NOT NULL,
+         earned_at TEXT NOT NULL DEFAULT (datetime('now')),
+         PRIMARY KEY (user_id, mark_id)
+       )`,
+    );
     // Код друга: короткий, его диктуют вслух и шлют ссылкой.
     await this.addColumnIfMissing('users', 'friend_code', 'TEXT');
     // Заявки на цвет резонанса: общие для матча, поэтому лежат на дуэли,
@@ -1065,6 +1075,27 @@ export class Store {
     } catch {
       return null;
     }
+  }
+
+  /** Отметки, выданные игроку за игру. */
+  async earnedMarks(userId: string): Promise<string[]> {
+    const result = await this.client.execute({
+      sql: 'SELECT mark_id FROM user_marks WHERE user_id = ?',
+      args: [userId],
+    });
+    return result.rows.map((row) => String(row.mark_id));
+  }
+
+  /**
+   * Выдаёт отметку. Повторная выдача ничего не меняет: отметка помнит свой
+   * первый раз — тот, за который её и получили.
+   */
+  async grantMark(userId: string, markId: string): Promise<void> {
+    await this.client.execute({
+      sql: `INSERT INTO user_marks (user_id, mark_id) VALUES (?, ?)
+            ON CONFLICT (user_id, mark_id) DO NOTHING`,
+      args: [userId, markId],
+    });
   }
 
   /** Шильдики игрока: три ячейки, пустая — null. */

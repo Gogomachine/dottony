@@ -286,6 +286,8 @@ export interface MeResponse {
   order: { best: number; orders: number; rank: number | null };
   /** Шильдики корпуса: три ячейки, пустая — null. */
   marks: (string | null)[];
+  /** Отметки, которые прибор уже выдал за игру. */
+  earned: string[];
 }
 
 export interface RatingLeaderboardResponse {

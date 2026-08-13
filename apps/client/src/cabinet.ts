@@ -90,8 +90,9 @@ export class Cabinet {
   private readonly slotsEl = el<HTMLDivElement>('cab-slots');
   private readonly slotHintEl = el<HTMLSpanElement>('cab-slot-hint');
   private readonly catalogEl = el<HTMLDivElement>('cab-catalog');
-  /** Выбранные шильдики и ячейка, которую сейчас заполняют. */
+  /** Выбранные шильдики, выданные отметки и ячейка, которую заполняют. */
   private marks: (string | null)[] = cleanMarks([]);
+  private earned: string[] = [];
   private slot = 0;
   private miniApp: string | null = null;
 
@@ -173,8 +174,16 @@ export class Cabinet {
       const pick = document.createElement('button');
       pick.className = 'pick';
       pick.dataset.mark = mark.id;
+      if (mark.needs !== undefined) pick.dataset.needs = mark.needs;
       pick.appendChild(markChip(mark));
-      pick.addEventListener('click', () => void this.put(mark.id));
+      pick.addEventListener('click', () => {
+        // Невыданная отметка не молчит: нажатие рассказывает, за что дают.
+        if (mark.needs !== undefined && !this.earned.includes(mark.id)) {
+          this.slotHintEl.textContent = mark.needs;
+          return;
+        }
+        void this.put(mark.id);
+      });
       this.catalogEl.appendChild(pick);
     }
   }
@@ -210,6 +219,10 @@ export class Cabinet {
     this.slotHintEl.textContent = `Ячейка ${this.slot + 1} · выберите шильдик`;
     for (const pick of this.catalogEl.querySelectorAll<HTMLElement>('.pick')) {
       pick.classList.toggle('on', pick.dataset.mark === marks[this.slot]);
+      // Отметку за игру видно всегда: каталог заодно и список целей.
+      const locked =
+        pick.dataset.needs !== undefined && !this.earned.includes(pick.dataset.mark ?? '');
+      pick.classList.toggle('locked', locked);
     }
   }
 
@@ -299,6 +312,7 @@ export class Cabinet {
 
   private renderProfile(me: MeResponse): void {
     // Корпус игрока знает сервер: он же показывает его сопернику.
+    this.earned = me.earned;
     this.showMarks(cleanMarks(me.marks));
     this.nameEl.textContent = me.name;
     this.showAvatar(me.avatar ?? '');
