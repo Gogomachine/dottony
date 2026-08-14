@@ -16,10 +16,18 @@ export interface Ghost {
   score: number;
   /** Когда и сколько очков набирал соперник. */
   log: ScorePoint[];
+  /** Корпус того, чья это запись: на время матча он занимает корпус игрока. */
+  marks: (string | null)[];
 }
 
 /** Пока настоящих записей нет, соперника отыгрывает «Эталон» — образцовый прибор. */
 const SYNTHETIC_NAME = 'Эталон';
+
+/**
+ * Корпус «Эталона»: поверенный образцовый прибор с приёмкой ОТК. Своего
+ * выбора у него нет и быть не может, поэтому набор задан здесь намертво.
+ */
+const SYNTHETIC_MARKS: (string | null)[] = ['p1', 'p13', 'p10'];
 
 /**
  * Синтетический призрак: раскладывает целевой счёт на ходы с человеческим
@@ -39,7 +47,7 @@ export function makeSyntheticGhost(seed: number, targetScore: number): Ghost {
     t += 1.4 + randomInt(0, 16) / 10;
   }
 
-  return { name: SYNTHETIC_NAME, seed, score: total, log };
+  return { name: SYNTHETIC_NAME, seed, score: total, log, marks: [...SYNTHETIC_MARKS] };
 }
 
 /** Средний счёт для синтетического соперника, если статистики ещё нет. */

@@ -2,10 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   applyMove,
   cellAt,
+  cleanMarks,
   createBoard,
   phaseColorAt,
   seedRng,
   DEFAULT_CONFIG,
+  MARK_SLOTS,
   type Board,
   type Cell,
 } from '@doton/core';
@@ -360,7 +362,13 @@ describe('признак рейтингового матча', () => {
   });
 
   it('матч с призраком не рейтинговый: запись не может проиграть', async () => {
-    const ghost: Ghost = { name: 'Ада', seed: 777, score: 300, log: [{ t: 1, points: 300 }] };
+    const ghost: Ghost = {
+      name: 'Ада',
+      seed: 777,
+      score: 300,
+      log: [{ t: 1, points: 300 }],
+      marks: ['p0', null, null],
+    };
     const { maker, fire, result } = make({ findGhost: async () => ghost });
     maker.join(recorder('p'));
     fire(100);
@@ -495,6 +503,7 @@ describe('призраки', () => {
     name: 'Ада',
     seed: 777,
     score: 300,
+    marks: ['p0', null, null],
     log: [
       { t: 1, points: 100 },
       { t: 2, points: 200 },
@@ -542,6 +551,8 @@ describe('призраки', () => {
 
     const matched = player.last('matched') as { seed: number; opponent: string; ghost: boolean };
     expect(matched).toMatchObject({ seed: ghost.seed, opponent: 'Ада', ghost: true });
+    // Запись носит корпус того, чья она: пустая полоса выглядела бы поломкой.
+    expect(matched).toMatchObject({ opponentMarks: ghost.marks });
     expect(maker.stats).toEqual({ waiting: 0, duels: 1 });
   });
 
@@ -617,6 +628,9 @@ describe('призраки', () => {
     // Раскладка по ходам не обязана попасть точно, но должна быть в разумных пределах.
     expect(synthetic.score).toBeGreaterThanOrEqual(800);
     expect(synthetic.score).toBeLessThan(800 + 200);
+    // У «Эталона» корпус тоже помечен, и все шильдики существуют.
+    expect(cleanMarks(synthetic.marks)).toEqual(synthetic.marks);
+    expect(synthetic.marks.filter((id) => id !== null).length).toBe(MARK_SLOTS);
   });
 
   it('темп записи ложится в расписание начислений', () => {

@@ -1,4 +1,5 @@
 import {
+  cleanMarks,
   markById,
   DEFAULT_CONFIG,
   type Cell,
@@ -708,9 +709,13 @@ let opponentMarks: (string | null)[] = [];
  * Что написано на корпусе. Свои шильдики игрок и так знает наизусть,
  * поэтому на время матча корпус занимает соперник: его набор — всё, что
  * о нём вообще видно, и смотреть на него интереснее, чем на свой.
+ *
+ * Пустой корпус соперника не занимает: голая полоса выглядит поломкой, а
+ * не сообщением, — в этом случае на месте остаются свои шильдики.
  */
 function updatePlate(): void {
-  showPlate(plateMarksEl, inDuel ? opponentMarks : loadPlate());
+  const theirs = inDuel ? opponentMarks.filter((id) => id !== null) : [];
+  showPlate(plateMarksEl, theirs.length > 0 ? opponentMarks : loadPlate());
 }
 let opponentScore = 0;
 /** Код соперника по текущему матчу: по нему его добавляют в друзья. */
@@ -765,7 +770,8 @@ function handleDuelMessage(message: DuelServerMessage): void {
       updateGoKey();
       // Честно помечаем запись: игрок должен знать, что соперник не живой.
       opponentName = message.ghost ? `${message.opponent} · запись` : message.opponent;
-      opponentMarks = message.opponentMarks;
+      // Сервер мог быть старее клиента: поля может не быть вовсе.
+      opponentMarks = cleanMarks(message.opponentMarks ?? []);
       updatePlate();
       opponentScore = 0;
       // Матч начался — звать больше некуда.
@@ -788,7 +794,8 @@ function handleDuelMessage(message: DuelServerMessage): void {
       updateGoKey();
       duelDuration = Math.max(1, Math.round(message.remaining));
       opponentName = message.ghost ? `${message.opponent} · запись` : message.opponent;
-      opponentMarks = message.opponentMarks;
+      // Сервер мог быть старее клиента: поля может не быть вовсе.
+      opponentMarks = cleanMarks(message.opponentMarks ?? []);
       updatePlate();
       opponentScore = message.opponentScore;
       opponentCode = message.opponentCode ?? null;

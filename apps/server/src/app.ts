@@ -252,6 +252,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
             seed: recorded.seed,
             score: recorded.score,
             log: JSON.parse(recorded.log) as { t: number; points: number }[],
+            marks: recorded.marks,
           };
         } catch {
           // Битая запись — лучше синтетический соперник, чем пустое ожидание.

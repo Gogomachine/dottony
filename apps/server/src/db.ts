@@ -433,9 +433,11 @@ export class Store {
   async pickGhostRun(
     excludeUserId: string,
     targetScore: number,
-  ): Promise<{ name: string; seed: number; score: number; log: string } | undefined> {
+  ): Promise<
+    { name: string; seed: number; score: number; log: string; marks: (string | null)[] } | undefined
+  > {
     const result = await this.client.execute({
-      sql: `SELECT u.name, d.seed, p.score, p.log
+      sql: `SELECT u.name, u.marks, d.seed, p.score, p.log
             FROM duel_players p
             JOIN duels d ON d.id = p.duel_id
             JOIN users u ON u.id = p.user_id
@@ -452,6 +454,8 @@ export class Store {
       seed: Number(row.seed),
       score: Number(row.score),
       log: String(row.log),
+      // Запись живого игрока носит его же корпус: она и есть он.
+      marks: this.parseMarks(row.marks),
     };
   }
 
@@ -1081,13 +1085,20 @@ export class Store {
    * таблицы. Хранится строкой, поэтому разбор в одном месте.
    */
   private firstMark(raw: unknown): string | null {
-    if (typeof raw !== 'string') return null;
+    return this.parseMarks(raw).find((id) => id !== null) ?? null;
+  }
+
+  /**
+   * Весь корпус игрока из хранимой строки. Каталог мог с тех пор смениться —
+   * приводим к нему на чтении, а не надеемся на то, что записано.
+   */
+  private parseMarks(raw: unknown): (string | null)[] {
+    if (typeof raw !== 'string') return cleanMarks([]);
     try {
       const parsed: unknown = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return null;
-      return cleanMarks(parsed as (string | null)[]).find((id) => id !== null) ?? null;
+      return cleanMarks(Array.isArray(parsed) ? (parsed as (string | null)[]) : []);
     } catch {
-      return null;
+      return cleanMarks([]);
     }
   }
 
@@ -1187,15 +1198,7 @@ export class Store {
       sql: 'SELECT marks FROM users WHERE id = ?',
       args: [userId],
     });
-    const raw = result.rows[0]?.marks;
-    if (typeof raw !== 'string') return cleanMarks([]);
-    try {
-      const parsed: unknown = JSON.parse(raw);
-      // Каталог мог с тех пор смениться — приводим к нему на чтении.
-      return cleanMarks(Array.isArray(parsed) ? (parsed as (string | null)[]) : []);
-    } catch {
-      return cleanMarks([]);
-    }
+    return this.parseMarks(result.rows[0]?.marks);
   }
 
   async setMarks(userId: string, marks: (string | null)[]): Promise<void> {

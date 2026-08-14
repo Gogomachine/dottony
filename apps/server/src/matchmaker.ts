@@ -165,6 +165,7 @@ export class Matchmaker {
     const ghostPlayer: DuelPlayer = {
       id: `ghost:${ghost.name}:${Date.now()}`,
       name: ghost.name,
+      marks: ghost.marks,
       send: () => {},
     };
     const duel = new Duel(ghost.seed, player, ghostPlayer, { ghostB: true });
