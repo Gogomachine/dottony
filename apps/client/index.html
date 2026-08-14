@@ -218,6 +218,9 @@
     /* ---------- Приборная строка ---------- */
 
     .strip { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; padding: 0 3px 10px; }
+    /* Поле ужимается, а не распирает строку: длинное имя соперника иначе
+       выдавливало соседей и число уезжало на вторую строку. */
+    .field { min-width: 0; }
     .field .lbl {
       font-family: var(--mono);
       font-size: 9px;
@@ -226,7 +229,11 @@
       color: var(--silk-2);
       display: block;
       margin-bottom: 1px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
+    /* Число не переносится никогда: приборная строка — одна строка. */
     .field .val {
       font-family: var(--mono);
       font-size: 26px;
@@ -235,7 +242,13 @@
       line-height: 1;
       color: var(--silk);
       font-variant-numeric: tabular-nums;
+      /* По базовой линии: множитель набран мельче, и в обычной строке он
+         утягивал число вниз — числа полей переставали стоять в ряд. */
+      display: flex;
+      align-items: baseline;
+      white-space: nowrap;
     }
+    .field.right .val { justify-content: flex-end; }
     .field.right { text-align: right; }
     .field.warn .val { color: var(--acc); }
     .field[hidden] { display: none; }
