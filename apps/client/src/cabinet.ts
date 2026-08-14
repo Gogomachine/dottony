@@ -311,9 +311,13 @@ export class Cabinet {
   }
 
   private renderProfile(me: MeResponse): void {
-    // Корпус игрока знает сервер: он же показывает его сопернику.
+    // Корпус игрока знает сервер: он же показывает его сопернику. И он же
+    // гасит золото, когда место в таблице потеряно, — свой корпус поэтому
+    // приводим к серверному, а не к тому, что помнит устройство.
     this.earned = me.earned;
-    this.showMarks(cleanMarks(me.marks));
+    const marks = cleanMarks(me.marks);
+    this.showMarks(marks);
+    this.handlers.onMarks(marks);
     this.nameEl.textContent = me.name;
     this.showAvatar(me.avatar ?? '');
     const logins = me.identities.map((identity) => LOGIN_NAMES[identity.kind] ?? identity.kind);

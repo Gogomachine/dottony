@@ -352,6 +352,19 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
 
   /**
+   * Что игроку сейчас положено носить: выданное навсегда плюс золото, пока
+   * он держит вечную таблицу. Второе живёт не в базе, а в самой таблице,
+   * поэтому спрашивается заново каждый раз.
+   */
+  async function ownedMarks(userId: string): Promise<string[]> {
+    const [earned, gold] = await Promise.all([
+      store.earnedMarks(userId),
+      store.goldMarks(userId),
+    ]);
+    return [...earned, ...gold];
+  }
+
+  /**
    * Шильдики корпуса. Набор закрытый, поэтому проверка короткая: номер
    * должен быть из каталога ядра — всё остальное отсекается там же.
    */
@@ -359,7 +372,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     const user = await requireUser(request);
     const parsed = MarksRequestSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
-    const earned = await store.earnedMarks(user.sub);
+    const earned = await ownedMarks(user.sub);
     // Отметку за игру носит только тот, кому её выдали: чужую гасим, а не
     // отказываем всему корпусу — остальные ячейки игрок выбрал честно.
     const marks = cleanMarks(parsed.data.marks).map((id) =>
@@ -569,7 +582,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         store.ordersOf(user.sub),
         store.orderRank(user.sub),
         store.marksOf(user.sub),
-        store.earnedMarks(user.sub),
+        ownedMarks(user.sub),
       ]);
     const up = nextLeague(rating.rating);
     const league = leagueOf(rating.rating);

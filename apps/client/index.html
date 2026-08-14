@@ -52,6 +52,9 @@
       --silk: #17181b;
       --silk-2: #87847c;
       --acc: #e84b23;
+      /* Золото: латунь по корпусу, а не жёлтая краска. */
+      --gold: #9a7413;
+      --gold-bg: rgba(154, 116, 19, 0.09);
       --edge: rgba(23, 24, 27, 0.16);
       /* Окуляр всегда чёрный: это стекло прибора, а не часть корпуса. */
       --scope: #0c0d0e;
@@ -67,6 +70,8 @@
       --case-2: #2e2e2b;
       --silk: #e9e7e2;
       --silk-2: #7e7b74;
+      --gold: #d8ab35;
+      --gold-bg: rgba(216, 171, 53, 0.12);
       --edge: rgba(255, 255, 255, 0.1);
     }
 
@@ -178,6 +183,15 @@
       font-family: var(--mono);
       font-size: 9px;
       color: var(--silk-2);
+    }
+    /* Золото вечной таблицы: единственный шильдик, который можно потерять. */
+    .mark.gold {
+      border: 1px solid var(--gold);
+      border-radius: 3px;
+      font-family: var(--mono);
+      font-size: 8.5px;
+      color: var(--gold);
+      background: var(--gold-bg);
     }
     /* Отметка за игру: акцентная краска — её не купишь и не повторишь. */
     .mark.earned {
@@ -629,6 +643,8 @@
       --case-2: #17181a;
       --silk: var(--scope-ink);
       --silk-2: #6f6c65;
+      --gold: #d8ab35;
+      --gold-bg: rgba(216, 171, 53, 0.12);
       --edge: rgba(237, 234, 227, 0.13);
       --scope: #050606;
       position: absolute;

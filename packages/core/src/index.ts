@@ -21,6 +21,8 @@ export {
   MARK_DUELS,
   markById,
   markAllowed,
+  isGoldMark,
+  goldMark,
   leagueMark,
   cleanMarks,
 } from './marks.js';

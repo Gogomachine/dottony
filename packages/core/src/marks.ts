@@ -16,8 +16,10 @@ export type MarkKind =
   | 'plate'
   /** Наклейка: смайл на маленькой белой наклейке. Есть у всех. */
   | 'sticker'
-  /** Отметка за игру: выдаётся прибором, купить нельзя. */
-  | 'earned';
+  /** Отметка за игру: выдаётся прибором навсегда, купить нельзя. */
+  | 'earned'
+  /** Золото: держится, только пока держится и первое место в вечной таблице. */
+  | 'gold';
 
 export interface Mark {
   id: string;
@@ -35,32 +37,24 @@ export const MARK_SLOTS = 3;
  * Служебные шильдики — язык самого прибора. Их дело не украшать, а не
  * оставлять корпус пустым: первая ячейка бесплатна, и положить в неё что-то
  * уместное игрок должен с первого запуска.
+ *
+ * Номер задан рядом с надписью, а не берётся из позиции в списке: по номеру
+ * прибор помнит выбор игрока, и убрать надпись из набора можно только так,
+ * чтобы у остальных номера не поехали.
  */
-const PLATES: readonly string[] = [
-  '36',
-  'ОТК',
-  'RT',
-  '∅',
-  'II',
-  'III',
-  '24В',
-  '36/4',
-  '°C',
-  'СЕР.А',
-  'ГОСТ',
-  'РЕЗ.',
-  'ТУ-36',
-  'ПОВЕРЕН',
-  'ИСПР.',
-  'КЛ.Б',
-  '50Гц',
-  'IP54',
-  'ЗИП',
-  'ВЕРХ',
-  'НЕ КАНТ.',
-  'ЭКСП.',
-  '+5В',
-  'ОБР.№36',
+const PLATES: readonly { id: string; glyph: string }[] = [
+  { id: 'p0', glyph: '36' },
+  { id: 'p1', glyph: 'ОТК' },
+  { id: 'p3', glyph: '∅' },
+  { id: 'p6', glyph: '24В' },
+  { id: 'p8', glyph: '°C' },
+  { id: 'p10', glyph: 'ГОСТ' },
+  { id: 'p13', glyph: 'ПОВЕРЕН' },
+  { id: 'p14', glyph: 'ИСПР.' },
+  { id: 'p16', glyph: '50Гц' },
+  { id: 'p17', glyph: 'IP54' },
+  { id: 'p18', glyph: 'ЗИП' },
+  { id: 'p20', glyph: 'НЕ КАНТ.' },
 ];
 
 /**
@@ -119,15 +113,41 @@ const EARNED: readonly Mark[] = [
   { id: 'e-lg4', kind: 'earned', glyph: 'ФРИМЕН', needs: 'Лига «гордон фримен»' },
 ];
 
+/**
+ * Золото вечных таблиц. Его не выдают навсегда: пока держишь первое место —
+ * носишь, обогнали — сняли, вернул место — вернулось. Поэтому нигде и не
+ * хранится, кто им владеет: владелец каждый раз вычисляется по таблице.
+ */
+const GOLD: readonly Mark[] = [
+  {
+    id: 'g-order',
+    kind: 'gold',
+    glyph: 'РЕКОРД ЗАКАЗОВ',
+    needs: 'Первое место в вечной таблице заказов — пока не обогнали',
+  },
+  {
+    id: 'g-sprint',
+    kind: 'gold',
+    glyph: 'РЕКОРД СПРИНТА',
+    needs: 'Первое место в вечной таблице спринта — пока не обогнали',
+  },
+];
+
+/** Золотой шильдик таблицы — его носит тот, кто её сейчас возглавляет. */
+export function goldMark(board: 'order' | 'sprint'): string {
+  return board === 'order' ? 'g-order' : 'g-sprint';
+}
+
 /** Отметка за лигу по её порядковому номеру; 0 — начальная, за неё не дают. */
 export function leagueMark(tier: number): string | null {
   return tier >= 1 && tier <= 4 ? `e-lg${tier}` : null;
 }
 
-/** Весь каталог: номер шильдика — его место в этом списке. */
+/** Весь каталог прибора: всё, что вообще можно увидеть на чужом корпусе. */
 export const MARKS: readonly Mark[] = [
+  ...GOLD,
   ...EARNED,
-  ...PLATES.map((glyph, index) => ({ id: `p${index}`, kind: 'plate' as const, glyph })),
+  ...PLATES.map(({ id, glyph }) => ({ id, kind: 'plate' as const, glyph })),
   ...STICKERS.map((glyph, index) => ({ id: `s${index}`, kind: 'sticker' as const, glyph })),
 ];
 
@@ -138,13 +158,18 @@ export function markById(id: string): Mark | undefined {
 }
 
 /**
- * Положен ли шильдик игроку. Служебные и наклейки — всем; отметку за игру
- * носит только тот, кому прибор её выдал.
+ * Положен ли шильдик игроку. Служебные и наклейки — всем; отметку за игру и
+ * золото носит только тот, за кем прибор их сейчас числит.
  */
 export function markAllowed(id: string, earned: readonly string[] = []): boolean {
   const mark = BY_ID.get(id);
   if (!mark) return false;
-  return mark.kind !== 'earned' || earned.includes(id);
+  return (mark.kind !== 'earned' && mark.kind !== 'gold') || earned.includes(id);
+}
+
+/** Золотой ли это шильдик: такие снимаются, как только место потеряно. */
+export function isGoldMark(id: string): boolean {
+  return BY_ID.get(id)?.kind === 'gold';
 }
 
 /**

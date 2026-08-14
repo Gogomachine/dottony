@@ -1196,7 +1196,7 @@ describe('API', () => {
 
   it('шильдики: выбор сохраняется и приходит в карточку', async () => {
     const token = await guestToken('Ада');
-    const free = MARKS.filter((mark) => mark.kind !== 'earned');
+    const free = MARKS.filter((mark) => mark.needs === undefined);
     const mine = [free[0]!.id, free[20]!.id] as const;
 
     const saved = await app.inject({
@@ -1228,7 +1228,7 @@ describe('API', () => {
       return response.json();
     };
 
-    const id = MARKS.find((mark) => mark.kind !== 'earned')!.id;
+    const id = MARKS.find((mark) => mark.needs === undefined)!.id;
     // Номера не из каталога гасят ячейку, а не занимают её.
     expect(await put([id, 'p999', id])).toEqual({ marks: [id, null, null] });
     // Больше трёх корпус не примет вовсе.
@@ -1273,7 +1273,9 @@ describe('API', () => {
       url: '/api/me',
       headers: { authorization: `Bearer ${token}` },
     });
-    expect((after.json() as { earned: string[] }).earned).toEqual(['e-order']);
+    // Заход тут единственный, поэтому вместе с отметкой дня приезжает и
+    // золото вечной таблицы — проверяем именно отметку дня.
+    expect((after.json() as { earned: string[] }).earned).toContain('e-order');
 
     const put = await app.inject({
       method: 'PUT',
@@ -1282,6 +1284,65 @@ describe('API', () => {
       payload: { marks: ['e-order'] },
     });
     expect(put.json()).toEqual({ marks: ['e-order', null, null] });
+  });
+
+  it('шильдики: золото вечной таблицы снимается, как только тебя обогнали', async () => {
+    // Два захода на разных сидах: слабый и заведомо сильнее его.
+    const weak = seedWithOrders(1);
+    let strong: { seed: number; moves: OrderMove[]; score: number } | null = null;
+    for (let seed = 1; seed < 60 && strong === null; seed++) {
+      const run = playOrderRun(seed, 90);
+      if (run.score > weak.score) strong = { seed, moves: run.moves, score: run.score };
+    }
+    if (strong === null) throw new Error('no stronger run found');
+
+    const ada = await guestToken('Ада');
+    const bob = await guestToken('Боб');
+    const send = async (token: string, run: { seed: number; moves: OrderMove[] }): Promise<void> => {
+      await app.inject({
+        method: 'POST',
+        url: '/api/order',
+        headers: { authorization: `Bearer ${token}` },
+        payload: { seed: run.seed, moves: run.moves },
+      });
+    };
+    const me = async (token: string): Promise<{ earned: string[]; marks: (string | null)[] }> => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/me',
+        headers: { authorization: `Bearer ${token}` },
+      });
+      return response.json() as { earned: string[]; marks: (string | null)[] };
+    };
+
+    // Первое место в вечной таблице — золото выдано и его можно надеть.
+    await send(ada, weak);
+    expect((await me(ada)).earned).toContain('g-order');
+    const put = await app.inject({
+      method: 'PUT',
+      url: '/api/me/marks',
+      headers: { authorization: `Bearer ${ada}` },
+      payload: { marks: ['g-order'] },
+    });
+    expect(put.json()).toEqual({ marks: ['g-order', null, null] });
+
+    // Боб обошёл — золото переехало к нему, у Ады корпус погас.
+    await send(bob, strong);
+    const adaNow = await me(ada);
+    expect(adaNow.earned).not.toContain('g-order');
+    expect(adaNow.marks).toEqual([null, null, null]);
+    expect((await me(bob)).earned).toContain('g-order');
+
+    // И в таблице у Ады золота тоже нет — соперник видит то же самое.
+    const board = await app.inject({ method: 'GET', url: '/api/order/leaderboard' });
+    const entries = (board.json() as { entries: { name: string; mark: string | null }[] }).entries;
+    expect(entries.find((entry) => entry.name === 'Ада')?.mark).toBeNull();
+
+    // Место вернулось — вернулось и золото: выбор в базе никто не стирал.
+    await send(ada, { seed: strong.seed, moves: strong.moves });
+    const adaBack = await me(ada);
+    expect(adaBack.earned).toContain('g-order');
+    expect(adaBack.marks).toEqual(['g-order', null, null]);
   });
 
   it('шильдики: крупная группа и серия окон дают свои отметки', async () => {
@@ -1312,7 +1373,7 @@ describe('API', () => {
     const response = await app.inject({
       method: 'PUT',
       url: '/api/me/marks',
-      payload: { marks: [MARKS.find((mark) => mark.kind !== 'earned')!.id] },
+      payload: { marks: [MARKS.find((mark) => mark.needs === undefined)!.id] },
     });
     expect(response.statusCode).toBe(401);
   });

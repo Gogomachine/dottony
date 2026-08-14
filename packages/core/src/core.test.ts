@@ -19,6 +19,8 @@ import {
 } from './order.js';
 import {
   cleanMarks,
+  goldMark,
+  isGoldMark,
   leagueMark,
   markAllowed,
   markById,
@@ -765,7 +767,7 @@ describe('шильдики', () => {
   });
 
   it('находит по номеру и отвергает выдуманный', () => {
-    const free = MARKS.find((mark) => mark.kind !== 'earned')!;
+    const free = MARKS.find((mark) => mark.needs === undefined)!;
     expect(markById(free.id)).toEqual(free);
     expect(markById('нет-такого')).toBeUndefined();
     expect(markAllowed(free.id)).toBe(true);
@@ -802,8 +804,24 @@ describe('шильдики', () => {
     for (const tier of [1, 2, 3, 4]) expect(markById(leagueMark(tier)!)).toBeDefined();
   });
 
+  it('золото носит только тот, кто держит таблицу прямо сейчас', () => {
+    for (const board of ['order', 'sprint'] as const) {
+      const id = goldMark(board);
+      const mark = markById(id)!;
+      expect(mark.kind).toBe('gold');
+      expect(isGoldMark(id)).toBe(true);
+      // Как и отметку за игру, золото без выдачи не поставить.
+      expect(markAllowed(id)).toBe(false);
+      expect(markAllowed(id, [id])).toBe(true);
+      // Золото одной таблицы не даёт золота другой.
+      expect(markAllowed(id, [goldMark(board === 'order' ? 'sprint' : 'order')])).toBe(false);
+    }
+    expect(goldMark('order')).not.toBe(goldMark('sprint'));
+    expect(isGoldMark('e-order')).toBe(false);
+  });
+
   it('выбор приводится к корпусу: три ячейки, без повторов и выдумок', () => {
-    const free = MARKS.filter((mark) => mark.kind !== 'earned');
+    const free = MARKS.filter((mark) => mark.needs === undefined);
     const [a, b] = [free[0]!.id, free[1]!.id];
     expect(cleanMarks([a, b])).toEqual([a, b, null]);
     // Повтор и несуществующий номер гасят ячейку, а не занимают её.

@@ -1,6 +1,13 @@
 import { randomInt } from 'node:crypto';
 import { createClient, type Client } from '@libsql/client';
-import { cleanMarks, newRating, PLACEMENT_GAMES, type Rating } from '@doton/core';
+import {
+  cleanMarks,
+  goldMark,
+  isGoldMark,
+  newRating,
+  PLACEMENT_GAMES,
+  type Rating,
+} from '@doton/core';
 import type { BoardPeriod } from '@doton/protocol';
 import { MIN_MOVE_GAP, MOVE_SLACK } from './limits.js';
 
@@ -504,17 +511,20 @@ export class Store {
   async ratingLeaderboard(
     limit: number,
   ): Promise<{ name: string; rating: number; mark: string | null }[]> {
-    const result = await this.client.execute({
-      sql: `SELECT name, rating, marks FROM users
+    const [result, holders] = await Promise.all([
+      this.client.execute({
+        sql: `SELECT id, name, rating, marks FROM users
             WHERE rated_games >= ?
             ORDER BY rating DESC, name ASC
             LIMIT ?`,
-      args: [PLACEMENT_GAMES, limit],
-    });
+        args: [PLACEMENT_GAMES, limit],
+      }),
+      this.champions(),
+    ]);
     return result.rows.map((row) => ({
       name: String(row.name),
       rating: Number(row.rating),
-      mark: this.firstMark(row.marks),
+      mark: this.firstMark(row.marks, holders.get(String(row.id)) ?? []),
     }));
   }
 
@@ -808,19 +818,22 @@ export class Store {
     const { table, where } = this.source(board, period);
     // Заказы в спринтовых таблицах не хранятся — там их и не спрашивают.
     const extra = board === 'order' ? 'r.orders' : '0 AS orders';
-    const result = await this.client.execute({
-      sql: `SELECT u.name, u.marks, r.score AS value, ${extra}
+    const [result, holders] = await Promise.all([
+      this.client.execute({
+        sql: `SELECT u.id, u.name, u.marks, r.score AS value, ${extra}
             FROM ${table} r JOIN users u ON u.id = r.user_id
             WHERE ${where}
             ORDER BY r.score DESC, r.created_at ASC
             LIMIT ?`,
-      args: [limit],
-    });
+        args: [limit],
+      }),
+      this.champions(),
+    ]);
     return result.rows.map((row) => ({
       name: String(row.name),
       value: Number(row.value),
       orders: Number(row.orders),
-      mark: this.firstMark(row.marks),
+      mark: this.firstMark(row.marks, holders.get(String(row.id)) ?? []),
     }));
   }
 
@@ -1084,8 +1097,46 @@ export class Store {
    * Первый занятый шильдик игрока — тот, что едет рядом с именем в чужие
    * таблицы. Хранится строкой, поэтому разбор в одном месте.
    */
-  private firstMark(raw: unknown): string | null {
-    return this.parseMarks(raw).find((id) => id !== null) ?? null;
+  private firstMark(raw: unknown, gold: readonly string[] = []): string | null {
+    return this.keepGold(this.parseMarks(raw), gold).find((id) => id !== null) ?? null;
+  }
+
+  /**
+   * Гасит золото, которого у игрока уже нет. Выбор в базе не трогаем: место
+   * можно и вернуть, и тогда шильдик встанет обратно в ту же ячейку.
+   */
+  private keepGold(marks: (string | null)[], gold: readonly string[]): (string | null)[] {
+    return marks.map((id) => (id !== null && isGoldMark(id) && !gold.includes(id) ? null : id));
+  }
+
+  /**
+   * Кто сейчас возглавляет вечные таблицы. Отсюда и берётся золото: держать
+   * его в базе нельзя — оно меняет хозяина в тот же миг, когда меняется
+   * первая строка таблицы.
+   */
+  private async champions(): Promise<Map<string, string[]>> {
+    const boards: Board[] = ['order', 'sprint'];
+    const holders = new Map<string, string[]>();
+    for (const board of boards) {
+      const { table, where } = this.source(board, 'all');
+      const result = await this.client.execute({
+        sql: `SELECT user_id FROM ${table}
+              WHERE score > 0 AND ${where}
+              ORDER BY score DESC, created_at ASC
+              LIMIT 1`,
+        args: [],
+      });
+      const row = result.rows[0];
+      if (!row) continue;
+      const id = String(row.user_id);
+      holders.set(id, [...(holders.get(id) ?? []), goldMark(board)]);
+    }
+    return holders;
+  }
+
+  /** Золотые шильдики игрока прямо сейчас. */
+  async goldMarks(userId: string): Promise<string[]> {
+    return (await this.champions()).get(userId) ?? [];
   }
 
   /**
@@ -1149,16 +1200,19 @@ export class Store {
       sql: `DELETE FROM invites WHERE created_at <= datetime('now', ?)`,
       args: [`-${liveSeconds} seconds`],
     });
-    const result = await this.client.execute({
-      sql: `SELECT u.name, u.marks, i.room
+    const [result, holders] = await Promise.all([
+      this.client.execute({
+        sql: `SELECT u.id, u.name, u.marks, i.room
             FROM invites i JOIN users u ON u.id = i.from_user
             WHERE i.to_user = ?
             ORDER BY i.created_at DESC`,
-      args: [userId],
-    });
+        args: [userId],
+      }),
+      this.champions(),
+    ]);
     return result.rows.map((row) => ({
       from: String(row.name),
-      mark: this.firstMark(row.marks),
+      mark: this.firstMark(row.marks, holders.get(String(row.id)) ?? []),
       room: String(row.room),
     }));
   }
@@ -1192,13 +1246,19 @@ export class Store {
     });
   }
 
-  /** Шильдики игрока: три ячейки, пустая — null. */
+  /**
+   * Шильдики игрока: три ячейки, пустая — null. Золото, которое он уже не
+   * держит, гаснет прямо здесь — иначе оно уехало бы сопернику на корпус.
+   */
   async marksOf(userId: string): Promise<(string | null)[]> {
-    const result = await this.client.execute({
-      sql: 'SELECT marks FROM users WHERE id = ?',
-      args: [userId],
-    });
-    return this.parseMarks(result.rows[0]?.marks);
+    const [result, gold] = await Promise.all([
+      this.client.execute({
+        sql: 'SELECT marks FROM users WHERE id = ?',
+        args: [userId],
+      }),
+      this.goldMarks(userId),
+    ]);
+    return this.keepGold(this.parseMarks(result.rows[0]?.marks), gold);
   }
 
   async setMarks(userId: string, marks: (string | null)[]): Promise<void> {
