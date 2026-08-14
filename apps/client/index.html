@@ -165,23 +165,31 @@
       color: var(--silk);
       margin-right: 2px;
     }
+    /* Крупнее шильдик становится размером, а не растяжением: transform не
+       меняет ширину, и длинные надписи налезали на соседние. */
     .mark {
+      --mark-scale: 1;
+      --mark-size: 9px;
       font-style: normal;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      height: 17px;
-      min-width: 17px;
-      padding: 0 4px;
+      height: calc(17px * var(--mark-scale));
+      min-width: calc(17px * var(--mark-scale));
+      padding: 0 calc(4px * var(--mark-scale));
+      font-size: calc(var(--mark-size) * var(--mark-scale));
       line-height: 1;
       letter-spacing: 0.06em;
+      /* Надпись на шильдике не переносится и не жмётся: он вещь, а не текст. */
+      white-space: nowrap;
+      flex: none;
     }
     /* Служебный — краска по корпусу; наклейка — бумажка поверх него. */
     .mark.tag {
       border: 1px solid var(--edge);
       border-radius: 3px;
       font-family: var(--mono);
-      font-size: 9px;
+      --mark-size: 9px;
       color: var(--silk-2);
     }
     /* Золото вечной таблицы: единственный шильдик, который можно потерять. */
@@ -189,7 +197,7 @@
       border: 1px solid var(--gold);
       border-radius: 3px;
       font-family: var(--mono);
-      font-size: 8.5px;
+      --mark-size: 8.5px;
       color: var(--gold);
       background: var(--gold-bg);
     }
@@ -198,13 +206,13 @@
       border: 1px solid var(--acc);
       border-radius: 3px;
       font-family: var(--mono);
-      font-size: 8.5px;
+      --mark-size: 8.5px;
       color: var(--acc);
     }
     .mark.sticker {
       background: #f6f4ee;
       border-radius: 4px;
-      font-size: 11px;
+      --mark-size: 11px;
       letter-spacing: 0;
       box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
     }
@@ -959,6 +967,10 @@
     .slots { display: flex; gap: 8px; margin-bottom: 8px; }
     .slots .slot {
       flex: 1;
+      /* Ячейка делит ряд поровну и не раздвигает его под длинную надпись:
+         иначе третья ячейка уезжала за край панели и обрезалась. */
+      min-width: 0;
+      overflow: hidden;
       height: 46px;
       display: flex;
       align-items: center;
@@ -969,7 +981,14 @@
       cursor: pointer;
     }
     .slots .slot.on { border-style: solid; border-color: var(--acc); }
-    .slots .slot .mark { transform: scale(1.5); }
+        /* В ячейке шильдик крупнее, но ровно настолько, чтобы самая длинная
+       надпись набора помещалась в неё целиком на узком телефоне. */
+    .slots .slot .mark { --mark-scale: 1.25; }
+    /* На узком экране на ячейку остаётся меньше места, чем занимает самая
+       длинная надпись, — там шильдик показываем в натуральную величину. */
+    @media (max-width: 360px) {
+      .slots .slot .mark { --mark-scale: 1; }
+    }
     .slot-hint {
       display: block;
       font-family: var(--mono);
@@ -992,7 +1011,7 @@
     .catalog .pick.on { background: rgba(232, 75, 35, 0.16); }
     /* Невыданная отметка видна, но приглушена: это ещё и список целей. */
     .catalog .pick.locked { opacity: 0.32; }
-    .catalog .pick .mark { transform: scale(1.25); }
+    .catalog .pick .mark { --mark-scale: 1.25; }
     .catalog .none {
       font-family: var(--mono);
       font-size: 9.5px;

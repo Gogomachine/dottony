@@ -87,8 +87,8 @@ export const MARK_BIG = 30;
 export const MARK_DUELS = 100;
 
 const EARNED: readonly Mark[] = [
-  { id: 'e-order', kind: 'earned', glyph: '#1 ЗАКАЗЫ', needs: 'Первое место дня в заказах' },
-  { id: 'e-sprint', kind: 'earned', glyph: '#1 СПРИНТ', needs: 'Первое место дня в спринте' },
+  { id: 'e-order', kind: 'earned', glyph: 'ДЕНЬ ЗАКАЗЫ', needs: 'Первое место дня в заказах' },
+  { id: 'e-sprint', kind: 'earned', glyph: 'ДЕНЬ СПРИНТ', needs: 'Первое место дня в спринте' },
   {
     id: 'e-run',
     kind: 'earned',
@@ -122,13 +122,13 @@ const GOLD: readonly Mark[] = [
   {
     id: 'g-order',
     kind: 'gold',
-    glyph: 'РЕКОРД ЗАКАЗОВ',
+    glyph: '#1 ЗАКАЗЫ',
     needs: 'Первое место в вечной таблице заказов — пока не обогнали',
   },
   {
     id: 'g-sprint',
     kind: 'gold',
-    glyph: 'РЕКОРД СПРИНТА',
+    glyph: '#1 СПРИНТ',
     needs: 'Первое место в вечной таблице спринта — пока не обогнали',
   },
 ];
