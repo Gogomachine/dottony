@@ -941,13 +941,13 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       },
     };
 
-    // Код друга нужен сопернику на экране результата, шильдик — с первой
-    // секунды матча. Читаем один раз при подключении: к моменту подбора
-    // оба уже на месте.
+    // Код друга нужен сопернику на экране результата, шильдики — с первой
+    // секунды матча: на время дуэли соперник занимает корпус целиком.
+    // Читаем один раз при подключении: к моменту подбора оба уже на месте.
     void Promise.all([store.friendCodeOf(user.sub), store.marksOf(user.sub)])
       .then(([code, marks]) => {
         if (code) player.code = code;
-        player.mark = marks.find((id) => id !== null) ?? null;
+        player.marks = marks;
       })
       .catch((error: unknown) => app.log.error(error, 'duel player lookup failed'));
 

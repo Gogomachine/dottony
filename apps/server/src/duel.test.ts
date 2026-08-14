@@ -73,6 +73,28 @@ describe('Duel', () => {
     expect(matchedB).toMatchObject({ seed, opponent: 'Ада', duration: DUEL_SECONDS });
   });
 
+  it('шлёт каждому корпус соперника целиком, а не свой', () => {
+    const a = recorder('a', 'Ада');
+    const b = recorder('b', 'Боб');
+    a.marks = ['p0', null, 's0'];
+    b.marks = ['e-lg2', 'p3', null];
+    const duel = new Duel(seed, a, b);
+    duel.announce();
+
+    expect(a.last('matched')).toMatchObject({ opponentMarks: ['e-lg2', 'p3', null] });
+    expect(b.last('matched')).toMatchObject({ opponentMarks: ['p0', null, 's0'] });
+
+    // И после обрыва — тоже соперника: снимок восстанавливает весь экран.
+    expect(duel.snapshot('a')).toMatchObject({ opponentMarks: ['e-lg2', 'p3', null] });
+  });
+
+  it('корпус пустой, если соперник ничего не поставил', () => {
+    const a = recorder('a', 'Ада');
+    const duel = new Duel(seed, a, recorder('b', 'Боб'));
+    duel.announce();
+    expect(a.last('matched')).toMatchObject({ opponentMarks: [null, null, null] });
+  });
+
   it('засчитывает ход и сообщает счёт сопернику', () => {
     const a = recorder('a');
     const b = recorder('b');

@@ -694,15 +694,24 @@ function showFails(): void {
 /** Счёт соперника — третьим полем приборной строки, только в дуэли. */
 function showVersus(name: string, opponentScore: number): void {
   vsFieldEl.hidden = false;
-  nameWithMark(vsNameEl, name, opponentMark);
+  nameWithMark(vsNameEl, name, opponentMarks.find((id) => id !== null) ?? null);
   vsScoreEl.textContent = String(opponentScore);
   // Кто впереди, видно по цвету: отставание горит акцентом.
   vsFieldEl.className = `field${session.score < opponentScore ? ' warn' : ''}`;
 }
 
 let opponentName = 'Соперник';
-/** Шильдик соперника — единственное, чем он помечен на твоём приборе. */
-let opponentMark: string | null = null;
+/** Шильдики соперника — единственное, чем он помечен на твоём приборе. */
+let opponentMarks: (string | null)[] = [];
+
+/**
+ * Что написано на корпусе. Свои шильдики игрок и так знает наизусть,
+ * поэтому на время матча корпус занимает соперник: его набор — всё, что
+ * о нём вообще видно, и смотреть на него интереснее, чем на свой.
+ */
+function updatePlate(): void {
+  showPlate(plateMarksEl, inDuel ? opponentMarks : loadPlate());
+}
 let opponentScore = 0;
 /** Код соперника по текущему матчу: по нему его добавляют в друзья. */
 let opponentCode: string | null = null;
@@ -756,7 +765,8 @@ function handleDuelMessage(message: DuelServerMessage): void {
       updateGoKey();
       // Честно помечаем запись: игрок должен знать, что соперник не живой.
       opponentName = message.ghost ? `${message.opponent} · запись` : message.opponent;
-      opponentMark = message.opponentMark;
+      opponentMarks = message.opponentMarks;
+      updatePlate();
       opponentScore = 0;
       // Матч начался — звать больше некуда.
       showInvite(null);
@@ -778,7 +788,8 @@ function handleDuelMessage(message: DuelServerMessage): void {
       updateGoKey();
       duelDuration = Math.max(1, Math.round(message.remaining));
       opponentName = message.ghost ? `${message.opponent} · запись` : message.opponent;
-      opponentMark = message.opponentMark;
+      opponentMarks = message.opponentMarks;
+      updatePlate();
       opponentScore = message.opponentScore;
       opponentCode = message.opponentCode ?? null;
       mode = 'duel';
@@ -866,6 +877,9 @@ function endDuel(options: { awaitRating?: boolean } = {}): void {
   inviteNote = null;
   inDuel = false;
   vsFieldEl.hidden = true;
+  // Соперник ушёл — корпус возвращается хозяину.
+  opponentMarks = [];
+  updatePlate();
   updateGoKey();
   // Партия окончена вместе с матчем: иначе локальный таймер досчитает до
   // нуля и перепишет объявленный сервером результат на «Время вышло».
@@ -1561,7 +1575,7 @@ const cabinet = new Cabinet({
   onInvite: (friendCode) => void inviteToRoom(friendCode),
   onMarks: (marks) => {
     savePlate(marks);
-    showPlate(plateMarksEl, marks);
+    updatePlate();
   },
 });
 
@@ -1746,7 +1760,7 @@ el<HTMLSpanElement>('brand').innerHTML = brandLockup(88);
 el<HTMLSpanElement>('menu-brand').innerHTML = brandLockup(96);
 renderer.setMarks(loadMarks());
 // Корпус помечен ещё до всякого входа: выбор лежит и у нас, и на сервере.
-showPlate(plateMarksEl, loadPlate());
+updatePlate();
 el<HTMLButtonElement>('mark-toggle').classList.toggle('on', loadMarks());
 el<HTMLButtonElement>('theme-toggle').classList.toggle('on', themeName === 'graphite');
 

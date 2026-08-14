@@ -355,8 +355,8 @@ export interface DuelSnapshot {
   score: number;
   opponentScore: number;
   opponent: string;
-  /** Шильдик соперника: номер из каталога ядра, null — корпус чист. */
-  opponentMark: string | null;
+  /** Корпус соперника: номера из каталога ядра, null — пустая ячейка. */
+  opponentMarks: (string | null)[];
   ghost: boolean;
   /** Код соперника — по нему его можно добавить в друзья. */
   opponentCode?: string;
@@ -379,8 +379,8 @@ export type DuelServerMessage =
       /** Сколько секунд осталось до конца матча на момент старта. */
       duration: number;
       opponent: string;
-      /** Шильдик соперника: номер из каталога ядра, null — корпус чист. */
-      opponentMark: string | null;
+      /** Корпус соперника: номера из каталога ядра, null — пустая ячейка. */
+      opponentMarks: (string | null)[];
       /** Матч против записанной попытки: соперник офлайн. */
       ghost: boolean;
       /** Код соперника — по нему его можно добавить в друзья. */
