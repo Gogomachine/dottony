@@ -1081,6 +1081,22 @@
       z-index: 9;
     }
     .replay-bar[hidden] { display: none; }
+    /* Приглашение в дуэль приходит прямо в прибор — той же полосой, что и
+       реплей, только сверху: снизу под ней клавиши, а звать надо в глаза.
+       И поверх заслонки: чаще всего игрок сидит именно в панели управления,
+       а зовущего он должен видеть, чем бы ни был занят. */
+    .invite-bar {
+      /* Не сжимаемся к середине, как реплей: имя зовущего длиннее, и
+         полоса от края до края — единственная, где оно не переносится. */
+      top: 24px;
+      bottom: auto;
+      left: 16px;
+      right: 16px;
+      transform: none;
+      justify-content: space-between;
+      z-index: 12;
+    }
+    .invite-bar span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .replay-bar button {
       font-family: var(--mono);
       font-size: 10px;
@@ -1379,6 +1395,12 @@
           <button id="add-opponent" hidden></button>
           <button id="modal-action" class="acc">Понятно</button>
         </div>
+      </div>
+
+      <div id="invite-bar" class="replay-bar invite-bar" hidden>
+        <span id="invite-text"></span>
+        <button id="invite-accept">Принять</button>
+        <button id="invite-drop">✕</button>
       </div>
 
       <div id="replay-bar" class="replay-bar" hidden>

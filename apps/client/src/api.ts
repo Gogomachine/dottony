@@ -5,6 +5,7 @@ import type {
   OrderMove,
   DuelHistoryResponse,
   FriendsResponse,
+  InviteInfo,
   MeResponse,
   MoveLog,
   RatingLeaderboardResponse,
@@ -228,7 +229,20 @@ export function telegramLinkUrl(): Promise<{ url: string }> {
 }
 
 /** Зовёт друга в комнату сообщением в Telegram. */
-export function inviteFriend(code: string, room: string): Promise<void> {
+/** Приглашения, ждущие игрока в приборе. Этот же вызов говорит серверу, что игра открыта. */
+export function getInvites(): Promise<{ invites: InviteInfo[] }> {
+  return request<{ invites: InviteInfo[] }>('/api/me/invites');
+}
+
+/** Приглашение отработало: принято или отброшено. */
+export function dropInvite(room: string): Promise<void> {
+  return request(`/api/me/invites/${encodeURIComponent(room)}`, { method: 'DELETE' });
+}
+
+export function inviteFriend(
+  code: string,
+  room: string,
+): Promise<{ ok: boolean; where: 'game' | 'telegram' }> {
   return request(`/api/friends/${encodeURIComponent(code)}/invite`, {
     method: 'POST',
     body: JSON.stringify({ room }),

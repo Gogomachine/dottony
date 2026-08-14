@@ -626,6 +626,66 @@ describe('бот', () => {
     );
   });
 
+  it('приглашение ждёт друга в самой игре, а не в Telegram', async () => {
+    const ada = await guestToken('Ада');
+    const bob = await guestToken('Боб');
+    const bobCode = (
+      (
+        await app.inject({
+          method: 'GET',
+          url: '/api/me/friends',
+          headers: { authorization: `Bearer ${bob}` },
+        })
+      ).json() as { code: string }
+    ).code;
+    await app.inject({
+      method: 'POST',
+      url: '/api/friends',
+      headers: { authorization: `Bearer ${ada}` },
+      payload: { code: bobCode },
+    });
+
+    // Боб спросил про приглашения — значит он в приборе.
+    const empty = await app.inject({
+      method: 'GET',
+      url: '/api/me/invites',
+      headers: { authorization: `Bearer ${bob}` },
+    });
+    expect(empty.json()).toEqual({ invites: [] });
+
+    const invite = await app.inject({
+      method: 'POST',
+      url: `/api/friends/${bobCode}/invite`,
+      headers: { authorization: `Bearer ${ada}` },
+      payload: { room: 'ROOM4242' },
+    });
+    // Боб в игре, поэтому в Telegram ему не пишут вовсе.
+    expect(invite.statusCode).toBe(200);
+    expect(invite.json()).toEqual({ ok: true, where: 'game' });
+
+    const waiting = await app.inject({
+      method: 'GET',
+      url: '/api/me/invites',
+      headers: { authorization: `Bearer ${bob}` },
+    });
+    expect(waiting.json()).toEqual({
+      invites: [{ from: 'Ада', mark: null, room: 'ROOM4242' }],
+    });
+
+    // Принял или отбросил — приглашение отработало и больше не ждёт.
+    await app.inject({
+      method: 'DELETE',
+      url: '/api/me/invites/ROOM4242',
+      headers: { authorization: `Bearer ${bob}` },
+    });
+    const after = await app.inject({
+      method: 'GET',
+      url: '/api/me/invites',
+      headers: { authorization: `Bearer ${bob}` },
+    });
+    expect(after.json()).toEqual({ invites: [] });
+  });
+
   it('другу без Telegram сообщение не уходит — клиент предложит ссылку', async () => {
     const ada = await guestToken('Ада');
     const bob = await guestToken('Боб');

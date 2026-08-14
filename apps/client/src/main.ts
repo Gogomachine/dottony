@@ -7,6 +7,7 @@ import {
 } from '@doton/core';
 import type {
   BoardPeriod,
+  InviteInfo,
   MoveLog,
   OrderLeaderboardResponse,
   OrderMove,
@@ -20,6 +21,8 @@ import {
   ensureAuth,
   getConfig,
   getOrderBoard,
+  getInvites,
+  dropInvite,
   getRatingBoard,
   getReplay,
   getSprintBoard,
@@ -91,6 +94,8 @@ const goKey = el<HTMLDivElement>('key-go');
 const duelSheet = el<HTMLDivElement>('duel-sheet');
 const rulesSheet = el<HTMLDivElement>('rules-sheet');
 const addOpponentBtn = el<HTMLButtonElement>('add-opponent');
+const inviteBarEl = el<HTMLDivElement>('invite-bar');
+const inviteTextEl = el<HTMLSpanElement>('invite-text');
 const replayBarEl = el<HTMLDivElement>('replay-bar');
 const replayTextEl = el<HTMLSpanElement>('replay-text');
 const roomBoxEl = el<HTMLDivElement>('room-box');
@@ -753,6 +758,8 @@ function handleDuelMessage(message: DuelServerMessage): void {
       opponentName = message.ghost ? `${message.opponent} · запись` : message.opponent;
       opponentMark = message.opponentMark;
       opponentScore = 0;
+      // Матч начался — звать больше некуда.
+      showInvite(null);
       opponentCode = message.opponentCode ?? null;
       mode = 'duel';
       startGame(message.seed);
@@ -968,7 +975,12 @@ async function flushScore(): Promise<void> {
 // Сворачивание — последний надёжный момент досчитать наработку: на
 // телефоне вкладку часто закрывают, не возвращаясь в неё.
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState !== 'hidden') return;
+  // Вернулись в игру — спрашиваем про приглашения сразу, не дожидаясь
+  // очередного опроса: минуту назад позвать могли, а окно было свёрнуто.
+  if (document.visibilityState !== 'hidden') {
+    void pollInvites();
+    return;
+  }
   void flushScore();
 });
 
@@ -1071,6 +1083,71 @@ function renderOrderBoard(board: OrderLeaderboardResponse): void {
     boardListEl.appendChild(item);
   }
 }
+
+// ---------- Приглашения от друзей ----------
+
+/**
+ * Приглашение приходит прямо в прибор: пока игра открыта, она спрашивает
+ * сервер, не зовёт ли кто. Ответ на этот же вопрос говорит серверу, что
+ * игрок здесь, — и Telegram он тревожит, только когда игры нет.
+ *
+ * Опросом, а не постоянной связью: сокет у нас живёт ровно столько,
+ * сколько идёт матч, и держать второй ради одной строчки было бы дорого.
+ */
+const INVITE_POLL_MS = 5000;
+let invitePoll = 0;
+/** Комната, чьё приглашение сейчас на экране; null — полоса скрыта. */
+let inviteRoom: string | null = null;
+/** Комнаты, от которых игрок отмахнулся: второй раз не показываем. */
+const dismissed = new Set<string>();
+
+function showInvite(invite: InviteInfo | null): void {
+  inviteRoom = invite?.room ?? null;
+  inviteBarEl.hidden = invite === null;
+  if (!invite) return;
+  nameWithMark(inviteTextEl, `${invite.from} зовёт в дуэль`, invite.mark);
+}
+
+async function pollInvites(): Promise<void> {
+  // В матче, в реплее и под обучением звать некуда: игрок уже занят.
+  if (!apiAvailable || !hasAuth() || inDuel || replay || tutorial.active) return;
+  if (document.visibilityState === 'hidden') return;
+  try {
+    const { invites } = await getInvites();
+    const fresh = invites.find((invite) => !dismissed.has(invite.room)) ?? null;
+    // Перерисовываем, только если сменилась комната: полоса не должна
+    // мигать на каждом опросе.
+    if ((fresh?.room ?? null) !== inviteRoom) showInvite(fresh);
+  } catch {
+    // Сеть подвела — приглашение придёт следующим опросом.
+  }
+}
+
+function watchInvites(): void {
+  if (invitePoll !== 0) return;
+  invitePoll = window.setInterval(() => void pollInvites(), INVITE_POLL_MS);
+  void pollInvites();
+}
+
+el<HTMLButtonElement>('invite-accept').addEventListener('click', () => {
+  const room = inviteRoom;
+  if (room === null) return;
+  showInvite(null);
+  void dropInvite(room).catch(() => {
+    // Не убралось на сервере — оно протухнет само через полторы минуты.
+  });
+  void startDuel(room);
+});
+
+el<HTMLButtonElement>('invite-drop').addEventListener('click', () => {
+  const room = inviteRoom;
+  if (room === null) return;
+  dismissed.add(room);
+  showInvite(null);
+  void dropInvite(room).catch(() => {
+    // То же самое: сервер сотрёт приглашение по сроку.
+  });
+});
 
 // ---------- Реплей ----------
 
@@ -1501,11 +1578,16 @@ async function inviteToRoom(friendCode: string): Promise<void> {
   showRoomCode(false);
   await startDuel(room);
   try {
-    await inviteFriend(friendCode, room);
-    inviteNote = 'Приглашение ушло в Telegram — ждём друга.';
+    const { where } = await inviteFriend(friendCode, room);
+    // Говорим, куда именно позвали: «в игре» и «в Telegram» — разные
+    // обещания по времени ответа, и путать их не стоит.
+    inviteNote =
+      where === 'game'
+        ? 'Друг в игре — приглашение у него на экране.'
+        : 'Позвали в Telegram — ждём, пока откроет.';
     showRoomCode(false);
   } catch {
-    inviteNote = 'В Telegram позвать не вышло — продиктуй другу код комнаты.';
+    inviteNote = 'Позвать не вышло — продиктуй другу код комнаты.';
     showRoomCode(true);
   }
   // Ответ сервера о поиске может прийти и раньше, и позже нашего — поэтому
@@ -1672,6 +1754,10 @@ if (isTelegram()) {
   document.documentElement.classList.add('in-telegram');
   syncChrome();
 }
+
+// Пока игра открыта, она слушает приглашения друзей — и этим же говорит
+// серверу, что игрок здесь.
+if (apiAvailable) watchInvites();
 
 // Имя бота говорит кабинету, что привязка Telegram вообще возможна.
 if (apiAvailable) {

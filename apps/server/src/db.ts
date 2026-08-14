@@ -223,6 +223,20 @@ export class Store {
     // Шильдики корпуса: три номера из каталога ядра, одной строкой. Своей
     // таблицы они не стоят — это три коротких значения, живущих с игроком.
     await this.addColumnIfMissing('users', 'marks', 'TEXT');
+    // Когда игрока последний раз видели в приборе. По этому и решаем, куда
+    // слать приглашение: в игру или, если его там нет, в Telegram.
+    await this.addColumnIfMissing('users', 'seen_at', 'TEXT');
+    // Приглашения на дуэль: живут минуту-другую и стираются. Хранить их
+    // дольше незачем — комната столько не ждёт.
+    await this.client.execute(
+      `CREATE TABLE IF NOT EXISTS invites (
+         to_user TEXT NOT NULL REFERENCES users(id),
+         from_user TEXT NOT NULL REFERENCES users(id),
+         room TEXT NOT NULL,
+         created_at TEXT NOT NULL DEFAULT (datetime('now')),
+         PRIMARY KEY (to_user, from_user)
+       )`,
+    );
     // А вот выданные отметки — стоят: их список растёт, и каждая помнит,
     // когда её выдали. Выданное не отбирается, даже если рейтинг просел.
     await this.client.execute(
@@ -1075,6 +1089,75 @@ export class Store {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Отмечает, что игрок сейчас в приборе. Зовём это на опросе приглашений:
+   * он идёт, пока игра открыта, и других поводов трогать строку нет.
+   */
+  async touchSeen(userId: string): Promise<void> {
+    await this.client.execute({
+      sql: `UPDATE users SET seen_at = datetime('now') WHERE id = ?`,
+      args: [userId],
+    });
+  }
+
+  /** Открыта ли у игрока игра прямо сейчас — по свежести последнего опроса. */
+  async isOnline(userId: string, withinSeconds = 30): Promise<boolean> {
+    const result = await this.client.execute({
+      sql: `SELECT seen_at FROM users
+            WHERE id = ? AND seen_at IS NOT NULL
+              AND seen_at > datetime('now', ?)`,
+      args: [userId, `-${withinSeconds} seconds`],
+    });
+    return result.rows.length > 0;
+  }
+
+  /**
+   * Кладёт приглашение. От одного и того же друга оно одно: позвал заново —
+   * заменил прежнее, а не насыпал очередь.
+   */
+  async addInvite(toUser: string, fromUser: string, room: string): Promise<void> {
+    await this.client.execute({
+      sql: `INSERT INTO invites (to_user, from_user, room) VALUES (?, ?, ?)
+            ON CONFLICT (to_user, from_user) DO UPDATE
+              SET room = excluded.room, created_at = datetime('now')`,
+      args: [toUser, fromUser, room],
+    });
+  }
+
+  /**
+   * Свежие приглашения игроку. Протухшие не показываем и заодно чистим:
+   * отдельная уборка ради двух строк не нужна.
+   */
+  async invitesFor(
+    userId: string,
+    liveSeconds = 90,
+  ): Promise<{ from: string; mark: string | null; room: string }[]> {
+    await this.client.execute({
+      sql: `DELETE FROM invites WHERE created_at <= datetime('now', ?)`,
+      args: [`-${liveSeconds} seconds`],
+    });
+    const result = await this.client.execute({
+      sql: `SELECT u.name, u.marks, i.room
+            FROM invites i JOIN users u ON u.id = i.from_user
+            WHERE i.to_user = ?
+            ORDER BY i.created_at DESC`,
+      args: [userId],
+    });
+    return result.rows.map((row) => ({
+      from: String(row.name),
+      mark: this.firstMark(row.marks),
+      room: String(row.room),
+    }));
+  }
+
+  /** Снимает приглашение: его приняли, отклонили или комната закрылась. */
+  async dropInvite(toUser: string, room: string): Promise<void> {
+    await this.client.execute({
+      sql: 'DELETE FROM invites WHERE to_user = ? AND room = ?',
+      args: [toUser, room],
+    });
   }
 
   /** Отметки, выданные игроку за игру. */

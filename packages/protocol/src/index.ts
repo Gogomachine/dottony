@@ -177,6 +177,15 @@ export interface OrderLeaderboardResponse {
   me: OrderEntry | null;
 }
 
+/** Приглашение на дуэль, ждущее игрока прямо в игре. */
+export interface InviteInfo {
+  /** Имя позвавшего и его шильдик — тот же, что видно в таблицах. */
+  from: string;
+  mark: string | null;
+  /** Комната, в которую он зовёт. */
+  room: string;
+}
+
 export interface RatingEntry {
   rank: number;
   name: string;

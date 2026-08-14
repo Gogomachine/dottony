@@ -22,6 +22,7 @@ import {
   type DuelHistoryEntry,
   type DuelHistoryResponse,
   type FriendsResponse,
+  type InviteInfo,
   type MeResponse,
   type MoveLog,
   type RatingLeaderboardResponse,
@@ -763,8 +764,6 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     if (!parsedCode.success || !parsedBody.success) {
       return reply.code(400).send({ error: 'bad-request' });
     }
-    if (!bot) return reply.code(503).send({ error: 'telegram-disabled' });
-
     const friend = await store.userByFriendCode(parsedCode.data);
     if (!friend) return reply.code(404).send({ error: 'no-such-code' });
     // Звать можно только друзей — иначе рассылку получил бы кто угодно.
@@ -772,6 +771,14 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       return reply.code(403).send({ error: 'not-a-friend' });
     }
 
+    // Приглашение всегда кладём в игру: друг увидит его прямо в приборе,
+    // если он там. Это и есть основной путь, и от бота он не зависит вовсе.
+    await store.addInvite(friend.id, user.sub, parsedBody.data.room);
+    if (await store.isOnline(friend.id)) return { ok: true, where: 'game' };
+
+    // В приборе его нет — тогда стучимся в Telegram. Не всем можно: бот не
+    // пишет первым тому, кто его не запускал.
+    if (!bot) return reply.code(503).send({ error: 'telegram-disabled' });
     const chat = await store.botChatOf(friend.id);
     if (!chat) return reply.code(409).send({ error: 'no-telegram' });
 
@@ -786,6 +793,26 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       open ? { text: '🔭 Принять вызов', url: open } : undefined,
     );
     if (!sent) return reply.code(409).send({ error: 'not-delivered' });
+    return { ok: true, where: 'telegram' };
+  });
+
+  /**
+   * Приглашения, ждущие игрока. Клиент опрашивает этот путь, пока игра
+   * открыта, — он же служит признаком «человек в приборе»: по нему решаем,
+   * звать его в игре или писать в Telegram.
+   */
+  app.get('/api/me/invites', async (request): Promise<{ invites: InviteInfo[] }> => {
+    const user = await requireUser(request);
+    await store.touchSeen(user.sub);
+    return { invites: await store.invitesFor(user.sub) };
+  });
+
+  /** Приглашение принято или отвергнуто — в обоих случаях оно отработало. */
+  app.delete('/api/me/invites/:room', async (request, reply) => {
+    const user = await requireUser(request);
+    const room = String((request.params as { room: string }).room);
+    if (room.length < 4 || room.length > 16) return reply.code(400).send({ error: 'bad-room' });
+    await store.dropInvite(user.sub, room);
     return { ok: true };
   });
 
