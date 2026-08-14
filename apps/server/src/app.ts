@@ -35,6 +35,9 @@ import {
   cleanMarks,
   leagueMark,
   markAllowed,
+  MARK_BIG,
+  MARK_DUELS,
+  MARK_STREAK,
   decayDeviation,
   LEAGUES,
   leagueOf,
@@ -191,6 +194,9 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         // просядет, а то, что человек там был, — уже случилось.
         const badge = leagueMark(LEAGUES.indexOf(leagueOf(after.rating)));
         if (badge) await store.grantMark(outcome.playerId, badge);
+        // Сотня матчей — отметка за выслугу, а не за силу.
+        const record = await store.duelRecord(outcome.playerId);
+        if (record.played >= MARK_DUELS) await store.grantMark(outcome.playerId, 'e-duels');
         outcome.player.send({
           type: 'finished',
           score: outcome.score,
@@ -460,6 +466,9 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     if ((await store.orderRank(user.sub, 'day')) === 1) {
       await store.grantMark(user.sub, 'e-order');
     }
+    // Отметки за сам заход: серия окон и самая крупная снятая группа.
+    if (replay.streak >= MARK_STREAK) await store.grantMark(user.sub, 'e-run');
+    if (replay.biggest >= MARK_BIG) await store.grantMark(user.sub, 'e-big');
     const response: SubmitOrderResponse = {
       score: replay.score,
       orders: replay.orders,

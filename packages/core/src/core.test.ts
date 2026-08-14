@@ -17,7 +17,16 @@ import {
   tickOrder,
   type OrderRun,
 } from './order.js';
-import { cleanMarks, leagueMark, markAllowed, markById, MARKS, MARK_SLOTS } from './marks.js';
+import {
+  cleanMarks,
+  leagueMark,
+  markAllowed,
+  markById,
+  MARKS,
+  MARK_BIG,
+  MARK_SLOTS,
+  MARK_STREAK,
+} from './marks.js';
 import { nextInt, seedRng } from './rng.js';
 import {
   DEFAULT_CONFIG,
@@ -770,6 +779,19 @@ describe('шильдики', () => {
     expect(markAllowed(earned.id, [earned.id])).toBe(true);
     // Чужая выданная отметка своей не делает.
     expect(markAllowed(earned.id, ['e-нет'])).toBe(false);
+  });
+
+  it('надпись отметки собрана из того же порога, что и условие', () => {
+    const run = markById('e-run')!;
+    expect(run.glyph).toContain(String(MARK_STREAK));
+    expect(run.needs).toContain(String(MARK_STREAK));
+    const big = markById('e-big')!;
+    expect(big.glyph).toContain(String(MARK_BIG));
+    expect(big.needs).toContain(String(MARK_BIG));
+    // У каждой отметки за игру есть условие: каталог работает списком целей.
+    for (const mark of MARKS.filter((item) => item.kind === 'earned')) {
+      expect(mark.needs).toBeTruthy();
+    }
   });
 
   it('лига даёт отметку со второй ступени', () => {

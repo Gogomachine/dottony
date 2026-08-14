@@ -18,10 +18,14 @@ export type OrderError = 'bad-timing' | 'invalid-move';
 export function replayOrder(
   seed: number,
   moves: OrderMove[],
-): { score: number; orders: number } | OrderError {
+): { score: number; orders: number; streak: number; biggest: number } | OrderError {
   const cfg = DEFAULT_CONFIG;
   let run: OrderRun = startOrder(seed, cfg);
   let prevT = -Infinity;
+  // Лучшее в заходе, а не итоговое: за это выдаются отметки, и серия к
+  // концу захода всегда оборвана — иначе заход бы не кончился.
+  let streak = 0;
+  let biggest = 0;
 
   for (const move of moves) {
     if (move.t < prevT + MIN_MOVE_GAP) return 'bad-timing';
@@ -33,7 +37,9 @@ export function replayOrder(
     const out = tapOrder(run, move.cell, move.t, cfg);
     if (typeof out === 'string') return 'invalid-move';
     run = out.run;
+    streak = Math.max(streak, run.streak);
+    if (out.fire !== null && out.fire.reward > 0) biggest = Math.max(biggest, out.fire.size);
   }
 
-  return { score: run.score, orders: run.orders };
+  return { score: run.score, orders: run.orders, streak, biggest };
 }

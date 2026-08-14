@@ -14,6 +14,8 @@ import {
   startOrder,
   tapOrder,
   MARKS,
+  MARK_BIG,
+  MARK_STREAK,
   tapGroup,
   DEFAULT_CONFIG,
   type Board,
@@ -261,7 +263,15 @@ describe('replayOrder', () => {
   it('насчитывает тот же счёт, что и честный заход', () => {
     const { seed, moves, score, orders } = seedWithOrders(1);
     expect(score).toBeGreaterThan(0);
-    expect(replayOrder(seed, moves)).toEqual({ score, orders });
+    const replayed = replayOrder(seed, moves);
+    if (typeof replayed === 'string') throw new Error(replayed);
+    expect(replayed.score).toBe(score);
+    expect(replayed.orders).toBe(orders);
+    // Лучшее в заходе: серия не длиннее числа закрытых заказов, а самая
+    // крупная снятая группа не меньше цели.
+    expect(replayed.streak).toBeGreaterThan(0);
+    expect(replayed.streak).toBeLessThanOrEqual(orders);
+    expect(replayed.biggest).toBeGreaterThanOrEqual(DEFAULT_CONFIG.orderTarget);
   });
 
   it('счёт растёт только закрытыми заказами', () => {
@@ -271,13 +281,14 @@ describe('replayOrder', () => {
     // Первый ход пятно только растит: заказ им не закрыть.
     expect(partial.score).toBe(0);
     expect(partial.orders).toBe(0);
+    expect(partial.biggest).toBe(0);
     expect(score).toBeGreaterThan(partial.score);
   });
 
   it('заход без заказов ничего не стоит', () => {
     const empty = emptyOrderRun(7);
     expect(empty.score).toBe(0);
-    expect(replayOrder(7, empty.moves)).toEqual({ score: 0, orders: 0 });
+    expect(replayOrder(7, empty.moves)).toEqual({ score: 0, orders: 0, streak: 0, biggest: 0 });
   });
 
   it('пустые окна кончают заход, и ходы после конца не в счёт', () => {
@@ -1210,6 +1221,30 @@ describe('API', () => {
       payload: { marks: ['e-order'] },
     });
     expect(put.json()).toEqual({ marks: ['e-order', null, null] });
+  });
+
+  it('шильдики: крупная группа и серия окон дают свои отметки', async () => {
+    const { seed, moves } = seedWithOrders(1);
+    const replayed = replayOrder(seed, moves);
+    if (typeof replayed === 'string') throw new Error(replayed);
+    const token = await guestToken('Ада');
+
+    await app.inject({
+      method: 'POST',
+      url: '/api/order',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { seed, moves },
+    });
+
+    const me = await app.inject({
+      method: 'GET',
+      url: '/api/me',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const earned = (me.json() as { earned: string[] }).earned;
+    // Что заход заслужил, то и выдано: лишнего прибор не даёт.
+    expect(earned.includes('e-big')).toBe(replayed.biggest >= MARK_BIG);
+    expect(earned.includes('e-run')).toBe(replayed.streak >= MARK_STREAK);
   });
 
   it('шильдики: без токена не поставить', async () => {

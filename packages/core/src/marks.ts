@@ -83,9 +83,36 @@ const STICKERS: readonly string[] = [
  * Номера здесь заданы руками, а не позицией в списке: по ним прибор
  * помнит, кому что выдал, и переставлять их местами уже нельзя.
  */
+/**
+ * Пороги отметок. Живут рядом с каталогом: по ним сервер решает, выдавать
+ * ли отметку, а надпись на ней собирается из того же числа — разъехаться
+ * условию и подписи негде.
+ */
+export const MARK_STREAK = 7;
+export const MARK_BIG = 30;
+export const MARK_DUELS = 100;
+
 const EARNED: readonly Mark[] = [
   { id: 'e-order', kind: 'earned', glyph: '#1 ЗАКАЗЫ', needs: 'Первое место дня в заказах' },
   { id: 'e-sprint', kind: 'earned', glyph: '#1 СПРИНТ', needs: 'Первое место дня в спринте' },
+  {
+    id: 'e-run',
+    kind: 'earned',
+    glyph: `СЕРИЯ ${MARK_STREAK}`,
+    needs: `${MARK_STREAK} окон заказов подряд за один заход`,
+  },
+  {
+    id: 'e-big',
+    kind: 'earned',
+    glyph: `${MARK_BIG} ЗА РАЗ`,
+    needs: `${MARK_BIG} точек цвета окна одним касанием`,
+  },
+  {
+    id: 'e-duels',
+    kind: 'earned',
+    glyph: `${MARK_DUELS} ДУЭЛЕЙ`,
+    needs: `${MARK_DUELS} сыгранных дуэлей`,
+  },
   { id: 'e-lg1', kind: 'earned', glyph: 'МНС', needs: 'Лига «младший научный сотрудник»' },
   { id: 'e-lg2', kind: 'earned', glyph: 'ЛАБОРАНТ', needs: 'Лига «лаборант»' },
   { id: 'e-lg3', kind: 'earned', glyph: 'УЧЁНЫЙ', needs: 'Лига «учёный»' },
