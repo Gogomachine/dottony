@@ -43,9 +43,24 @@ export function markChip(mark: Mark): HTMLElement {
   return chip;
 }
 
-/** Перерисовывает полосу шильдиков. Пустые ячейки не рисуются вовсе. */
-export function showPlate(host: HTMLElement, marks: (string | null)[]): void {
+/**
+ * Перерисовывает полосу шильдиков. Пустые ячейки не рисуются вовсе.
+ *
+ * Имя перед набором ставится, когда корпус чужой: без него непонятно,
+ * чьи это шильдики, а повторять их потом рядом с именем — уже перебор.
+ */
+export function showPlate(
+  host: HTMLElement,
+  marks: (string | null)[],
+  who: string | null = null,
+): void {
   host.innerHTML = '';
+  if (who !== null) {
+    const label = document.createElement('b');
+    label.className = 'who';
+    label.textContent = who;
+    host.appendChild(label);
+  }
   for (const id of marks.slice(0, MARK_SLOTS)) {
     if (id === null) continue;
     const mark = markById(id);

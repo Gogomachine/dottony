@@ -695,7 +695,9 @@ function showFails(): void {
 /** Счёт соперника — третьим полем приборной строки, только в дуэли. */
 function showVersus(name: string, opponentScore: number): void {
   vsFieldEl.hidden = false;
-  nameWithMark(vsNameEl, name, opponentMarks.find((id) => id !== null) ?? null);
+  // Когда корпус занят соперником, имя стоит там же, рядом с его
+  // шильдиками: повторять их обоих над счётом — двоение.
+  vsNameEl.textContent = plateHasOpponent ? 'Соперник' : name;
   vsScoreEl.textContent = String(opponentScore);
   // Кто впереди, видно по цвету: отставание горит акцентом.
   vsFieldEl.className = `field${session.score < opponentScore ? ' warn' : ''}`;
@@ -714,9 +716,13 @@ let opponentMarks: (string | null)[] = [];
  * не сообщением, — в этом случае на месте остаются свои шильдики.
  */
 function updatePlate(): void {
-  const theirs = inDuel ? opponentMarks.filter((id) => id !== null) : [];
-  showPlate(plateMarksEl, theirs.length > 0 ? opponentMarks : loadPlate());
+  plateHasOpponent = inDuel && opponentMarks.some((id) => id !== null);
+  if (plateHasOpponent) showPlate(plateMarksEl, opponentMarks, opponentName);
+  else showPlate(plateMarksEl, loadPlate());
 }
+
+/** Занят ли корпус соперником — тогда его имя стоит на корпусе, а не над счётом. */
+let plateHasOpponent = false;
 let opponentScore = 0;
 /** Код соперника по текущему матчу: по нему его добавляют в друзья. */
 let opponentCode: string | null = null;

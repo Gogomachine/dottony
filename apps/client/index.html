@@ -149,7 +149,17 @@
     .brand-mark svg { display: block; }
     /* Шильдики на корпусе: полоса под маркой прибора. */
     /* Переносим: три длинные отметки за игру в одну строку не влезут. */
-    .marks { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+    .marks { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 5px; }
+    /* Чей корпус: имя соперника стоит перед его набором, а не над счётом. */
+    .marks .who {
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 500;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--silk);
+      margin-right: 2px;
+    }
     .mark {
       font-style: normal;
       display: inline-flex;
