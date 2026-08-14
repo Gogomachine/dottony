@@ -30,6 +30,7 @@ import {
   syncTelegramTheme,
   resetAuth,
   savedName,
+  startParam,
   submitOrder,
   submitSprint,
   ApiError,
@@ -624,7 +625,9 @@ function showOverModal(options: {
 }): void {
   overEmblemEl.innerHTML = emblemSvg({ size: 84 });
   overTitleEl.textContent = options.title;
-  roomBoxEl.hidden = options.room === undefined;
+  // Код комнаты — аварийный выход, а не обычный путь: он появляется, только
+  // когда приглашение не дошло.
+  roomBoxEl.hidden = options.room === undefined || !showCode;
   if (options.room !== undefined) {
     roomCodeEl.textContent = options.room;
   }
@@ -716,24 +719,26 @@ function handleDuelMessage(message: DuelServerMessage): void {
         message.room
           ? {
               title: 'Ждём друга',
-              note:
-                inviteNote ??
-                'Продиктуй другу код комнаты. Он вводит его кнопкой «Ввести код» — и матч начнётся сам.',
+              note: inviteNote ?? 'Зовём друга — как только он откроет приглашение, матч начнётся.',
               room: message.room,
               waiting: true,
             }
           : { title: 'Дуэль', note: 'Ищем живого соперника…', waiting: true },
       );
-      // Ожидание не должно выглядеть зависанием: если живого соперника нет,
-      // через несколько секунд сервер подставит запись — так и говорим.
-      if (!message.room) {
-        clearTimeout(searchHint);
-        searchHint = window.setTimeout(() => {
-          if (waitingForOpponent) {
-            overNoteEl.textContent = 'Никого рядом — подбираю запись чужого матча…';
-          }
-        }, 6000);
-      }
+      // Ожидание не должно выглядеть зависанием. В открытом подборе через
+      // несколько секунд сервер подставит запись — так и говорим. В комнате
+      // подставлять некого: там ждут конкретного человека, и если он не
+      // пришёл, честнее сказать это, чем крутить многоточие дальше.
+      clearTimeout(searchHint);
+      searchHint = window.setTimeout(
+        () => {
+          if (!waitingForOpponent) return;
+          overNoteEl.textContent = message.room
+            ? 'Друг ещё не открыл приглашение. Можно подождать или отменить и сыграть быстрый матч.'
+            : 'Никого рядом — подбираю запись чужого матча…';
+        },
+        message.room ? 20_000 : 6000,
+      );
       break;
 
     case 'matched': {
@@ -1379,24 +1384,12 @@ el<HTMLButtonElement>('duel-quick').addEventListener('click', () => {
   void startDuel();
 });
 
+// Позвать друга — значит выбрать его в списке: кода никто не диктует, а
+// приглашение уходит ему в бота кнопкой прямо в комнату.
 el<HTMLButtonElement>('invite').addEventListener('click', () => {
   duelSheet.hidden = true;
   menuEl.hidden = true;
-  // Код придумываем сразу, чтобы показать его ещё до ответа сервера.
-  void startDuel(makeRoomCode());
-});
-
-el<HTMLButtonElement>('join-code').addEventListener('click', () => {
-  const answer = prompt('Код комнаты от друга:');
-  if (!answer) return;
-  const room = answer.trim().toUpperCase();
-  if (room.length < 4) {
-    showOverModal({ title: 'Дуэль', note: 'Код слишком короткий — проверь и введи ещё раз.' });
-    return;
-  }
-  duelSheet.hidden = true;
-  menuEl.hidden = true;
-  void startDuel(room);
+  void cabinet.show('friends');
 });
 
 /**
@@ -1496,22 +1489,35 @@ const cabinet = new Cabinet({
 });
 
 /**
- * Зовёт друга в комнату. Сообщение в Telegram доходит не всегда — бот не
- * пишет тому, кто его не запускал, — поэтому код комнаты остаётся на
- * экране в любом случае, его можно продиктовать.
+ * Зовёт друга в комнату. Приглашение уходит ему в бота ссылкой прямо в
+ * эту комнату — диктовать нечего.
+ *
+ * Дойти оно может не всегда: бот не пишет тому, кто его не запускал. Тогда
+ * — и только тогда — на экране появляется код комнаты: это последний
+ * способ позвать, и прятать его в такой момент было бы вредным изяществом.
  */
 async function inviteToRoom(friendCode: string): Promise<void> {
   const room = makeRoomCode();
+  showRoomCode(false);
   await startDuel(room);
   try {
     await inviteFriend(friendCode, room);
-    inviteNote = 'Позвал в Telegram — ждём друга.';
+    inviteNote = 'Приглашение ушло в Telegram — ждём друга.';
+    showRoomCode(false);
   } catch {
-    inviteNote = 'В Telegram позвать не вышло — продиктуй другу код.';
+    inviteNote = 'В Telegram позвать не вышло — продиктуй другу код комнаты.';
+    showRoomCode(true);
   }
   // Ответ сервера о поиске может прийти и раньше, и позже нашего — поэтому
   // заметку не пишем напрямую, а держим и подставляем при перерисовке.
   if (waitingForOpponent) overNoteEl.textContent = inviteNote;
+}
+
+/** Показывать ли код комнаты на экране ожидания. */
+let showCode = false;
+function showRoomCode(show: boolean): void {
+  showCode = show;
+  roomBoxEl.hidden = !show;
 }
 
 addOpponentBtn.addEventListener('click', () => {
@@ -1631,10 +1637,29 @@ function frame(now: number): void {
 
 startGame();
 requestAnimationFrame(frame);
-// Первый запуск встречает показом, а не пустой панелью: правила проще
-// увидеть, чем прочитать. Дальше обучение живёт пунктом меню.
-if (firstVisit()) startTutorial();
-else openMenu();
+
+/**
+ * Комната из ссылки-приглашения: друг нажал кнопку в боте, и игра должна
+ * открыться прямо в матче, а не в меню. Кода он при этом не видел вовсе.
+ */
+function invitedRoom(): string | null {
+  const param = startParam();
+  return param !== null && param.startsWith('duel_') ? param.slice(5) : null;
+}
+
+const invited = invitedRoom();
+if (invited !== null) {
+  // Показ и панель подождут: человека позвали в матч, он идёт в матч.
+  seenTutorial();
+  inviteNote = 'Подключаюсь к другу…';
+  void startDuel(invited);
+} else if (firstVisit()) {
+  // Первый запуск встречает показом, а не пустой панелью: правила проще
+  // увидеть, чем прочитать. Дальше обучение живёт пунктом меню.
+  startTutorial();
+} else {
+  openMenu();
+}
 el<HTMLSpanElement>('brand').innerHTML = brandLockup(88);
 el<HTMLSpanElement>('menu-brand').innerHTML = brandLockup(96);
 renderer.setMarks(loadMarks());

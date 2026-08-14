@@ -775,14 +775,15 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     const chat = await store.botChatOf(friend.id);
     if (!chat) return reply.code(409).send({ error: 'no-telegram' });
 
-    // Ссылок-приглашений нет: играют по коду комнаты, его и передаём.
-    const open = bot.miniAppLink('');
+    // Ссылка ведёт прямо в комнату: друг нажимает кнопку и попадает в
+    // матч, а не переписывает код. Кода в письме поэтому нет вовсе — он
+    // остаётся у позвавшего на экране на случай, если ссылка не собралась.
+    const open = bot.miniAppLink(`duel_${parsedBody.data.room}`);
     const sent = await bot.sendMessage(
       chat,
-      `${user.name} зовёт тебя к прибору — дуэль в dotoscope.\n` +
-        `Код комнаты: ${parsedBody.data.room}\n` +
-        'Открой игру → Дуэль → Ввести код.',
-      open ? { text: '🔭 Открыть прибор', url: open } : undefined,
+      `${user.name} зовёт тебя к прибору — дуэль в dotoscope.` +
+        (open ? '' : `\nКод комнаты: ${parsedBody.data.room}`),
+      open ? { text: '🔭 Принять вызов', url: open } : undefined,
     );
     if (!sent) return reply.code(409).send({ error: 'not-delivered' });
     return { ok: true };

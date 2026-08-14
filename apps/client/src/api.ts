@@ -76,6 +76,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 interface TelegramWebApp {
   initData: string;
+  /** Полезная нагрузка ссылки `?startapp=…`, по которой открыли игру. */
+  initDataUnsafe?: { start_param?: string };
   ready(): void;
   expand?(): void;
   /** Запрет вертикальных свайпов (Bot API 7.7+). */
@@ -95,6 +97,15 @@ function telegramWebApp(): TelegramWebApp | null {
 
 export function isTelegram(): boolean {
   return telegramWebApp() !== null;
+}
+
+/**
+ * С чем игру открыли по ссылке. Приглашение друга приходит именно так:
+ * `duel_КОМНАТА` — и вместо диктовки кода друг просто жмёт кнопку.
+ */
+export function startParam(): string | null {
+  const value = telegramWebApp()?.initDataUnsafe?.start_param;
+  return value !== undefined && value.length > 0 ? value : null;
 }
 
 /**

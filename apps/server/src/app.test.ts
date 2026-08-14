@@ -618,11 +618,12 @@ describe('бот', () => {
     const sent = [...calls].reverse().find((call) => call.method === 'sendMessage')!;
     expect(sent.payload.chat_id).toBe('777');
     expect(String(sent.payload.text)).toContain('Ада');
-    // Ссылок-приглашений нет: играют по коду, его и передаём текстом.
-    expect(String(sent.payload.text)).toContain('ROOM1234');
+    // Кода в письме нет: комнату несёт кнопка, диктовать нечего.
+    expect(String(sent.payload.text)).not.toContain('ROOM1234');
     const markup = sent.payload.reply_markup as { inline_keyboard: { url: string }[][] };
-    // Кнопка просто открывает игру и никакой комнаты в себе не несёт.
-    expect(markup.inline_keyboard[0]![0]!.url).toBe('https://t.me/dotoscope_bot?startapp=');
+    expect(markup.inline_keyboard[0]![0]!.url).toBe(
+      'https://t.me/dotoscope_bot?startapp=duel_ROOM1234',
+    );
   });
 
   it('другу без Telegram сообщение не уходит — клиент предложит ссылку', async () => {
