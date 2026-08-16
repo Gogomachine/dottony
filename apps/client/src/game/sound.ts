@@ -29,7 +29,7 @@ const ROOT = 98;
  * Докуда лестница ещё растёт. Дальше подъём остановлен нарочно: выше это
  * уже свист, а цепочки такой длины на поле 6×6 и не собираются.
  */
-const LADDER_TOP = 22;
+const LADDER_TOP = 20;
 
 /** Сколько голосов звучит одновременно. Больше — каша, особенно на телефоне. */
 const VOICES = 8;
@@ -40,11 +40,16 @@ const VOICES = 8;
  */
 const LEVEL = 1.9;
 
-/** Сколько звука уходит в отражения. Комната приборная, маленькая. */
-const WET = 0.32;
+/** Сколько звука уходит в отражения. */
+const WET = 0.46;
 
-/** Длина отражений, с. Дольше — уже зал, а не лаборатория. */
-const ROOM = 1.1;
+/** Длина отражений, с. */
+const ROOM = 1.7;
+
+/** Повтор: время до первого эха и сколько от него возвращается обратно. */
+const ECHO = 0.21;
+const ECHO_BACK = 0.3;
+const ECHO_SEND = 0.24;
 
 /**
  * Нота ступени. Лестница не кончается на списке: она идёт теми же
@@ -66,7 +71,9 @@ function note(step: number): number {
  */
 function stepLevel(step: number): number {
   const climb = Math.min(Math.max(step, 0), LADDER_TOP) / LADDER_TOP;
-  return 0.09 - climb * 0.035;
+  // Спад не прямой, а с ускорением: ухо чувствительнее всего к верхам, и
+  // на конце длинной цепочки нота должна быть втрое тише первой.
+  return 0.095 - 0.066 * climb ** 1.4;
 }
 
 export interface SoundOptions {
@@ -142,8 +149,27 @@ export class Sound {
     damp.type = 'lowpass';
     damp.frequency.value = 2600;
 
+    // Повтор. Эхо в приборе — не украшение: короткие сигналы без него
+    // кончаются слишком резко, а с ним у каждого есть спад.
+    const echo = ctx.createDelay(1);
+    echo.delayTime.value = ECHO;
+    const back = ctx.createGain();
+    back.gain.value = ECHO_BACK;
+    const echoDamp = ctx.createBiquadFilter();
+    echoDamp.type = 'lowpass';
+    echoDamp.frequency.value = 1800;
+    const send = ctx.createGain();
+    send.gain.value = ECHO_SEND;
+    // Каждый следующий повтор глуше предыдущего: фильтр стоит в самой петле.
+    echo.connect(echoDamp);
+    echoDamp.connect(back).connect(echo);
+    echoDamp.connect(send);
+
     master.connect(limiter);
+    master.connect(echo);
     master.connect(room).connect(damp).connect(wet).connect(limiter);
+    send.connect(limiter);
+    send.connect(room);
     this.master = master;
   }
 
@@ -292,7 +318,7 @@ export class Sound {
    */
   chain(dots: number, multiplier: number, at?: number): void {
     const t = this.when(at);
-    this.hiss(t, 700, 0.01, 0.025, 0.8);
+    this.hiss(t, 550, 0.009, 0.01, 0.8);
     // Ниже сотни герц телефонный динамик уже нем, поэтому щелчок реле не
     // опускаем вместе с остальными: он и так у самого пола.
     this.tone(t, 124 - Math.min(dots, 12) * 2, 0.24, 0.08, 'sine', 88, 600);
