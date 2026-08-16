@@ -35,6 +35,15 @@ export type Mode = 'sprint' | 'duel' | 'order';
 export { SPRINT_SECONDS };
 
 /**
+ * Длительность матча по умолчанию. Настоящую всегда говорит сервер — своим
+ * часам в дуэли веры нет, — но до его ответа экран должен что-то показывать.
+ *
+ * Значение равно DUEL_SECONDS протокола; взять его оттуда нельзя: любой
+ * не-type импорт из @doton/protocol затащил бы в клиент ещё и zod.
+ */
+export const DUEL_FALLBACK = 180;
+
+/**
  * Ошибки ядра плюс отказ самой сессии: ход в стоп-кадре ядро бы принял,
  * но партия в этот момент стоит.
  */
@@ -100,9 +109,9 @@ export class Session {
     this.mode = mode;
     this.board = createBoard(seedRng(seed), cfg);
     // Время матча важнее режима: заказы бывают и бесконечными (соло), и
-    // на полторы минуты (дуэль), а спринт всегда свой.
+    // на три минуты (дуэль), а спринт всегда свой.
     this.duration =
-      mode === 'sprint' ? SPRINT_SECONDS : (duration ?? (mode === 'duel' ? 90 : Infinity));
+      mode === 'sprint' ? SPRINT_SECONDS : (duration ?? (mode === 'duel' ? DUEL_FALLBACK : Infinity));
     this.timeLeft = this.duration;
     if (mode === 'order') {
       this.run = startOrder(seed, cfg);

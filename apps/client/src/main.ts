@@ -45,7 +45,7 @@ import { FEEL } from './game/feel';
 import { ChainInput } from './game/input';
 import { Renderer } from './game/renderer';
 import { miniState, orderMini, type MiniState } from './game/mini';
-import { Session, SPRINT_SECONDS, type Mode } from './game/session';
+import { Session, DUEL_FALLBACK, SPRINT_SECONDS, type Mode } from './game/session';
 import { Sound } from './game/sound';
 import { Tutorial } from './tutorial';
 import { brandLockup } from './brand';
@@ -192,7 +192,7 @@ const ORDER_MOVE_LIMIT = 1200;
  * Объявлено до первой сессии: newSession() читает длительность.
  */
 let inDuel = false;
-let duelDuration = 90;
+let duelDuration = DUEL_FALLBACK;
 /** На чём идёт (или будет идти) матч: цепочки или заказы. */
 let duelKind: DuelKind = 'chain';
 
