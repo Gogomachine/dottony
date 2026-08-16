@@ -12,12 +12,24 @@
  * можно отрисовать в файл и послушать, не запуская игру.
  */
 
-/** Ступени, по которым поёт растущая цепочка. Мажорная пентатоника: в ней
- *  нет ни одного неприятного соседства, а цепочка бывает длинной. */
-const LADDER = [0, 2, 4, 7, 9, 12, 14, 16, 19, 21, 24, 26, 28];
+/**
+ * Ступени пентатоники внутри октавы. Пентатоника выбрана потому, что в ней
+ * нет ни одного неприятного соседства, а цепочка бывает какой угодно
+ * длины: соседние ноты обязаны ложиться друг на друга при любом темпе.
+ */
+const LADDER = [0, 2, 4, 7, 9];
 
-/** Нижняя нота цепочки, Гц. Соль малой октавы — низко, но не гудит. */
-const ROOT = 196;
+/**
+ * Нижняя нота цепочки, Гц. Соль большой октавы: снизу оставлен весь запас,
+ * потому что расти цепочке некуда, если начинать высоко.
+ */
+const ROOT = 98;
+
+/**
+ * Докуда лестница ещё растёт. Дальше подъём остановлен нарочно: выше это
+ * уже свист, а цепочки такой длины на поле 6×6 и не собираются.
+ */
+const LADDER_TOP = 22;
 
 /** Сколько голосов звучит одновременно. Больше — каша, особенно на телефоне. */
 const VOICES = 8;
@@ -34,9 +46,27 @@ const WET = 0.32;
 /** Длина отражений, с. Дольше — уже зал, а не лаборатория. */
 const ROOM = 1.1;
 
+/**
+ * Нота ступени. Лестница не кончается на списке: она идёт теми же
+ * ступенями октава за октавой. Раньше список обрывался на тринадцатой
+ * точке, и длинная цепочка с этого места звучала одной нотой — как раз
+ * там, где игроку и хочется слышать, что она растёт.
+ */
 function note(step: number): number {
-  const index = Math.min(Math.max(step, 0), LADDER.length - 1);
-  return ROOT * 2 ** (LADDER[index]! / 12);
+  const index = Math.min(Math.max(step, 0), LADDER_TOP);
+  const octave = Math.floor(index / LADDER.length);
+  const degree = LADDER[index % LADDER.length]!;
+  return ROOT * 2 ** (octave + degree / 12);
+}
+
+/**
+ * Громкость ступени. Низкие ноты на телефонном динамике слышны хуже
+ * высоких — это свойство динамика, а не звука, — поэтому низ идёт громче,
+ * и вся лестница звучит ровно.
+ */
+function stepLevel(step: number): number {
+  const climb = Math.min(Math.max(step, 0), LADDER_TOP) / LADDER_TOP;
+  return 0.09 - climb * 0.035;
 }
 
 export interface SoundOptions {
@@ -253,7 +283,7 @@ export class Sound {
   /** Палец лёг на очередную точку: цепочка растёт и поёт. */
   step(index: number, at?: number): void {
     const t = this.when(at);
-    this.tone(t, note(index), 0.11, 0.055, 'sine', undefined, 3000);
+    this.tone(t, note(index), 0.13, stepLevel(index), 'sine', undefined, 3000);
   }
 
   /**
@@ -262,61 +292,63 @@ export class Sound {
    */
   chain(dots: number, multiplier: number, at?: number): void {
     const t = this.when(at);
-    this.hiss(t, 900, 0.01, 0.025, 0.8);
-    this.tone(t, 132 - Math.min(dots, 12) * 3, 0.2, 0.075, 'sine', 82, 700);
+    this.hiss(t, 700, 0.01, 0.025, 0.8);
+    // Ниже сотни герц телефонный динамик уже нем, поэтому щелчок реле не
+    // опускаем вместе с остальными: он и так у самого пола.
+    this.tone(t, 124 - Math.min(dots, 12) * 2, 0.24, 0.08, 'sine', 88, 600);
     // Множитель слышен отдельной нотой: он и есть награда за линзы.
-    if (multiplier > 1) this.bell(t + 0.06, 440 * multiplier, 0.4, 0.055);
+    if (multiplier > 1) this.bell(t + 0.06, 220 * multiplier, 0.5, 0.06);
   }
 
   /** Линза отшлифована: чистый тон, ради которого цепочку и тянули. */
   lens(at?: number): void {
     const t = this.when(at);
-    this.bell(t, 880, 0.52, 0.07);
+    this.bell(t, 440, 0.6, 0.075);
   }
 
   /** Открылось окно заказа: прибор звенит цветом. */
   window(at?: number): void {
     const t = this.when(at);
-    this.tone(t, 660, 0.12, 0.06, 'sine', undefined, 2400);
-    this.tone(t + 0.11, 880, 0.16, 0.06, 'sine', undefined, 2400);
+    this.tone(t, 330, 0.14, 0.07, 'sine', undefined, 2400);
+    this.tone(t + 0.12, 440, 0.18, 0.07, 'sine', undefined, 2400);
   }
 
   /** Касание в заказах: заказ закрыт (награда) или группы не хватило. */
   order(size: number, reward: number, at?: number): void {
     const t = this.when(at);
     if (reward > 0) {
-      this.tone(t, 440, 0.24, 0.06, 'sine', 990, 3000);
-      this.bell(t + 0.14, 880, 0.6, 0.075);
+      this.tone(t, 220, 0.26, 0.07, 'sine', 494, 3000);
+      this.bell(t + 0.15, 440, 0.7, 0.08);
       // Крупная группа звенит дважды: её слышно, а не только видно.
-      if (size >= 30) this.bell(t + 0.3, 1320, 0.6, 0.06);
+      if (size >= 30) this.bell(t + 0.32, 660, 0.7, 0.065);
     } else {
       // Отказ слышен, но не бьёт: на нём кончается окно, а не заход.
-      this.tone(t, 220, 0.3, 0.07, 'sine', 155, 800);
+      this.tone(t, 147, 0.32, 0.08, 'sine', 110, 700);
     }
   }
 
   /** Окно упущено: низкий гудок сбоя. */
   miss(at?: number): void {
     const t = this.when(at);
-    this.tone(t, 165, 0.44, 0.07, 'sine', 98, 700);
+    this.tone(t, 124, 0.48, 0.085, 'sine', 82, 600);
   }
 
   /** Заявка на цвет: своя идёт вверх, чужая — вниз. */
   claim(mine: boolean, at?: number): void {
     const t = this.when(at);
     if (mine) {
-      this.tone(t, 700, 0.1, 0.05, 'sine', undefined, 2400);
-      this.tone(t + 0.09, 1050, 0.14, 0.05, 'sine', undefined, 2400);
+      this.tone(t, 350, 0.12, 0.06, 'sine', undefined, 2400);
+      this.tone(t + 0.1, 525, 0.16, 0.06, 'sine', undefined, 2400);
     } else {
-      this.tone(t, 1050, 0.1, 0.045, 'sine', undefined, 1800);
-      this.tone(t + 0.09, 620, 0.16, 0.045, 'sine', undefined, 1800);
+      this.tone(t, 525, 0.12, 0.055, 'sine', undefined, 1800);
+      this.tone(t + 0.1, 310, 0.18, 0.055, 'sine', undefined, 1800);
     }
   }
 
   /** Последние секунды: тихий отсчёт, не будильник. */
   tick(at?: number): void {
     const t = this.when(at);
-    this.tone(t, 1046, 0.05, 0.035, 'sine', undefined, 2600);
+    this.tone(t, 523, 0.06, 0.04, 'sine', undefined, 2600);
   }
 
   /**
@@ -326,12 +358,12 @@ export class Sound {
   over(win: boolean, at?: number): void {
     const t = this.when(at);
     if (win) {
-      this.bell(t, 784, 0.42, 0.075);
-      this.bell(t + 0.16, 1046, 0.42, 0.075);
-      this.bell(t + 0.32, 1568, 0.7, 0.08);
+      this.bell(t, 392, 0.5, 0.08);
+      this.bell(t + 0.18, 523, 0.5, 0.08);
+      this.bell(t + 0.36, 784, 0.8, 0.085);
     } else {
-      this.tone(t, 520, 0.44, 0.065, 'sine', 300, 1400);
-      this.tone(t + 0.42, 460, 0.6, 0.06, 'sine', 240, 1200);
+      this.tone(t, 260, 0.5, 0.075, 'sine', 150, 1200);
+      this.tone(t + 0.46, 230, 0.66, 0.07, 'sine', 120, 1000);
     }
   }
 }
