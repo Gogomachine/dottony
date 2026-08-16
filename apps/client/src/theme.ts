@@ -21,6 +21,7 @@ export type ThemeName = 'draft' | 'graphite';
 
 const THEME_KEY = 'doton-theme';
 const MARKS_KEY = 'doton-marks';
+const SOUND_KEY = 'doton-sound';
 export function loadThemeName(): ThemeName {
   const saved = localStorage.getItem(THEME_KEY);
   if (saved === 'draft' || saved === 'graphite') return saved;
@@ -42,4 +43,16 @@ export function loadMarks(): boolean {
 
 export function saveMarks(on: boolean): void {
   localStorage.setItem(MARKS_KEY, on ? 'on' : 'off');
+}
+
+/**
+ * Звук прибора. По умолчанию включён: молчащий прибор — это половина
+ * прибора. Выключенный запоминается — в метро его выключают один раз.
+ */
+export function loadSound(): boolean {
+  return localStorage.getItem(SOUND_KEY) !== 'off';
+}
+
+export function saveSound(on: boolean): void {
+  localStorage.setItem(SOUND_KEY, on ? 'on' : 'off');
 }

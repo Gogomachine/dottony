@@ -46,11 +46,20 @@ import { ChainInput } from './game/input';
 import { Renderer } from './game/renderer';
 import { miniState, orderMini, type MiniState } from './game/mini';
 import { Session, SPRINT_SECONDS, type Mode } from './game/session';
+import { Sound } from './game/sound';
 import { Tutorial } from './tutorial';
 import { brandLockup } from './brand';
 import { emblemSvg } from './emblem';
 import { markChip, loadPlate, savePlate, showPlate } from './plate';
-import { applyTheme, loadMarks, loadThemeName, saveMarks, SCOPE } from './theme';
+import {
+  applyTheme,
+  loadMarks,
+  loadSound,
+  loadThemeName,
+  saveMarks,
+  saveSound,
+  SCOPE,
+} from './theme';
 
 function el<T extends HTMLElement>(id: string): T {
   const found = document.getElementById(id);
@@ -126,6 +135,13 @@ for (let i = 0; i < TICKS; i++) {
 let themeName = loadThemeName();
 applyTheme(themeName);
 let mode: Mode = 'sprint';
+
+/**
+ * Голос прибора. Контекст рождается только с первого касания экрана —
+ * до него система звук всё равно не пустит, — поэтому здесь заводится
+ * лишь сам объект и память о том, включён он или выключен.
+ */
+const sound = new Sound({ muted: !loadSound() });
 
 /**
  * Правила этого прибора. Отличаются от заводских одним: ходом одним
@@ -363,6 +379,7 @@ function updateMini(): void {
  */
 function announceClaim(mine: boolean, length: number, outbid: boolean): void {
   miniCache = '';
+  sound.claim(mine);
   if (mine) {
     setStat(`Заявка · цепь ${length}`, 'live');
     return;
@@ -868,6 +885,8 @@ function handleDuelMessage(message: DuelServerMessage): void {
         ...(message.rating ? { rating: message.rating } : {}),
         ...(opponentCode ? { addFriend: { name: opponentName, code: opponentCode } } : {}),
       });
+      // Второй «finished» с рейтингом приходит следом: звучим один раз.
+      if (inDuel) sound.over(message.outcome === 'win');
       endDuel({ awaitRating: true });
       break;
     }
@@ -1293,9 +1312,11 @@ function reportOrder(removed: number): boolean {
     // этом отдельной строкой не нужно, серия дописывается сюда же.
     const run = (session.run?.streak ?? 0) > 1 ? ` · серия ${(session.run?.streak ?? 0)}` : '';
     setStat(`Заказ · ${fire.size} точек · +${groupDigits(fire.reward)}${run}`, 'live');
+    sound.order(fire.size, fire.reward);
     if (navigator.vibrate) navigator.vibrate(FEEL.hapticMax);
   } else {
     setStat(`${fire.size} — не хватило до ${session.cfg.orderTarget}`, 'warn');
+    sound.order(fire.size, 0);
     if (navigator.vibrate) navigator.vibrate([FEEL.hapticMax, 40, FEEL.hapticMax]);
   }
   updateHud();
@@ -1312,6 +1333,8 @@ function watchWindow(): void {
   if (!order || session.over || order.cycle === shownWindow) return;
   const first = shownWindow < 0;
   shownWindow = order.cycle;
+  // Новое окно прибор объявляет сам — это его сигнал, а не наша подпись.
+  if (!first && session.started) sound.window();
   if (first || !session.started || session.run?.lastWindow !== 'missed') return;
   const left = session.cfg.orderLives - (session.run?.fails ?? 0);
   setStat(
@@ -1321,6 +1344,7 @@ function watchWindow(): void {
     'warn',
   );
   flashMini();
+  sound.miss();
   if (navigator.vibrate) navigator.vibrate([FEEL.hapticMax, 40, FEEL.hapticMax]);
 }
 
@@ -1350,6 +1374,11 @@ const input = new ChainInput(
     // Снятое показываем строкой состояния — это и есть отчёт прибора. В
     // заказах отчёт другой: там важно не сколько снято вообще, а сколько
     // ушло в заказ, — и цифра над полем там тоже другая.
+    // Голос хода: в заказах он свой, там говорит отчёт о заказе.
+    if (!cfg.features.tap) {
+      sound.chain(result.removed.length, result.multiplier);
+      if (result.charged !== null) sound.lens();
+    }
     if (reportOrder(result.removed.length)) {
       const fire = session.lastFire;
       if (fire) showFloatingLabel(fire.reward > 0 ? `${fire.size} · +${fire.reward}` : `${fire.size}`, at);
@@ -1369,7 +1398,9 @@ const input = new ChainInput(
     countOrder(path[0]!, elapsed);
   },
   (length: number) => {
-    // Чем длиннее цепочка, тем ощутимее отклик — рука чувствует прогресс.
+    // Чем длиннее цепочка, тем ощутимее отклик — рука чувствует прогресс,
+    // а ухо слышит: каждая следующая точка звучит ступенью выше.
+    sound.step(length - 1);
     if (!navigator.vibrate) return;
     const ms = Math.min(FEEL.hapticBase + length * FEEL.hapticPerDot, FEEL.hapticMax);
     navigator.vibrate(Math.round(ms));
@@ -1386,6 +1417,18 @@ function syncChrome(): void {
   const color = getComputedStyle(document.documentElement).getPropertyValue('--case').trim();
   syncTelegramTheme(color);
 }
+
+el<HTMLButtonElement>('sound-toggle').addEventListener('click', function () {
+  const on = sound.muted;
+  sound.setMuted(!on);
+  saveSound(on);
+  this.classList.toggle('on', on);
+  // Нажатие — тоже касание: на нём звук и просыпается, и сразу отвечает.
+  if (on) {
+    sound.wake();
+    sound.claim(true);
+  }
+});
 
 el<HTMLButtonElement>('theme-toggle').addEventListener('click', function () {
   themeName = themeName === 'draft' ? 'graphite' : 'draft';
@@ -1689,6 +1732,25 @@ new ResizeObserver(fitBoard).observe(boardWrap);
 let lastTime = performance.now();
 /** Подпись, уже показанная в углу окуляра. */
 let shownChain = '';
+/** Секунда, на которой прибор уже отщёлкал. */
+let shownSecond = -1;
+
+/**
+ * Последние десять секунд партии прибор отсчитывает вслух: на глаз
+ * оставшееся время в разгаре хода никто не смотрит, а щелчок слышно.
+ */
+function countdown(): void {
+  if (!session.timed || session.over || !session.started) {
+    shownSecond = -1;
+    return;
+  }
+  const left = Math.ceil(session.timeLeft);
+  if (left > 10 || left <= 0 || left === shownSecond) return;
+  const first = shownSecond < 0;
+  shownSecond = left;
+  // Не щёлкаем на входе в партию, начатую с середины (возврат в матч).
+  if (!first) sound.tick();
+}
 function frame(now: number): void {
   const dt = Math.min((now - lastTime) / 1000, 0.05);
   lastTime = now;
@@ -1714,6 +1776,7 @@ function frame(now: number): void {
       // дорисовываем сам: обычное обновление приборной строки мёртвый
       // заход уже не трогает, и на нём остался бы последний живой отсчёт.
       showFails();
+      sound.over(false);
       showResult(`Прибор сбоит · ${orderWord(session.run?.orders ?? 0)}`, session.score);
       setStat('Запас сбоев исчерпан — заход окончен', 'warn');
       // Заход кончился — его и отдаём на проверку: счёт в таблицу ставит
@@ -1721,6 +1784,7 @@ function frame(now: number): void {
       if (orderRun) void finishOrder(orderRun);
     } else {
       // Соло-итог показываем прямо в окуляре — как показание прибора.
+      sound.over(false);
       showResult('Наблюдение завершено', session.score);
     }
     updateGoKey();
@@ -1729,6 +1793,7 @@ function frame(now: number): void {
   if ((session.timed || order) && !session.over) updateHud();
   updateMini();
   watchWindow();
+  countdown();
 
   // В заказах длину группы под пальцем не показываем: не знать её до
   // касания — и есть вся ставка режима. Вместо счётчика — напоминание.
@@ -1774,6 +1839,7 @@ el<HTMLSpanElement>('menu-brand').innerHTML = brandLockup(96);
 renderer.setMarks(loadMarks());
 // Корпус помечен ещё до всякого входа: выбор лежит и у нас, и на сервере.
 updatePlate();
+el<HTMLButtonElement>('sound-toggle').classList.toggle('on', !sound.muted);
 el<HTMLButtonElement>('mark-toggle').classList.toggle('on', loadMarks());
 el<HTMLButtonElement>('theme-toggle').classList.toggle('on', themeName === 'graphite');
 
@@ -1781,6 +1847,9 @@ if (isTelegram()) {
   document.documentElement.classList.add('in-telegram');
   syncChrome();
 }
+
+// Звук просыпается с первого касания: до него система держит его спящим.
+addEventListener('pointerdown', () => sound.wake(), { once: true });
 
 // Пока игра открыта, она слушает приглашения друзей — и этим же говорит
 // серверу, что игрок здесь.
