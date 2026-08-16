@@ -43,3 +43,31 @@ export function replayOrder(
 
   return { score: run.score, orders: run.orders, streak, biggest };
 }
+
+/**
+ * Темп записанного захода: в какие секунды он приносил очки. Из этого
+ * получается призрак для дуэли на заказах — соперник, который «закрывает
+ * заказы» тогда же, когда их закрыл живой игрок.
+ *
+ * Ходы переигрываются ядром, а не берутся на веру: в темп попадает только
+ * то, что заход действительно набрал.
+ */
+export function orderTempo(seed: number, moves: OrderMove[]): { t: number; points: number }[] {
+  const cfg = DEFAULT_CONFIG;
+  let run: OrderRun = startOrder(seed, cfg);
+  const tempo: { t: number; points: number }[] = [];
+  let prevT = -Infinity;
+
+  for (const move of moves) {
+    if (move.t < prevT + MIN_MOVE_GAP) break;
+    prevT = move.t;
+    run = tickOrder(run, move.t, cfg);
+    if (run.over) break;
+    const out = tapOrder(run, move.cell, move.t, cfg);
+    if (typeof out === 'string') break;
+    const points = out.run.score - run.score;
+    run = out.run;
+    if (points > 0) tempo.push({ t: Number(move.t.toFixed(2)), points });
+  }
+  return tempo;
+}

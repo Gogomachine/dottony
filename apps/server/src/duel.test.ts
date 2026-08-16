@@ -4,6 +4,9 @@ import {
   cellAt,
   cleanMarks,
   createBoard,
+  startOrder,
+  tapGroup,
+  tapOrder,
   phaseColorAt,
   seedRng,
   DEFAULT_CONFIG,
@@ -203,6 +206,87 @@ describe('Duel', () => {
   });
 });
 
+describe('дуэль на заказах', () => {
+  const seed = 4242;
+  const cfg = DEFAULT_CONFIG;
+
+  /** Клетка, с которой снимается группа цвета окна. */
+  function windowCell(board: Board, color: number): Cell | null {
+    for (let r = 0; r < cfg.rows; r++) {
+      for (let c = 0; c < cfg.cols; c++) {
+        const cell = { r, c };
+        if (cellAt(board.grid, cell)?.color !== color) continue;
+        if (tapGroup(board, cell, cfg).length >= cfg.minChain) return cell;
+      }
+    }
+    return null;
+  }
+
+  it('касание считает ядро, и счёт растёт только за заказ', () => {
+    const a = recorder('a');
+    const duel = new Duel(seed, a, recorder('b'), { kind: 'order', now: Date.now() });
+    const run = startOrder(seed, cfg);
+    const cell = windowCell(run.board, run.color);
+    // Поле сида может не дать группы цвета окна — тогда проверять нечего.
+    if (!cell) return;
+
+    const expected = tapOrder(run, cell, 1, cfg);
+    if (typeof expected === 'string') throw new Error(expected);
+    const outcome = duel.applyMove('a', [cell], Date.now() + 1000);
+    expect(outcome).toMatchObject({ ok: true, points: expected.run.score });
+    expect(duel.scoreOf('a')).toBe(expected.run.score);
+  });
+
+  it('три упущенных окна кончают матч поражением тому, кто их упустил', () => {
+    const now = Date.now();
+    const a = recorder('a', 'Ада');
+    const b = recorder('b', 'Боб');
+    const duel = new Duel(seed, a, b, { kind: 'order', now });
+
+    // Часы идут, ходов нет: окна закрываются сами, и на третьем запас кончается.
+    const dead = duel.tick(now + (cfg.orderWindow * cfg.orderLives + 1) * 1000);
+    expect(dead).not.toBeNull();
+    duel.finish(dead!);
+    expect(a.last('finished')).toMatchObject({ outcome: 'loss' });
+    expect(b.last('finished')).toMatchObject({ outcome: 'win' });
+  });
+
+  it('до конца запаса матч не кончается', () => {
+    const now = Date.now();
+    const duel = new Duel(seed, recorder('a'), recorder('b'), { kind: 'order', now });
+    expect(duel.tick(now + (cfg.orderWindow * 2 + 1) * 1000)).toBeNull();
+  });
+
+  it('сопернику едет и счёт, и запас сбоев', () => {
+    const now = Date.now();
+    const a = recorder('a');
+    const b = recorder('b');
+    const duel = new Duel(seed, a, b, { kind: 'order', now });
+    const run = startOrder(seed, cfg);
+    const cell = windowCell(run.board, run.color) ?? { r: 0, c: 0 };
+    duel.applyMove('a', [cell], now + 1000);
+    const said = b.last('opponent') as { fails?: number } | undefined;
+    expect(said).toBeDefined();
+    expect(said?.fails).toBe(0);
+  });
+
+  it('снимок несёт механику и состояние окна', () => {
+    const now = Date.now();
+    const duel = new Duel(seed, recorder('a'), recorder('b'), { kind: 'order', now });
+    const snapshot = duel.snapshot('a', now + 3000);
+    expect(snapshot?.kind).toBe('order');
+    expect(snapshot?.order?.fails).toBe(0);
+    expect(snapshot?.order?.remaining).toBeCloseTo(cfg.orderWindow - 3, 1);
+  });
+
+  it('в цепочках ни окна, ни часов заказов нет', () => {
+    const duel = new Duel(seed, recorder('a'), recorder('b'));
+    expect(duel.kind).toBe('chain');
+    expect(duel.tick(Date.now() + 60_000)).toBeNull();
+    expect(duel.snapshot('a')?.order).toBeUndefined();
+  });
+});
+
 describe('Matchmaker', () => {
   function make(onFinish?: (result: { players: { id: string; score: number }[] }) => void) {
     const timers: (() => void)[] = [];
@@ -234,6 +318,37 @@ describe('Matchmaker', () => {
     const seedB = (b.last('matched') as { seed: number }).seed;
     expect(seedA).toBe(seedB);
     expect(maker.stats).toEqual({ waiting: 0, duels: 1 });
+  });
+
+  it('очереди механик не пересекаются', () => {
+    const { maker } = make();
+    const chain = recorder('c', 'Цепочник');
+    const order = recorder('o', 'Заказчик');
+    const second = recorder('o2', 'Второй заказчик');
+
+    maker.join(chain, undefined, 'chain');
+    maker.join(order, undefined, 'order');
+    // Механики разные — матча нет, оба ждут своих.
+    expect(chain.last('matched')).toBeUndefined();
+    expect(order.last('matched')).toBeUndefined();
+    expect(maker.stats).toEqual({ waiting: 2, duels: 0 });
+
+    maker.join(second, undefined, 'order');
+    expect(order.last('matched')).toMatchObject({ opponent: 'Второй заказчик', kind: 'order' });
+    expect(chain.last('matched')).toBeUndefined();
+    expect(maker.stats).toEqual({ waiting: 1, duels: 1 });
+  });
+
+  it('в комнате механику задаёт тот, кто позвал', () => {
+    const { maker } = make();
+    const host = recorder('h', 'Хозяин');
+    const guest = recorder('g', 'Гость');
+
+    maker.join(host, 'КОД123', 'order');
+    // Гость нажал «принять», а не выбирал игру: он идёт на условия хозяина.
+    maker.join(guest, 'КОД123', 'chain');
+    expect(host.last('matched')).toMatchObject({ kind: 'order' });
+    expect(guest.last('matched')).toMatchObject({ kind: 'order' });
   });
 
   it('приватная комната сводит только своих', () => {

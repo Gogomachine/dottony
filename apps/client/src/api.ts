@@ -180,8 +180,13 @@ export function setMarks(marks: (string | null)[]): Promise<{ marks: (string | n
   });
 }
 
-export function getRatingBoard(): Promise<RatingLeaderboardResponse> {
-  return request<RatingLeaderboardResponse>('/api/rating');
+export function getRatingBoard(
+  kind: 'chain' | 'order' = 'chain',
+): Promise<RatingLeaderboardResponse> {
+  // Таблиц рейтинга две — по одной на механику дуэли.
+  return request<RatingLeaderboardResponse>(
+    kind === 'order' ? '/api/rating?kind=order' : '/api/rating',
+  );
 }
 
 /**

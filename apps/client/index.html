@@ -1028,6 +1028,23 @@
     .cab-actions { display: flex; flex-wrap: wrap; gap: 8px; }
     .cab-actions button { flex: 1 1 44%; }
 
+    /* Выбор механики дуэли: две половины одной клавиши. */
+    .pick-kind { display: flex; gap: 6px; }
+    .pick-kind .kind {
+      flex: 1;
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      padding: 9px 6px;
+      border: 1px solid var(--edge);
+      border-radius: 8px;
+      background: transparent;
+      color: var(--silk-2);
+      cursor: pointer;
+    }
+    .pick-kind .kind.on { border-color: var(--acc); color: var(--acc); }
+
     .cab-tabs { display: flex; gap: 6px; }
     .cab-tabs .tab { flex: 1; }
     .cab-tabs .tab.active { border-color: var(--acc); color: var(--acc); }
@@ -1259,7 +1276,7 @@
               <li class="mode" data-go="duel">
                 <b>Дуэль</b>
                 <span class="when mono">1:30</span>
-                <span class="hint">Общий образец с живым соперником. Рейтинг и лиги.</span>
+                <span class="hint">Общий образец с живым соперником — на заказах или на цепочках. У каждой механики свой рейтинг.</span>
               </li>
             </ul>
 
@@ -1288,6 +1305,14 @@
       <div id="duel-sheet" class="overlay" hidden>
         <div class="modal">
           <h2>Дуэль</h2>
+          <!--
+            Механику выбирают до соперника: подбор у них раздельный, и
+            приглашение друга уходит в ту же игру, что выбрана здесь.
+          -->
+          <div class="pick-kind">
+            <button id="kind-order" class="kind on">Заказы</button>
+            <button id="kind-chain" class="kind">Цепочки</button>
+          </div>
           <button id="duel-quick" class="acc">Быстрый матч</button>
           <!--
             Кодов больше нет: друга зовут из списка друзей, и ему приходит
@@ -1384,15 +1409,20 @@
             </div>
 
             <div class="cab-stats">
-              <div class="stat"><span id="cab-rating" class="stat-value"></span><span class="stat-label">рейтинг</span></div>
-              <div class="stat"><span id="cab-rank" class="stat-value"></span><span class="stat-label">место</span></div>
+              <!--
+                Рейтингов два: дуэли на цепочках и дуэли на заказах — разные
+                механики, и общее число врало бы про обе.
+              -->
+              <div class="stat"><span id="cab-rating" class="stat-value"></span><span id="cab-rank" class="stat-label">цепочки</span></div>
+              <div class="stat"><span id="cab-order-rating" class="stat-value"></span><span id="cab-order-rating-rank" class="stat-label">заказы</span></div>
               <div class="stat"><span id="cab-duels" class="stat-value"></span><span class="stat-label">дуэли</span></div>
               <div class="stat"><span id="cab-sprint" class="stat-value"></span><span id="cab-sprint-rank" class="stat-label">спринт</span></div>
               <div class="stat"><span id="cab-order" class="stat-value"></span><span id="cab-order-rank" class="stat-label">заказы</span></div>
             </div>
 
             <div class="cab-actions">
-              <button id="cab-rating-board">Таблица рейтинга</button>
+              <button id="cab-rating-board">Рейтинг цепочек</button>
+              <button id="cab-order-rating-board">Рейтинг заказов</button>
               <button id="cab-sprint-board">Рекорды спринта</button>
               <button id="cab-order-board">Рекорды заказов</button>
             </div>

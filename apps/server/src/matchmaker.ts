@@ -1,5 +1,5 @@
 import { randomInt } from 'node:crypto';
-import { DUEL_SECONDS, type MoveLog } from '@doton/protocol';
+import { DUEL_SECONDS, type DuelKind, type MoveLog } from '@doton/protocol';
 import type { Cell } from '@doton/core';
 import {
   Duel,
@@ -37,6 +37,8 @@ export interface MatchResult {
    */
   outcomes: DuelOutcome[];
   rated: boolean;
+  /** На чём играли: рейтинги у механик разные. */
+  kind: DuelKind;
   /** Заявки на цвет резонанса — общие для матча, нужны реплею. */
   claims: DuelClaim[];
 }
@@ -44,6 +46,8 @@ export interface MatchResult {
 interface Waiting {
   player: DuelPlayer;
   room: string | undefined;
+  /** На чём ждёт играть: очереди механик не пересекаются. */
+  kind: DuelKind;
   since: number;
 }
 
@@ -54,7 +58,7 @@ export interface MatchmakerOptions {
    * Ищет призрака для игрока, если живого соперника нет.
    * Возвращает undefined, когда призраков быть не должно.
    */
-  findGhost?: (playerId: string) => Promise<Ghost | undefined>;
+  findGhost?: (playerId: string, kind: DuelKind) => Promise<Ghost | undefined>;
   /** Сколько ждать живого соперника, прежде чем звать призрака, мс. */
   ghostAfterMs?: number;
   /** Куда сообщать о сбоях подбора призрака. */
@@ -65,6 +69,9 @@ export interface MatchmakerOptions {
 }
 
 const DEFAULT_GHOST_AFTER_MS = 10_000;
+
+/** Как часто сверять окна заказов с часами, мс. */
+const ORDER_BEAT_MS = 500;
 
 export class Matchmaker {
   private readonly waiting: Waiting[] = [];
@@ -91,7 +98,7 @@ export class Matchmaker {
    * Если матч этого игрока ещё идёт (связь оборвалась и восстановилась),
    * возвращает его в матч, а не начинает новый.
    */
-  join(player: DuelPlayer, room?: string): void {
+  join(player: DuelPlayer, room?: string, kind: DuelKind = 'chain'): void {
     const running = this.byPlayer.get(player.id);
     if (running && !running.isOver()) {
       if (running.reattach(player.id, player)) {
@@ -104,38 +111,47 @@ export class Matchmaker {
     // Повторный join из другой вкладки не должен плодить сущности.
     this.leave(player.id, { silent: true });
 
+    // Механика — часть пары: сводить того, кто пришёл за заказами, с тем,
+    // кто ждёт цепочек, значит сводить две разные игры.
+    //
+    // В комнате она сверяется иначе: там игру выбрал тот, кто позвал, а
+    // приглашённый идёт на его условия — он и не выбирал ничего, он нажал
+    // «принять». Клиент узнает механику из ответа о старте матча.
     const index = this.waiting.findIndex(
-      (entry) => entry.room === room && entry.player.id !== player.id,
+      (entry) =>
+        entry.room === room &&
+        (room !== undefined || entry.kind === kind) &&
+        entry.player.id !== player.id,
     );
     if (index === -1) {
-      this.waiting.push({ player, room, since: Date.now() });
+      this.waiting.push({ player, room, kind, since: Date.now() });
       player.send(room ? { type: 'searching', room } : { type: 'searching' });
       // В приватную комнату зовут конкретного друга — призрак там не нужен.
-      if (!room && this.options.findGhost) this.scheduleGhost(player);
+      if (!room && this.options.findGhost) this.scheduleGhost(player, kind);
       return;
     }
 
     const [opponent] = this.waiting.splice(index, 1);
     this.cancelGhostWait(opponent!.player.id);
-    this.start(opponent!.player, player, room !== undefined);
+    this.start(opponent!.player, player, room !== undefined, opponent!.kind);
   }
 
   /** Через паузу ожидания подставляет призрака, если игрок всё ещё в очереди. */
-  private scheduleGhost(player: DuelPlayer): void {
+  private scheduleGhost(player: DuelPlayer, kind: DuelKind): void {
     const handle = this.setTimer(() => {
       this.ghostTimers.delete(player.id);
       const index = this.waiting.findIndex((entry) => entry.player.id === player.id);
       if (index === -1) return;
 
       void this.options
-        .findGhost?.(player.id)
+        .findGhost?.(player.id, kind)
         .then((ghost) => {
           if (!ghost) return;
           // Пока искали, мог найтись живой соперник.
           const stillWaiting = this.waiting.findIndex((e) => e.player.id === player.id);
           if (stillWaiting === -1) return;
           this.waiting.splice(stillWaiting, 1);
-          this.startWithGhost(player, ghost);
+          this.startWithGhost(player, ghost, kind);
         })
         .catch((error: unknown) => {
           // Без призрака игрок останется ждать живого соперника — молча
@@ -153,22 +169,22 @@ export class Matchmaker {
     this.ghostTimers.delete(playerId);
   }
 
-  private start(a: DuelPlayer, b: DuelPlayer, isPrivate = false): void {
+  private start(a: DuelPlayer, b: DuelPlayer, isPrivate = false, kind: DuelKind = 'chain'): void {
     const seed = randomInt(0, 0xffffffff);
-    const duel = new Duel(seed, a, b);
+    const duel = new Duel(seed, a, b, { kind });
     if (isPrivate) this.privateDuels.add(duel.id);
     this.launch(duel);
   }
 
   /** Матч против записи: играем на её сиде, чтобы поле было тем же самым. */
-  private startWithGhost(player: DuelPlayer, ghost: Ghost): void {
+  private startWithGhost(player: DuelPlayer, ghost: Ghost, kind: DuelKind = 'chain'): void {
     const ghostPlayer: DuelPlayer = {
       id: `ghost:${ghost.name}:${Date.now()}`,
       name: ghost.name,
       marks: ghost.marks,
       send: () => {},
     };
-    const duel = new Duel(ghost.seed, player, ghostPlayer, { ghostB: true });
+    const duel = new Duel(ghost.seed, player, ghostPlayer, { ghostB: true, kind });
     this.launch(duel);
 
     // Призрак «играет»: начисляем очки по записанному темпу.
@@ -190,13 +206,42 @@ export class Matchmaker {
     // прийти впритык к сирене.
     const handle = this.setTimer(() => this.settle(duel), (DUEL_SECONDS + 1) * 1000);
     this.timers.set(duel.id, [...(this.timers.get(duel.id) ?? []), handle]);
+    if (duel.kind === 'order') this.watchOrders(duel);
+  }
+
+  /**
+   * Часы заказов. Окно кончается временем, а не ходом, поэтому за живым
+   * заходом нужно следить и без ходов: три упущенных окна — конец матча
+   * тому, кто их упустил, каким бы ни был счёт.
+   */
+  private watchOrders(duel: Duel): void {
+    const beat = (): void => {
+      if (!this.duels.has(duel.id)) return;
+      const dead = duel.tick();
+      if (dead !== null) {
+        this.settle(duel, dead);
+        return;
+      }
+      if (duel.isOver()) {
+        this.settle(duel);
+        return;
+      }
+      const handle = this.setTimer(beat, ORDER_BEAT_MS);
+      this.timers.set(duel.id, [...(this.timers.get(duel.id) ?? []), handle]);
+    };
+    const handle = this.setTimer(beat, ORDER_BEAT_MS);
+    this.timers.set(duel.id, [...(this.timers.get(duel.id) ?? []), handle]);
   }
 
   move(playerId: string, path: Cell[]): MoveOutcome {
     const duel = this.byPlayer.get(playerId);
     if (!duel) return { ok: false, reason: 'not-in-duel' };
     const outcome = duel.applyMove(playerId, path);
-    if (duel.isOver()) this.settle(duel);
+    // Ход мог оказаться последним и для окна: запас сбоев кончается прямо
+    // в нём, и тянуть до ближайшего удара часов незачем.
+    const dead = duel.tick();
+    if (dead !== null) this.settle(duel, dead);
+    else if (duel.isOver()) this.settle(duel);
     return outcome;
   }
 
@@ -253,6 +298,7 @@ export class Matchmaker {
       })),
       outcomes,
       rated,
+      kind: duel.kind,
       claims: duel.claimLog(),
     });
   }

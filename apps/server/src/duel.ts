@@ -4,16 +4,22 @@ import {
   claimFrom,
   cleanMarks,
   createBoard,
+  orderWindow,
   phaseColorAt,
   seedRng,
+  startOrder,
+  tapOrder,
+  tickOrder,
   DEFAULT_CONFIG,
   type Board,
   type Cell,
   type Claim,
+  type OrderRun,
 } from '@doton/core';
 import { MIN_MOVE_GAP } from './limits.js';
 import {
   DUEL_SECONDS,
+  type DuelKind,
   type DuelServerMessage,
   type DuelSnapshot,
   type MoveLog,
@@ -50,6 +56,12 @@ export interface ScorePoint {
 interface PlayerState {
   player: DuelPlayer;
   board: Board;
+  /**
+   * Заход заказов — у каждого свой. Поле у обоих из одного сида, но окна
+   * расходятся с первого же закрытого заказа: закрыл — сразу новый цвет,
+   * ровно как в одиночном режиме. Общее у дуэлянтов только начало.
+   */
+  run: OrderRun | null;
   score: number;
   lastMoveAt: number;
   /** Записанная попытка вместо живого игрока. */
@@ -87,21 +99,26 @@ export class Duel {
   private readonly claims: DuelClaim[] = [];
   private finished = false;
 
+  readonly kind: DuelKind;
+
   constructor(
     seed: number,
     a: DuelPlayer,
     b: DuelPlayer,
-    options: { ghostB?: boolean; now?: number } = {},
+    options: { ghostB?: boolean; now?: number; kind?: DuelKind } = {},
   ) {
     this.seed = seed;
+    this.kind = options.kind ?? 'chain';
     this.startedAt = options.now ?? Date.now();
     for (const [player, ghost] of [
       [a, false],
       [b, options.ghostB ?? false],
     ] as const) {
+      const run = this.kind === 'order' ? startOrder(seed, DEFAULT_CONFIG) : null;
       this.players.set(player.id, {
         player,
-        board: createBoard(seedRng(seed), DEFAULT_CONFIG),
+        board: run ? run.board : createBoard(seedRng(seed), DEFAULT_CONFIG),
+        run,
         score: 0,
         lastMoveAt: -Infinity,
         ghost,
@@ -139,6 +156,7 @@ export class Duel {
         type: 'matched',
         seed: this.seed,
         duration: DUEL_SECONDS,
+        kind: this.kind,
         opponent: opponent.player.name,
         opponentMarks: cleanMarks(opponent.player.marks ?? []),
         ghost: opponent.ghost,
@@ -163,6 +181,7 @@ export class Duel {
     if (this.isOver(now)) return { ok: false, reason: 'duel-over' };
     const elapsed = this.elapsed(now);
     if (elapsed < state.lastMoveAt + MIN_MOVE_GAP) return { ok: false, reason: 'too-fast' };
+    if (state.run) return this.applyTap(playerId, state, path, elapsed);
 
     const phase = phaseColorAt(this.seed, elapsed, DEFAULT_CONFIG, this.claims);
     const result = applyMove(state.board, path, DEFAULT_CONFIG, phase);
@@ -203,6 +222,67 @@ export class Duel {
     return { ok: true, score: state.score, points: result.points };
   }
 
+  /**
+   * Касание в дуэли на заказах. Правила те же, что в одиночном заходе, и
+   * считает их то же ядро — сервер лишь подставляет своё время: клиентской
+   * секунде тут веры не больше, чем в цепочках.
+   */
+  private applyTap(
+    playerId: string,
+    state: PlayerState,
+    path: Cell[],
+    elapsed: number,
+  ): MoveOutcome {
+    const cell = path[0];
+    if (!cell || !state.run) return { ok: false, reason: 'not-in-duel' };
+    const before = state.run.score;
+    const tapped = tapOrder(state.run, cell, elapsed, DEFAULT_CONFIG);
+    if (typeof tapped === 'string') return { ok: false, reason: tapped };
+
+    state.run = tapped.run;
+    state.board = tapped.run.board;
+    const points = tapped.run.score - before;
+    state.score = tapped.run.score;
+    state.lastMoveAt = elapsed;
+    if (points > 0) state.log.push({ t: Number(elapsed.toFixed(2)), points });
+    state.moves.push({
+      path: [{ r: cell.r, c: cell.c }],
+      t: Number(elapsed.toFixed(2)),
+    });
+    this.tellOpponent(playerId, state);
+    return { ok: true, score: state.score, points };
+  }
+
+  /** Сообщает сопернику новый счёт, а в заказах — и запас сбоев. */
+  private tellOpponent(playerId: string, state: PlayerState): void {
+    const opponent = this.opponentOf(playerId);
+    if (!opponent || opponent.ghost) return;
+    opponent.player.send({
+      type: 'opponent',
+      score: state.score,
+      ...(state.run ? { fails: state.run.fails } : {}),
+    });
+  }
+
+  /**
+   * Доводит заказы до текущей секунды. Окно кончается временем, а не
+   * ходом, — без этого игрок, переставший играть, не набирал бы сбоев
+   * вовсе, и запас был бы наказанием только для тех, кто пробует.
+   *
+   * Возвращает того, у кого запас кончился: для матча это конец.
+   */
+  tick(now = Date.now()): string | null {
+    if (this.finished || this.kind !== 'order') return null;
+    const elapsed = this.elapsed(now);
+    for (const [id, state] of this.players) {
+      if (!state.run || state.ghost) continue;
+      state.run = tickOrder(state.run, elapsed, DEFAULT_CONFIG);
+      state.board = state.run.board;
+      if (state.run.over) return id;
+    }
+    return null;
+  }
+
   scoreOf(playerId: string): number {
     return this.players.get(playerId)?.score ?? 0;
   }
@@ -224,8 +304,18 @@ export class Duel {
     const state = this.players.get(playerId);
     const opponent = this.opponentOf(playerId);
     if (!state || !opponent) return undefined;
+    const run = state.run;
     return {
       seed: this.seed,
+      kind: this.kind,
+      ...(run
+        ? {
+            order: {
+              ...orderWindow(run, this.elapsed(now), DEFAULT_CONFIG),
+              fails: run.fails,
+            },
+          }
+        : {}),
       grid: state.board.grid.map((row) =>
         row.map((dot) => ({ color: dot.color, charged: dot.charged })),
       ),

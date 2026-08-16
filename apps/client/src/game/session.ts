@@ -86,7 +86,8 @@ export class Session {
    * так нельзя — там время общее с соперником, и его пускает сервер.
    */
   private startedYet = false;
-  private readonly duration: number;
+  /** Сколько длится партия; Infinity — пока не кончится запас сбоев. */
+  readonly duration: number;
 
   constructor(
     seed: number,
@@ -98,8 +99,10 @@ export class Session {
     this.seed = seed;
     this.mode = mode;
     this.board = createBoard(seedRng(seed), cfg);
+    // Время матча важнее режима: заказы бывают и бесконечными (соло), и
+    // на полторы минуты (дуэль), а спринт всегда свой.
     this.duration =
-      mode === 'sprint' ? SPRINT_SECONDS : mode === 'duel' ? (duration ?? 90) : Infinity;
+      mode === 'sprint' ? SPRINT_SECONDS : (duration ?? (mode === 'duel' ? 90 : Infinity));
     this.timeLeft = this.duration;
     if (mode === 'order') {
       this.run = startOrder(seed, cfg);
@@ -122,7 +125,7 @@ export class Session {
 
   /** Партия идёт на время. */
   get timed(): boolean {
-    return this.mode === 'sprint' || this.mode === 'duel';
+    return Number.isFinite(this.duration);
   }
 
   phase(): PhaseState {

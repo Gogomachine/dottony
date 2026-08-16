@@ -59,7 +59,7 @@ function shortDate(iso: string): string {
 
 export interface CabinetHandlers {
   onReplay(duelId: string): void;
-  onRatingBoard(): void;
+  onRatingBoard(kind: 'chain' | 'order'): void;
   /** Таблица рекордов спринта. */
   onSprintBoard(): void;
   /** Таблица рекордов заказов. */
@@ -106,7 +106,11 @@ export class Cabinet {
     el<HTMLButtonElement>('cab-link-tg').addEventListener('click', () => void this.linkTelegram());
     el<HTMLButtonElement>('cab-rating-board').addEventListener('click', () => {
       this.hide();
-      handlers.onRatingBoard();
+      handlers.onRatingBoard('chain');
+    });
+    el<HTMLButtonElement>('cab-order-rating-board').addEventListener('click', () => {
+      this.hide();
+      handlers.onRatingBoard('order');
     });
     el<HTMLButtonElement>('cab-sprint-board').addEventListener('click', () => {
       this.hide();
@@ -329,8 +333,13 @@ export class Cabinet {
     if (!linkBtn.hidden) linkBtn.textContent = 'Привязать Telegram';
 
     this.renderTotal(me.total);
+    // Два рейтинга рядом: у каждой механики свой, и место в своей таблице.
     el<HTMLSpanElement>('cab-rating').textContent = String(me.rating);
-    el<HTMLSpanElement>('cab-rank').textContent = me.rank === null ? '—' : `#${me.rank}`;
+    el<HTMLSpanElement>('cab-rank').textContent =
+      me.rank === null ? 'цепочки' : `цепочки · #${me.rank}`;
+    el<HTMLSpanElement>('cab-order-rating').textContent = String(me.orderDuel.rating);
+    el<HTMLSpanElement>('cab-order-rating-rank').textContent =
+      me.orderDuel.rank === null ? 'заказы' : `заказы · #${me.orderDuel.rank}`;
     el<HTMLSpanElement>('cab-duels').textContent = `${me.duels.won}/${me.duels.played}`;
     // Рекорд спринта — вместе с местом: он интересен в сравнении.
     el<HTMLSpanElement>('cab-sprint').textContent =
@@ -500,7 +509,9 @@ export class Cabinet {
       (who.children[0] as HTMLElement).textContent = entry.ghost
         ? `${opponent} · запись`
         : opponent;
-      (who.children[1] as HTMLElement).textContent = shortDate(entry.playedAt);
+      // Дата и механика: по счёту 700:600 не понять, во что играли.
+      (who.children[1] as HTMLElement).textContent =
+        `${shortDate(entry.playedAt)} · ${entry.kind === 'order' ? 'заказы' : 'цепочки'}`;
       (item.children[2] as HTMLElement).textContent =
         `${entry.score}:${entry.opponentScore ?? 0}`;
 

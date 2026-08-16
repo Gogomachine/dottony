@@ -211,9 +211,11 @@ export interface DuelHistoryEntry {
   opponentScore: number | null;
   /** Соперник был записью чужой партии. */
   ghost: boolean;
+  /** На чём играли: цепочки или заказы. */
+  kind: DuelKind;
   /** Сдвиг рейтинга; null — матч был нерейтинговым. */
   rating: { before: number; after: number } | null;
-  /** Партию можно прокрутить заново. */
+  /** Партию можно прокрутить заново; в заказах прокрутки пока нет. */
   replay: boolean;
 }
 
@@ -289,6 +291,16 @@ export interface MeResponse {
   total: number;
   /** Способы входа: гость, Telegram, кошелёк. */
   identities: IdentityInfo[];
+  /**
+   * Рейтинг дуэлей на заказах. Отдельный от цепочек: механики разные, и
+   * одно число на двоих врало бы про обе.
+   */
+  orderDuel: {
+    rating: number;
+    league: string;
+    rank: number | null;
+    placement: { played: number; required: number } | null;
+  };
   /** Спринт: личный рекорд за три минуты и место в таблице. */
   sprint: { best: number; rank: number | null };
   /** Челлендж бесконечного режима: лучший ход и место в таблице. */
@@ -313,10 +325,21 @@ export interface ApiError {
 /** Длительность дуэли, сек. */
 export const DUEL_SECONDS = 90;
 
+/**
+ * На чём играется дуэль. Механики две, и они не смешиваются: в цепочках
+ * ведут пальцем и ловят резонанс, в заказах снимают группу одним касанием
+ * за окно. Подбор идёт отдельно для каждой — иначе матч был бы про то, кто
+ * во что играет, а не кто как играет.
+ */
+export const DuelKindSchema = z.enum(['chain', 'order']);
+export type DuelKind = z.infer<typeof DuelKindSchema>;
+
 export const DuelJoinSchema = z.object({
   type: z.literal('join'),
   /** Код приватной комнаты; без него — открытый подбор соперника. */
   room: z.string().trim().min(4).max(16).optional(),
+  /** Механика матча; без поля — цепочки, как было до заказов. */
+  kind: DuelKindSchema.optional(),
 });
 
 /*
@@ -326,7 +349,9 @@ export const DuelJoinSchema = z.object({
  */
 export const DuelMoveSchema = z.object({
   type: z.literal('move'),
-  path: z.array(CellSchema).min(3).max(64),
+  // Одна точка — это касание в заказах; длину цепочки проверяет само ядро,
+  // и проверять её дважды, да ещё и разными числами, незачем.
+  path: z.array(CellSchema).min(1).max(64),
 });
 
 export const DuelLeaveSchema = z.object({ type: z.literal('leave') });
@@ -338,6 +363,20 @@ export const DuelClientMessageSchema = z.discriminatedUnion('type', [
 ]);
 
 export type DuelClientMessage = z.infer<typeof DuelClientMessageSchema>;
+
+/**
+ * Заказ в дуэли: то, чего нет в счёте, но без чего экран не собрать —
+ * какого цвета окно, сколько его осталось и сколько сбоев уже набрано.
+ */
+export interface DuelOrderState {
+  color: number;
+  /** Секунды до конца текущего окна. */
+  remaining: number;
+  /** Номер окна с начала матча. */
+  cycle: number;
+  /** Упущено окон; на третьем матч кончается поражением. */
+  fails: number;
+}
 
 /** Точка поля в снимке состояния: цвет и признак заряда. */
 export interface DuelDot {
@@ -351,6 +390,10 @@ export interface DuelDot {
  */
 export interface DuelSnapshot {
   seed: number;
+  /** Механика матча: от неё зависит и поле, и правила хода. */
+  kind: DuelKind;
+  /** Состояние захода заказов; у дуэли на цепочках его нет. */
+  order?: DuelOrderState;
   grid: DuelDot[][];
   score: number;
   opponentScore: number;
@@ -376,6 +419,8 @@ export type DuelServerMessage =
   | {
       type: 'matched';
       seed: number;
+      /** Механика матча: цепочки или заказы. */
+      kind: DuelKind;
       /** Сколько секунд осталось до конца матча на момент старта. */
       duration: number;
       opponent: string;
@@ -390,7 +435,8 @@ export type DuelServerMessage =
   | { type: 'accepted'; score: number; points: number }
   /** Ход отклонён — клиент рассинхронизировался, поле стоит перечитать. */
   | { type: 'rejected'; reason: string }
-  | { type: 'opponent'; score: number }
+  /** Счёт соперника; в заказах с ним едет и его запас сбоев. */
+  | { type: 'opponent'; score: number; fails?: number }
   /**
    * Заявка на цвет ближайшего резонанса — своя или соперника. Свои заявки
    * клиент тоже узнаёт отсюда, а не считает сам: окно решают серверные

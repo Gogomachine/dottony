@@ -8,7 +8,7 @@ import {
   PLACEMENT_GAMES,
   type Rating,
 } from '@doton/core';
-import type { BoardPeriod } from '@doton/protocol';
+import type { BoardPeriod, DuelKind } from '@doton/protocol';
 import { MIN_MOVE_GAP, MOVE_SLACK } from './limits.js';
 
 export type { BoardPeriod };
@@ -71,6 +71,8 @@ export interface DuelHistoryRow {
   opponentName: string | null;
   opponentScore: number | null;
   opponentGhost: boolean;
+  /** На чём играли: у заказов своя механика и свой рейтинг. */
+  kind: DuelKind;
   ratingBefore: number | null;
   ratingAfter: number | null;
   hasReplay: boolean;
@@ -205,6 +207,14 @@ export class Store {
     await this.addColumnIfMissing('users', 'volatility', 'REAL NOT NULL DEFAULT 0.06');
     await this.addColumnIfMissing('users', 'rated_at', 'TEXT');
     await this.addColumnIfMissing('users', 'rated_games', 'INTEGER NOT NULL DEFAULT 0');
+    // Второй рейтинг — для дуэлей на заказах. Отдельные колонки, а не общая
+    // строка с признаком: навык в двух механиках разный, и смешать их в одно
+    // число значило бы соврать обоим.
+    await this.addColumnIfMissing('users', 'order_rating', 'INTEGER NOT NULL DEFAULT 1500');
+    await this.addColumnIfMissing('users', 'order_deviation', 'INTEGER NOT NULL DEFAULT 350');
+    await this.addColumnIfMissing('users', 'order_volatility', 'REAL NOT NULL DEFAULT 0.06');
+    await this.addColumnIfMissing('users', 'order_rated_at', 'TEXT');
+    await this.addColumnIfMissing('users', 'order_rated_games', 'INTEGER NOT NULL DEFAULT 0');
     await this.addColumnIfMissing('duel_players', 'rating_before', 'INTEGER');
     await this.addColumnIfMissing('duel_players', 'rating_after', 'INTEGER');
     // Исход хранится явно: по счёту его не восстановить — сдача при 0:0
@@ -259,6 +269,7 @@ export class Store {
     // Заявки на цвет резонанса: общие для матча, поэтому лежат на дуэли,
     // а не на игроке. Без них реплей взял бы цвет фазы из сида и разошёлся
     // бы со счётом. У матчей, сыгранных до заявок, колонка пуста.
+    await this.addColumnIfMissing('duels', 'kind', "TEXT NOT NULL DEFAULT 'chain'");
     await this.addColumnIfMissing('duels', 'claims', 'TEXT');
     await this.client.execute(
       'CREATE UNIQUE INDEX IF NOT EXISTS idx_users_friend_code ON users (friend_code)',
@@ -324,6 +335,7 @@ export class Store {
   async saveDuel(
     id: string,
     seed: number,
+    kind: DuelKind,
     players: {
       id: string;
       name?: string;
@@ -338,8 +350,8 @@ export class Store {
     await this.client.batch(
       [
         {
-          sql: 'INSERT INTO duels (id, seed, claims) VALUES (?, ?, ?)',
-          args: [id, seed, JSON.stringify(claims)],
+          sql: 'INSERT INTO duels (id, seed, kind, claims) VALUES (?, ?, ?, ?)',
+          args: [id, seed, kind, JSON.stringify(claims)],
         },
         ...players.map((player) => ({
           sql: `INSERT INTO duel_players
@@ -364,7 +376,7 @@ export class Store {
   /** Последние матчи игрока для личного кабинета. */
   async duelHistory(userId: string, limit: number): Promise<DuelHistoryRow[]> {
     const result = await this.client.execute({
-      sql: `SELECT d.id, d.created_at, mine.score, mine.outcome,
+      sql: `SELECT d.id, d.created_at, d.kind, mine.score, mine.outcome,
                    mine.rating_before, mine.rating_after,
                    mine.moves IS NOT NULL AS has_replay,
                    theirs.score AS opponent_score,
@@ -390,7 +402,10 @@ export class Store {
       opponentGhost: Number(row.opponent_ghost ?? 0) === 1,
       ratingBefore: row.rating_before === null ? null : Number(row.rating_before),
       ratingAfter: row.rating_after === null ? null : Number(row.rating_after),
-      hasReplay: Number(row.has_replay ?? 0) === 1,
+      // Реплей пока умеет только цепочки: в заказах ход — касание, и
+      // прокрутка по нему собрала бы пустое поле. Лучше не предлагать.
+      hasReplay: Number(row.has_replay ?? 0) === 1 && String(row.kind ?? 'chain') === 'chain',
+      kind: (String(row.kind ?? 'chain') === 'order' ? 'order' : 'chain') as DuelKind,
     }));
   }
 
@@ -466,10 +481,61 @@ export class Store {
     };
   }
 
-  /** Рейтинг игрока; для новичка — стартовые значения. */
-  async ratingOf(userId: string): Promise<PlayerRating> {
+  /**
+   * Имена колонок рейтинга для механики. Дуэли две, и рейтинга тоже два:
+   * цепочки живут в исходных колонках, заказы — в своих.
+   */
+  private ratingColumns(kind: DuelKind): {
+    rating: string;
+    deviation: string;
+    volatility: string;
+    ratedAt: string;
+    games: string;
+  } {
+    const prefix = kind === 'order' ? 'order_' : '';
+    return {
+      rating: `${prefix}rating`,
+      deviation: `${prefix}deviation`,
+      volatility: `${prefix}volatility`,
+      ratedAt: `${prefix}rated_at`,
+      games: `${prefix}rated_games`,
+    };
+  }
+
+  /**
+   * Случайный чужой заход заказов — материал для призрака в дуэли на
+   * заказах. Свои же заходы исключаем: играть против себя странно.
+   */
+  async pickOrderRun(
+    excludeUserId: string,
+  ): Promise<{ name: string; seed: number; score: number; moves: string; marks: (string | null)[] } | undefined> {
     const result = await this.client.execute({
-      sql: 'SELECT rating, deviation, volatility, rated_at, rated_games FROM users WHERE id = ?',
+      sql: `SELECT u.name, u.marks, r.seed, r.score, r.moves
+            FROM order_runs r JOIN users u ON u.id = r.user_id
+            WHERE r.user_id <> ? AND r.score > 0
+            ORDER BY RANDOM()
+            LIMIT 1`,
+      args: [excludeUserId],
+    });
+    const row = result.rows[0];
+    if (!row) return undefined;
+    return {
+      name: String(row.name),
+      seed: Number(row.seed),
+      score: Number(row.score),
+      moves: String(row.moves),
+      marks: this.parseMarks(row.marks),
+    };
+  }
+
+  /** Рейтинг игрока в этой механике; для новичка — стартовые значения. */
+  async ratingOf(userId: string, kind: DuelKind = 'chain'): Promise<PlayerRating> {
+    const col = this.ratingColumns(kind);
+    const result = await this.client.execute({
+      sql: `SELECT ${col.rating} AS rating, ${col.deviation} AS deviation,
+                   ${col.volatility} AS volatility, ${col.ratedAt} AS rated_at,
+                   ${col.games} AS rated_games
+            FROM users WHERE id = ?`,
       args: [userId],
     });
     const row = result.rows[0];
@@ -484,11 +550,12 @@ export class Store {
   }
 
   /** Сохраняет новый рейтинг и засчитывает ещё один рейтинговый матч. */
-  async saveRating(userId: string, rating: Rating): Promise<void> {
+  async saveRating(userId: string, rating: Rating, kind: DuelKind = 'chain'): Promise<void> {
+    const col = this.ratingColumns(kind);
     await this.client.execute({
       sql: `UPDATE users
-            SET rating = ?, deviation = ?, volatility = ?,
-                rated_at = datetime('now'), rated_games = rated_games + 1
+            SET ${col.rating} = ?, ${col.deviation} = ?, ${col.volatility} = ?,
+                ${col.ratedAt} = datetime('now'), ${col.games} = ${col.games} + 1
             WHERE id = ?`,
       args: [rating.rating, rating.deviation, rating.volatility, userId],
     });
@@ -510,12 +577,14 @@ export class Store {
   /** Таблица лидеров по рейтингу: только прошедшие калибровку. */
   async ratingLeaderboard(
     limit: number,
+    kind: DuelKind = 'chain',
   ): Promise<{ name: string; rating: number; mark: string | null }[]> {
+    const col = this.ratingColumns(kind);
     const [result, holders] = await Promise.all([
       this.client.execute({
-        sql: `SELECT id, name, rating, marks FROM users
-            WHERE rated_games >= ?
-            ORDER BY rating DESC, name ASC
+        sql: `SELECT id, name, ${col.rating} AS rating, marks FROM users
+            WHERE ${col.games} >= ?
+            ORDER BY ${col.rating} DESC, name ASC
             LIMIT ?`,
         args: [PLACEMENT_GAMES, limit],
       }),
@@ -529,15 +598,16 @@ export class Store {
   }
 
   /** Место игрока в рейтинге: 1 + число тех, кто выше. До калибровки — null. */
-  async ratingRank(userId: string): Promise<number | null> {
+  async ratingRank(userId: string, kind: DuelKind = 'chain'): Promise<number | null> {
+    const col = this.ratingColumns(kind);
     const me = await this.client.execute({
-      sql: 'SELECT rating, rated_games FROM users WHERE id = ?',
+      sql: `SELECT ${col.rating} AS rating, ${col.games} AS rated_games FROM users WHERE id = ?`,
       args: [userId],
     });
     const row = me.rows[0];
     if (!row || Number(row.rated_games) < PLACEMENT_GAMES) return null;
     const above = await this.client.execute({
-      sql: 'SELECT COUNT(*) AS above FROM users WHERE rated_games >= ? AND rating > ?',
+      sql: `SELECT COUNT(*) AS above FROM users WHERE ${col.games} >= ? AND ${col.rating} > ?`,
       args: [PLACEMENT_GAMES, Number(row.rating)],
     });
     return Number(above.rows[0]!.above) + 1;

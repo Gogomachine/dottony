@@ -15,7 +15,7 @@ import type {
   RatingLeaderboardResponse,
   SprintLeaderboardResponse,
 } from '@doton/protocol';
-import type { DuelServerMessage } from '@doton/protocol';
+import type { DuelKind, DuelServerMessage } from '@doton/protocol';
 import {
   addFriend,
   apiAvailable,
@@ -53,9 +53,11 @@ import { emblemSvg } from './emblem';
 import { markChip, loadPlate, savePlate, showPlate } from './plate';
 import {
   applyTheme,
+  loadDuelKind,
   loadMarks,
   loadSound,
   loadThemeName,
+  saveDuelKind,
   saveMarks,
   saveSound,
   SCOPE,
@@ -191,12 +193,16 @@ const ORDER_MOVE_LIMIT = 1200;
  */
 let inDuel = false;
 let duelDuration = 90;
+/** На чём идёт (или будет идти) матч: цепочки или заказы. */
+let duelKind: DuelKind = 'chain';
 
 let session = newSession();
 const renderer = new Renderer(canvas, cfg, SCOPE);
 
 function newSession(seed?: number): Session {
-  return new Session(seed ?? Math.floor(Math.random() * 0xffffffff), mode, cfg, duelDuration);
+  const id = seed ?? Math.floor(Math.random() * 0xffffffff);
+  // Часы ставит только матч: соло-заказы идут, пока есть запас сбоев.
+  return inDuel ? new Session(id, mode, cfg, duelDuration) : new Session(id, mode, cfg);
 }
 
 function startGame(seed?: number): void {
@@ -208,7 +214,8 @@ function startGame(seed?: number): void {
   if (!replay) input.enabled = true;
   // Заказы пишутся целиком: заход кончается сбоями, и тогда журнал уходит
   // на проверку одним куском.
-  orderRun = session.mode === 'order' ? { seed: session.seed, moves: [], full: false } : null;
+  orderRun =
+    session.mode === 'order' && !inDuel ? { seed: session.seed, moves: [], full: false } : null;
   // Спринт пишется весь: без журнала рекорд нечем подтвердить.
   sprintRun =
     session.mode === 'sprint' && !replay ? { seed: session.seed, moves: [] } : null;
@@ -273,7 +280,9 @@ function setStat(text: string, kind: '' | 'live' | 'warn' = ''): void {
 function updateHud(): void {
   scoreEl.textContent = groupDigits(session.score);
   const order = session.order();
-  if (order) {
+  // В матче приборная строка остаётся дуэльной: соперник и часы матча. Окно
+  // заказа живёт на экранчике — там ему и место, второго счётчика нет.
+  if (order && !inDuel) {
     // В заказах справа — счёт закрытых, а шкала делений отдана окну: она
     // и есть таймер, только не всей партии, а текущего резонанса.
     showFails();
@@ -292,7 +301,7 @@ function updateHud(): void {
   timeLabelEl.textContent = 'Время';
   const total = Math.ceil(session.timeLeft);
   timeEl.textContent = `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
-  const full = session.mode === 'duel' ? duelDuration : SPRINT_SECONDS;
+  const full = Number.isFinite(session.duration) ? session.duration : SPRINT_SECONDS;
   const lit = Math.round((session.timeLeft / full) * TICKS);
   // Последние десять секунд шкала краснеет — это видно боковым зрением.
   const warn = session.timeLeft <= 10;
@@ -346,10 +355,13 @@ function updateMini(): void {
     return;
   }
   if (order) {
-    const key = `o${order.color}:${Math.ceil(order.remaining)}`;
+    const left = session.cfg.orderLives - (session.run?.fails ?? 0);
+    const key = `o${order.color}:${Math.ceil(order.remaining)}:${inDuel ? left : ''}`;
     if (key === miniCache) return;
     miniCache = key;
-    showMini(orderMini(order, session.cfg));
+    const mini = orderMini(order, session.cfg);
+    // В матче третье поле занял соперник, и своему запасу место здесь.
+    showMini(inDuel ? { ...mini, text: `${mini.text} · запас <b>${left}</b>` } : mini);
     tintScope(SCOPE.dots[order.color]!);
     return;
   }
@@ -714,7 +726,12 @@ function showVersus(name: string, opponentScore: number): void {
   vsFieldEl.hidden = false;
   // Когда корпус занят соперником, имя стоит там же, рядом с его
   // шильдиками: повторять их обоих над счётом — двоение.
-  vsNameEl.textContent = plateHasOpponent ? 'Соперник' : name;
+  const who = plateHasOpponent ? 'Соперник' : name;
+  // В заказах к сопернику приписан его запас: по нему и видно, кто на грани.
+  vsNameEl.textContent =
+    duelKind === 'order' && opponentFails !== null
+      ? `${who} · запас ${Math.max(0, session.cfg.orderLives - opponentFails)}`
+      : who;
   vsScoreEl.textContent = String(opponentScore);
   // Кто впереди, видно по цвету: отставание горит акцентом.
   vsFieldEl.className = `field${session.score < opponentScore ? ' warn' : ''}`;
@@ -741,6 +758,8 @@ function updatePlate(): void {
 /** Занят ли корпус соперником — тогда его имя стоит на корпусе, а не над счётом. */
 let plateHasOpponent = false;
 let opponentScore = 0;
+/** Сбои соперника в дуэли на заказах; null — он их ещё не присылал. */
+let opponentFails: number | null = null;
 /** Код соперника по текущему матчу: по нему его добавляют в друзья. */
 let opponentCode: string | null = null;
 /** Код, который добавит кнопка на экране результата. */
@@ -797,10 +816,12 @@ function handleDuelMessage(message: DuelServerMessage): void {
       opponentMarks = cleanMarks(message.opponentMarks ?? []);
       updatePlate();
       opponentScore = 0;
+      opponentFails = null;
       // Матч начался — звать больше некуда.
       showInvite(null);
       opponentCode = message.opponentCode ?? null;
-      mode = 'duel';
+      duelKind = message.kind ?? 'chain';
+      mode = duelKind === 'order' ? 'order' : 'duel';
       startGame(message.seed);
       session.begin();
       showVersus(opponentName, 0);
@@ -822,7 +843,8 @@ function handleDuelMessage(message: DuelServerMessage): void {
       updatePlate();
       opponentScore = message.opponentScore;
       opponentCode = message.opponentCode ?? null;
-      mode = 'duel';
+      duelKind = message.kind ?? 'chain';
+      mode = duelKind === 'order' ? 'order' : 'duel';
           startGame(message.seed);
       session.begin();
       session.restore(message.grid, message.score, message.streak);
@@ -852,6 +874,7 @@ function handleDuelMessage(message: DuelServerMessage): void {
 
     case 'opponent':
       opponentScore = message.score;
+      if (message.fails !== undefined) opponentFails = message.fails;
       showVersus(opponentName, opponentScore);
       break;
 
@@ -920,13 +943,14 @@ function endDuel(options: { awaitRating?: boolean } = {}): void {
   else duel.close();
 }
 
-async function startDuel(room?: string): Promise<void> {
+async function startDuel(room?: string, kind: DuelKind = 'chain'): Promise<void> {
   if (!apiAvailable) {
     showOverModal({ title: 'Дуэль', note: 'Дуэли доступны только с сервером.' });
     return;
   }
+  duelKind = kind;
   showOverModal({
-    title: room ? 'Ждём друга' : 'Дуэль',
+    title: room ? 'Ждём друга' : kind === 'order' ? 'Дуэль · заказы' : 'Дуэль · цепочки',
     note: 'Подключаюсь — бесплатный сервер просыпается до минуты…',
     waiting: true,
     ...(room ? { room } : {}),
@@ -937,13 +961,17 @@ async function startDuel(room?: string): Promise<void> {
     showOverModal({ title: 'Дуэль', note: 'Не удалось войти. Попробуй ещё раз.' });
     return;
   }
-  duel.connect(room);
+  duel.connect(room, kind);
 }
 
-async function showRatingBoard(): Promise<void> {
-  showOverModal({ title: 'Рейтинг', note: 'Загружаю таблицу…', viewing: true });
+async function showRatingBoard(kind: 'chain' | 'order' = 'chain'): Promise<void> {
+  showOverModal({
+    title: kind === 'order' ? 'Рейтинг заказов' : 'Рейтинг цепочек',
+    note: 'Загружаю таблицу…',
+    viewing: true,
+  });
   try {
-    const board = await getRatingBoard();
+    const board = await getRatingBoard(kind);
     if (board.entries.length === 0) {
       overNoteEl.textContent =
         'Таблица пока пуста: в неё попадают те, кто прошёл калибровку в дуэлях.';
@@ -1367,7 +1395,7 @@ const input = new ChainInput(
     if (sprintRun) {
       sprintRun.moves.push({ path: path.map((cell) => ({ ...cell })), t: Number(elapsed.toFixed(3)) });
     }
-    if (inDuel) duel.move(path);
+    if (inDuel) duel.move(cfg.features.tap ? [path[0]!] : path);
     countScore(result.points);
     renderer.animateMove(oldGrid, result);
     updateStreak(result.streak);
@@ -1528,8 +1556,29 @@ el<HTMLButtonElement>('duel-cancel').addEventListener('click', () => {
 el<HTMLButtonElement>('duel-quick').addEventListener('click', () => {
   duelSheet.hidden = true;
   menuEl.hidden = true;
-  void startDuel();
+  void startDuel(undefined, pickedKind);
 });
+
+/**
+ * Выбранная механика дуэли. Одна на оба пути: и быстрый матч, и
+ * приглашение друга идут в ту игру, которая выбрана здесь.
+ */
+let pickedKind: DuelKind = loadDuelKind();
+function showPickedKind(): void {
+  el<HTMLButtonElement>('kind-order').classList.toggle('on', pickedKind === 'order');
+  el<HTMLButtonElement>('kind-chain').classList.toggle('on', pickedKind === 'chain');
+}
+for (const [id, kind] of [
+  ['kind-order', 'order'],
+  ['kind-chain', 'chain'],
+] as const) {
+  el<HTMLButtonElement>(id).addEventListener('click', () => {
+    pickedKind = kind;
+    saveDuelKind(kind);
+    showPickedKind();
+  });
+}
+showPickedKind();
 
 // Позвать друга — значит выбрать его в списке: кода никто не диктует, а
 // приглашение уходит ему в бота кнопкой прямо в комнату.
@@ -1625,7 +1674,7 @@ el<HTMLButtonElement>('mark-toggle').addEventListener('click', function () {
 
 const cabinet = new Cabinet({
   onReplay: (duelId) => void startReplay(duelId),
-  onRatingBoard: () => void showRatingBoard(),
+  onRatingBoard: (kind) => void showRatingBoard(kind),
   onSprintBoard: () => void showSprintBoard(),
   onOrderBoard: () => void showOrderBoard(),
   onInvite: (friendCode) => void inviteToRoom(friendCode),
@@ -1646,7 +1695,7 @@ const cabinet = new Cabinet({
 async function inviteToRoom(friendCode: string): Promise<void> {
   const room = makeRoomCode();
   showRoomCode(false);
-  await startDuel(room);
+  await startDuel(room, pickedKind);
   try {
     const { where } = await inviteFriend(friendCode, room);
     // Говорим, куда именно позвали: «в игре» и «в Telegram» — разные
@@ -1771,7 +1820,7 @@ function frame(now: number): void {
     } else if (inDuel) {
       // Итог объявляет сервер — ждём его сообщения, чтобы счёт сошёлся.
       showOverModal({ title: 'Дуэль', note: 'Время вышло, считаем результат…' });
-    } else if (session.mode === 'order') {
+    } else if (session.mode === 'order' && !inDuel) {
       // Заказы кончаются не временем, а запасом: об этом и говорим. Запас
       // дорисовываем сам: обычное обновление приборной строки мёртвый
       // заход уже не трогает, и на нём остался бы последний живой отсчёт.

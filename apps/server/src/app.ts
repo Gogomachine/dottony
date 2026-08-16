@@ -25,6 +25,7 @@ import {
   type InviteInfo,
   type MeResponse,
   type MoveLog,
+  type OrderMove,
   type RatingLeaderboardResponse,
   type ClaimLog,
   type ReplayResponse,
@@ -48,11 +49,11 @@ import {
   type Rating,
 } from '@doton/core';
 import { Bot, makeLinkToken, parseStart, type BotUpdate } from './bot.js';
-import { replayOrder } from './order.js';
+import { orderTempo, replayOrder } from './order.js';
 import { replaySprint } from './sprint.js';
 import { Store, type BoardPeriod } from './db.js';
 import { MAX_POINTS_PER_MOVE, SignupGuard } from './limits.js';
-import { DEFAULT_GHOST_SCORE, makeSyntheticGhost } from './ghost.js';
+import { DEFAULT_GHOST_SCORE, makeSyntheticGhost, type Ghost } from './ghost.js';
 import { Matchmaker, type MatchResult } from './matchmaker.js';
 import type { DuelOutcome, DuelPlayer } from './duel.js';
 import { verifyTelegramInitData } from './telegram.js';
@@ -161,10 +162,11 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   const applyRatings = async (result: MatchResult): Promise<void> => {
     if (!result.rated || result.outcomes.length !== 2) return;
     const [first, second] = result.outcomes as [DuelOutcome, DuelOutcome];
+    const kind = result.kind;
 
     const before = await Promise.all([
-      store.ratingOf(first.playerId),
-      store.ratingOf(second.playerId),
+      store.ratingOf(first.playerId, kind),
+      store.ratingOf(second.playerId, kind),
     ]);
     // Простой между матчами повышает неуверенность — так рейтинг вернувшегося
     // игрока быстрее приходит к его настоящей силе.
@@ -189,11 +191,12 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
 
     await Promise.all(
       updates.map(async ({ outcome, before: was, played, after }) => {
-        await store.saveRating(outcome.playerId, after);
+        await store.saveRating(outcome.playerId, after, kind);
         await store.saveRatingChange(result.duelId, outcome.playerId, was.rating, after.rating);
         // Лига даёт отметку на корпус. Выданное не отбирается: рейтинг
-        // просядет, а то, что человек там был, — уже случилось.
-        const badge = leagueMark(LEAGUES.indexOf(leagueOf(after.rating)));
+        // просядет, а то, что человек там был, — уже случилось. Отметки
+        // пока висят на цепочках: у заказов своя лестница и свои будут.
+        const badge = kind === 'chain' ? leagueMark(LEAGUES.indexOf(leagueOf(after.rating))) : null;
         if (badge) await store.grantMark(outcome.playerId, badge);
         // Сотня матчей — отметка за выслугу, а не за силу.
         const record = await store.duelRecord(outcome.playerId);
@@ -216,6 +219,32 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     );
   };
 
+  /**
+   * Призрак для дуэли на заказах — чужой записанный заход. Поле берётся
+   * из его сида, поэтому у живого игрока условия те же, что были у него,
+   * а темп очков считается переигровкой журнала касаний.
+   */
+  const orderGhost = async (playerId: string): Promise<Ghost | undefined> => {
+    const recorded = await store.pickOrderRun(playerId);
+    if (!recorded) return undefined;
+    try {
+      const moves = JSON.parse(recorded.moves) as OrderMove[];
+      const log = orderTempo(recorded.seed, moves);
+      if (log.length === 0) return undefined;
+      return {
+        name: recorded.name,
+        seed: recorded.seed,
+        score: log.reduce((sum, step) => sum + step.points, 0),
+        log,
+        marks: recorded.marks,
+      };
+    } catch {
+      // Битая запись — соперника просто не будет; ждать живого честнее,
+      // чем подставлять призрака, играющего в пустоту.
+      return undefined;
+    }
+  };
+
   const matchmaker = new Matchmaker({
     onFinish: (result) => {
       const outcomes = new Map(result.outcomes.map((entry) => [entry.playerId, entry.outcome]));
@@ -229,7 +258,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       // Матч без единого живого игрока сохранять незачем.
       if (players.every((player) => player.ghost)) return;
       void store
-        .saveDuel(result.duelId, result.seed, players, result.claims)
+        .saveDuel(result.duelId, result.seed, result.kind, players, result.claims)
         .then(() =>
           Promise.all(
             players
@@ -240,8 +269,11 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         .then(() => applyRatings(result))
         .catch((error: unknown) => app.log.error(error, 'failed to save duel'));
     },
-    findGhost: async (playerId) => {
+    findGhost: async (playerId, kind) => {
       if (options.duelGhosts === false) return undefined;
+      // В заказах записью служит настоящий заход заказов: его темп берётся
+      // из журнала касаний, переигранного ядром.
+      if (kind === 'order') return orderGhost(playerId);
       const average = await store.averageDuelScore(playerId);
       const target = average ?? DEFAULT_GHOST_SCORE;
       const recorded = await store.pickGhostRun(playerId, target);
@@ -569,6 +601,8 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       orderRank,
       marks,
       earned,
+      duelRating,
+      duelRank,
     ] = await Promise.all([
         store.ratingOf(user.sub),
         store.ratingRank(user.sub),
@@ -583,6 +617,8 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         store.orderRank(user.sub),
         store.marksOf(user.sub),
         ownedMarks(user.sub),
+        store.ratingOf(user.sub, 'order'),
+        store.ratingRank(user.sub, 'order'),
       ]);
     const up = nextLeague(rating.rating);
     const league = leagueOf(rating.rating);
@@ -602,6 +638,15 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       duels,
       total,
       identities,
+      orderDuel: {
+        rating: duelRating.rating,
+        league: leagueOf(duelRating.rating).name,
+        rank: duelRank,
+        placement:
+          duelRating.games >= PLACEMENT_GAMES
+            ? null
+            : { played: duelRating.games, required: PLACEMENT_GAMES },
+      },
       sprint: { best: sprint, rank: sprintRank },
       order: { best: order, orders, rank: orderRank },
       marks,
@@ -853,6 +898,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         opponent: row.opponentName,
         opponentScore: row.opponentScore,
         ghost: row.opponentGhost,
+        kind: row.kind,
         rating:
           row.ratingBefore === null || row.ratingAfter === null
             ? null
@@ -899,7 +945,10 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
 
   app.get('/api/rating', async (request): Promise<RatingLeaderboardResponse> => {
-    const rows = await store.ratingLeaderboard(RATING_BOARD_SIZE);
+    // Таблиц рейтинга две — по одной на механику; без параметра это
+    // цепочки, как было до заказов.
+    const kind = (request.query as { kind?: string }).kind === 'order' ? 'order' : 'chain';
+    const rows = await store.ratingLeaderboard(RATING_BOARD_SIZE, kind);
     const entries = rows.map((row, index) => ({
       rank: index + 1,
       name: row.name,
@@ -912,10 +961,10 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     let me: RatingLeaderboardResponse['me'] = null;
     try {
       const user = await requireUser(request);
-      const rank = await store.ratingRank(user.sub);
+      const rank = await store.ratingRank(user.sub, kind);
       if (rank !== null) {
         const [rating, marks] = await Promise.all([
-          store.ratingOf(user.sub),
+          store.ratingOf(user.sub, kind),
           store.marksOf(user.sub),
         ]);
         me = {
@@ -982,7 +1031,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
 
       switch (message.data.type) {
         case 'join':
-          matchmaker.join(player, message.data.room);
+          matchmaker.join(player, message.data.room, message.data.kind ?? 'chain');
           break;
         case 'move': {
           const outcome = matchmaker.move(player.id, message.data.path);

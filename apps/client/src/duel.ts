@@ -1,5 +1,5 @@
 import type { Cell } from '@doton/core';
-import type { DuelClientMessage, DuelServerMessage } from '@doton/protocol';
+import type { DuelClientMessage, DuelKind, DuelServerMessage } from '@doton/protocol';
 import { apiBase, authToken } from './api';
 
 /**
@@ -15,6 +15,8 @@ export type DuelHandler = (message: DuelServerMessage) => void;
 export class DuelConnection {
   private socket: WebSocket | null = null;
   private room: string | undefined;
+  /** На чём играем: механику сервер должен знать с первой же заявки. */
+  private kind: DuelKind = 'chain';
   /** Матч идёт: обрыв связи нужно чинить переподключением, а не сдачей. */
   private active = false;
   private retries = 0;
@@ -37,8 +39,9 @@ export class DuelConnection {
   }
 
   /** Открывает соединение и встаёт в очередь. room — код приватной комнаты. */
-  connect(room?: string): void {
+  connect(room?: string, kind: DuelKind = 'chain'): void {
     this.room = room;
+    this.kind = kind;
     this.retries = 0;
     clearTimeout(this.closeTimer);
     this.close({ keepActive: false });
@@ -62,7 +65,11 @@ export class DuelConnection {
       if (this.retries > 0) this.onConnectionState?.('restored');
       this.retries = 0;
       // Сервер сам поймёт, вернулись мы в идущий матч или встаём в очередь.
-      this.send(this.room ? { type: 'join', room: this.room } : { type: 'join' });
+      this.send(
+        this.room
+          ? { type: 'join', room: this.room, kind: this.kind }
+          : { type: 'join', kind: this.kind },
+      );
     });
     socket.addEventListener('message', (event) => {
       try {

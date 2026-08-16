@@ -22,6 +22,7 @@ export type ThemeName = 'draft' | 'graphite';
 const THEME_KEY = 'doton-theme';
 const MARKS_KEY = 'doton-marks';
 const SOUND_KEY = 'doton-sound';
+const KIND_KEY = 'doton-duel-kind';
 export function loadThemeName(): ThemeName {
   const saved = localStorage.getItem(THEME_KEY);
   if (saved === 'draft' || saved === 'graphite') return saved;
@@ -55,4 +56,16 @@ export function loadSound(): boolean {
 
 export function saveSound(on: boolean): void {
   localStorage.setItem(SOUND_KEY, on ? 'on' : 'off');
+}
+
+/**
+ * Выбранная механика дуэли. Запоминается: играют обычно в одну и ту же, и
+ * выбирать её каждый раз заново — лишний шаг между «хочу сыграть» и матчем.
+ */
+export function loadDuelKind(): 'chain' | 'order' {
+  return localStorage.getItem(KIND_KEY) === 'chain' ? 'chain' : 'order';
+}
+
+export function saveDuelKind(kind: 'chain' | 'order'): void {
+  localStorage.setItem(KIND_KEY, kind);
 }

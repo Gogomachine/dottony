@@ -372,7 +372,7 @@ describe('миграции', () => {
     await expect(store.pickGhostRun('nobody', 500)).resolves.toBeUndefined();
     await store.createUser('u1', 'Ада', { kind: 'guest', externalId: 'u1' });
     await expect(
-      store.saveDuel('d1', 42, [{ id: 'u1', score: 300, log: [{ t: 1, points: 300 }] }]),
+      store.saveDuel('d1', 42, 'chain', [{ id: 'u1', score: 300, log: [{ t: 1, points: 300 }] }]),
     ).resolves.toBeUndefined();
     const ghost = await store.pickGhostRun('other', 300);
     expect(ghost).toMatchObject({ name: 'Ада', seed: 42, score: 300 });
@@ -773,7 +773,7 @@ describe('привязка способов входа', () => {
 
   it('матч с призраком виден в истории и не идёт в подбор призраков', async () => {
     await store.createUser('u1', 'Ада', { kind: 'guest', externalId: 'u1' });
-    await store.saveDuel('d1', 42, [
+    await store.saveDuel('d1', 42, 'chain', [
       { id: 'u1', name: 'Ада', score: 300, outcome: 'loss', log: [{ t: 1, points: 300 }] },
       { id: 'ghost:Эталон:1', name: 'Эталон', score: 500, log: [{ t: 1, points: 500 }], ghost: true },
     ]);
@@ -1677,11 +1677,14 @@ describe('рейтинг за дуэль', () => {
    */
   async function playDuel(
     tokens: [string, string],
-    options: { room?: string; rated?: boolean; moves?: number } = {},
+    options: { room?: string; rated?: boolean; moves?: number; kind?: 'chain' | 'order' } = {},
   ): Promise<{ loser: Finished | null; winner: Finished | null }> {
     const loser = await Client.open(base, tokens[0]);
     const winner = await Client.open(base, tokens[1]);
-    const join = options.room ? { type: 'join', room: options.room } : { type: 'join' };
+    const kind = options.kind ?? 'chain';
+    const join = options.room
+      ? { type: 'join', room: options.room, kind }
+      : { type: 'join', kind };
     loser.send(join);
     await loser.wait((message) => message.type === 'searching');
     winner.send(join);
@@ -1693,8 +1696,14 @@ describe('рейтинг за дуэль', () => {
     ]);
 
     // Победитель играет честно: без ходов не было бы ни реплея, ни счёта.
+    // В заказах ход — одно касание, и группу под ним считает сервер.
     let board = createBoard(seedRng(matched.seed), DEFAULT_CONFIG);
-    for (let i = 0; i < (options.moves ?? 2); i++) {
+    for (let i = 0; i < (kind === 'order' ? 1 : (options.moves ?? 2)); i++) {
+      if (kind === 'order') {
+        winner.send({ type: 'move', path: [{ r: 0, c: 0 }] });
+        await winner.wait((message) => message.type === 'accepted' || message.type === 'rejected');
+        continue;
+      }
       const path = findAnyChain(board);
       winner.send({ type: 'move', path });
       await winner.wait((message) => message.type === 'accepted' || message.type === 'rejected');
@@ -1747,6 +1756,33 @@ describe('рейтинг за дуэль', () => {
 
     const board = await app.inject({ method: 'GET', url: '/api/rating' });
     expect((board.json() as { entries: unknown[] }).entries).toEqual([]);
+  });
+
+  it('дуэль на заказах двигает свой рейтинг, а не рейтинг цепочек', async () => {
+    const tokens: [string, string] = [await guest('Слабый'), await guest('Сильный')];
+    const { winner } = await playDuel(tokens, { kind: 'order' });
+    expect(winner!.rating!.after).toBeGreaterThan(winner!.rating!.before);
+
+    const me = await app.inject({
+      method: 'GET',
+      url: '/api/me',
+      headers: { authorization: `Bearer ${tokens[1]}` },
+    });
+    const card = me.json() as {
+      rating: number;
+      orderDuel: { rating: number; placement: { played: number } | null };
+    };
+    // Рейтинг заказов вырос, рейтинг цепочек остался нетронутым.
+    expect(card.orderDuel.rating).toBe(winner!.rating!.after);
+    expect(card.orderDuel.rating).toBeGreaterThan(1500);
+    expect(card.rating).toBe(1500);
+    expect(card.orderDuel.placement).toEqual({ played: 1, required: 5 });
+
+    // И таблицы у механик разные: в цепочках этого матча как не бывало.
+    const chain = await app.inject({ method: 'GET', url: '/api/rating' });
+    const order = await app.inject({ method: 'GET', url: '/api/rating?kind=order' });
+    expect((chain.json() as { entries: unknown[] }).entries).toEqual([]);
+    expect((order.json() as { entries: unknown[] }).entries).toEqual([]);
   });
 
   it('после калибровки игрок попадает в таблицу рейтинга', async () => {
