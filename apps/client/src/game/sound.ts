@@ -447,6 +447,12 @@ export class Sound {
    * отклика.
    */
   private envelope(gain: GainNode, at: number, peak: number, dur: number, attack = 0.008): void {
+    // Гасим узел до всякой автоматизации. Своя громкость у него по умолчанию
+    // единица, а назначение действует ровно с указанного времени — и когда
+    // время старта из-за округления оказывалось чуть раньше первого
+    // назначенного отсчёта, один отсчёт успевал пройти в полный голос. На
+    // слух это редкий щелчок в разы громче соседей: тот самый, что выбивался.
+    gain.gain.value = 0.0001;
     gain.gain.setValueAtTime(0.0001, at);
     gain.gain.linearRampToValueAtTime(peak, at + attack);
     gain.gain.exponentialRampToValueAtTime(0.0001, at + dur);
@@ -463,7 +469,14 @@ export class Sound {
     freq: number,
     dur: number,
     peak: number,
-    options: { to?: number; cutoff?: number; open?: number; pan?: number; partials?: [number, number][] } = {},
+    options: {
+      to?: number;
+      cutoff?: number;
+      open?: number;
+      pan?: number;
+      partials?: [number, number][];
+      attack?: number;
+    } = {},
   ): void {
     const ctx = this.ctx;
     if (!ctx || !this.master) return;
@@ -475,7 +488,7 @@ export class Sound {
     filter.frequency.setValueAtTime(options.open ?? cutoff * 2.2, at);
     filter.frequency.exponentialRampToValueAtTime(cutoff, at + dur * 0.7);
     const gain = ctx.createGain();
-    this.envelope(gain, at, peak, dur);
+    this.envelope(gain, at, peak, dur, options.attack);
     filter.connect(gain).connect(out);
 
     const detune = this.wobble();
@@ -546,6 +559,43 @@ export class Sound {
     }
   }
 
+  /**
+   * Мягкий тон: то же тело, но с медленной атакой, кратными обертонами и
+   * длинным спадом. У колокола призвуки некратные — оттого он и слышен
+   * металлом; здесь над нотой стоят только её собственные кратные, и
+   * металла в них нет. Вместо удара языка — короткий выдох, так что звук
+   * начинается не с точки, а с наплыва.
+   */
+  private soft(at: number, freq: number, dur: number, peak: number, pan = 0): void {
+    if (!this.ctx || !this.master) return;
+    // Выдох: полоса ставится по самой ноте, а не выше неё, поэтому он слышен
+    // как воздух внутри звука, а не как щелчок перед ним.
+    this.click(at, freq * 1.5, 0.03, peak * 0.16, { q: 0.7, pan });
+    this.body(at, freq, dur, peak, {
+      cutoff: freq * 3.2,
+      open: freq * 5,
+      pan,
+      attack: 0.03,
+      partials: [
+        [1, 1],
+        [2, 0.18],
+        [3, 0.05],
+      ],
+    });
+    // Октава сверху — тише, короче и с другой стороны: она даёт свет, но не
+    // звон. Вступает с запозданием, чтобы не слипнуться с основным тоном.
+    this.body(at + 0.05, freq * 2, dur * 0.55, peak * 0.2, {
+      cutoff: freq * 3,
+      open: freq * 4,
+      pan: -pan * 0.6,
+      attack: 0.05,
+      partials: [
+        [1, 1],
+        [2, 0.08],
+      ],
+    });
+  }
+
   // ---------- Голоса прибора ----------
 
   /**
@@ -587,7 +637,7 @@ export class Sound {
    */
   chain(dots: number, multiplier: number, at?: number): void {
     const t = this.when(at);
-    if (!this.slot(t, 0.6)) return;
+    if (!this.slot(t, multiplier > 1 ? 0.8 : 0.6)) return;
     // Два щелчка подряд в паре миллисекунд — это язычок реле и его упор.
     this.click(t, 3600, 0.004, 0.034, { q: 0.7, high: true });
     this.click(t + 0.004, 950, 0.012, 0.038, { q: 1.1 });
@@ -603,14 +653,14 @@ export class Sound {
       ],
     });
     // Множитель слышен отдельной нотой: он и есть награда за линзы.
-    if (multiplier > 1) this.bell(t + 0.06, deg(9 + multiplier), 0.55, 0.055, 0.18);
+    if (multiplier > 1) this.soft(t + 0.08, deg(9 + multiplier), 0.7, 0.055, 0.18);
   }
 
   /** Линза отшлифована: чистый тон, ради которого цепочку и тянули. */
   lens(at?: number): void {
     const t = this.when(at);
-    if (!this.slot(t, 0.7)) return;
-    this.bell(t, deg(11), 0.66, 0.07, -0.12);
+    if (!this.slot(t, 1)) return;
+    this.soft(t, deg(11), 0.95, 0.07, -0.12);
   }
 
   /** Открылось окно заказа: прибор звенит цветом. */
@@ -625,13 +675,16 @@ export class Sound {
   /** Касание в заказах: заказ закрыт (награда) или группы не хватило. */
   order(size: number, reward: number, at?: number): void {
     const t = this.when(at);
-    if (!this.slot(t, reward > 0 ? 1.1 : 0.4)) return;
+    if (!this.slot(t, reward > 0 ? 1.4 : 0.4)) return;
     if (reward > 0) {
-      this.click(t, 3000, 0.005, 0.022, { high: true });
-      this.body(t, deg(6), 0.24, 0.065, { to: deg(10), cutoff: 3000, open: 5200 });
-      this.bell(t + 0.15, deg(11), 0.75, 0.075, 0.1);
-      // Крупная группа звенит дважды: её слышно, а не только видно.
-      if (size >= 30) this.bell(t + 0.32, deg(14), 0.75, 0.06, -0.16);
+      // Подъём перед тоном — это и есть само сгорание группы. Раньше он вёл
+      // к удару колокола, теперь к наплыву, поэтому и сам стал мягче: щелчок
+      // тише и ниже, скольжение длиннее, верх прикрыт.
+      this.click(t, 1600, 0.008, 0.012, { q: 0.9 });
+      this.body(t, deg(6), 0.34, 0.06, { to: deg(10), cutoff: 1800, open: 3200, attack: 0.02 });
+      this.soft(t + 0.2, deg(11), 0.95, 0.075, 0.1);
+      // Крупная группа отзывается дважды: её слышно, а не только видно.
+      if (size >= 30) this.soft(t + 0.42, deg(14), 0.9, 0.055, -0.16);
     } else {
       // Отказ слышен, но не бьёт: на нём кончается окно, а не заход.
       this.click(t, 700, 0.008, 0.016, { q: 1.2 });
