@@ -53,11 +53,11 @@ import { emblemSvg } from './emblem';
 import { markChip, loadPlate, savePlate, showPlate } from './plate';
 import {
   applyTheme,
-  loadDuelKind,
+  loadKind,
   loadMarks,
   loadSound,
   loadThemeName,
-  saveDuelKind,
+  saveKind,
   saveMarks,
   saveSound,
   SCOPE,
@@ -102,7 +102,7 @@ const resultEl = el<HTMLDivElement>('result');
 const resultCapEl = el<HTMLSpanElement>('result-cap');
 const resultBigEl = el<HTMLSpanElement>('result-big');
 const resultSubEl = el<HTMLSpanElement>('result-sub');
-const goKey = el<HTMLDivElement>('key-go');
+const kindKey = el<HTMLDivElement>('key-kind');
 const duelSheet = el<HTMLDivElement>('duel-sheet');
 const rulesSheet = el<HTMLDivElement>('rules-sheet');
 const addOpponentBtn = el<HTMLButtonElement>('add-opponent');
@@ -136,7 +136,16 @@ for (let i = 0; i < TICKS; i++) {
 
 let themeName = loadThemeName();
 applyTheme(themeName);
-let mode: Mode = 'sprint';
+
+/**
+ * Механика прибора — положение переключателя на корпусе. От неё зависит
+ * всё: какой одиночный режим включён, какое меню открывается, на чём идёт
+ * дуэль и какого цвета акцент. Двух механик в приборе одновременно нет.
+ */
+let deviceKind: DuelKind = loadKind();
+/** Одиночный режим механики: у цепочек это спринт, у заказов — заход. */
+const SOLO: Record<DuelKind, Mode> = { chain: 'sprint', order: 'order' };
+let mode: Mode = SOLO[deviceKind];
 
 /**
  * Голос прибора. Контекст рождается только с первого касания экрана —
@@ -235,7 +244,7 @@ function startGame(seed?: number): void {
   seedEl.textContent = `образец #${session.seed.toString(16)}`;
   menuSeedEl.textContent = `#${session.seed.toString(16)}`;
   updateHud();
-  updateGoKey();
+  updateKindKey();
 }
 
 /** Текущее увеличение: следующая линза умножит потенциал на столько. */
@@ -809,7 +818,7 @@ function handleDuelMessage(message: DuelServerMessage): void {
       duel.markActive();
       inDuel = true;
       duelDuration = message.duration;
-      updateGoKey();
+      updateKindKey();
       // Честно помечаем запись: игрок должен знать, что соперник не живой.
       opponentName = message.ghost ? `${message.opponent} · запись` : message.opponent;
       // Сервер мог быть старее клиента: поля может не быть вовсе.
@@ -822,6 +831,9 @@ function handleDuelMessage(message: DuelServerMessage): void {
       opponentCode = message.opponentCode ?? null;
       duelKind = message.kind ?? 'chain';
       mode = duelKind === 'order' ? 'order' : 'duel';
+      // Друг мог позвать в другую механику: цвет показывает ту, в которой
+      // идёт матч, а не ту, в которой стоит прибор.
+      applyKind();
       startGame(message.seed);
       session.begin();
       showVersus(opponentName, 0);
@@ -835,7 +847,7 @@ function handleDuelMessage(message: DuelServerMessage): void {
       connectionLost = false;
       duel.markActive();
       inDuel = true;
-      updateGoKey();
+      updateKindKey();
       duelDuration = Math.max(1, Math.round(message.remaining));
       opponentName = message.ghost ? `${message.opponent} · запись` : message.opponent;
       // Сервер мог быть старее клиента: поля может не быть вовсе.
@@ -845,7 +857,8 @@ function handleDuelMessage(message: DuelServerMessage): void {
       opponentCode = message.opponentCode ?? null;
       duelKind = message.kind ?? 'chain';
       mode = duelKind === 'order' ? 'order' : 'duel';
-          startGame(message.seed);
+      applyKind();
+      startGame(message.seed);
       session.begin();
       session.restore(message.grid, message.score, message.streak);
       // Заявки матча общие: вернувшийся должен увидеть тот же цвет фазы.
@@ -935,7 +948,8 @@ function endDuel(options: { awaitRating?: boolean } = {}): void {
   // Соперник ушёл — корпус возвращается хозяину.
   opponentMarks = [];
   updatePlate();
-  updateGoKey();
+  // Матч кончился — корпус возвращается к своей механике вместе с цветом.
+  applyKind();
   // Партия окончена вместе с матчем: иначе локальный таймер досчитает до
   // нуля и перепишет объявленный сервером результат на «Время вышло».
   session.over = true;
@@ -1415,7 +1429,7 @@ const input = new ChainInput(
       const gain = result.multiplier > 1 ? ` ×${result.multiplier}` : '';
       setStat(`Снято ${result.removed.length + result.exploded.length} · +${result.points}${gain}`, 'live');
     }
-    updateGoKey();
+    updateKindKey();
     updateHud();
     // Своя заявка в одиночных режимах: в дуэли её объявит сервер.
     const claimAfter = session.leader();
@@ -1506,15 +1520,47 @@ function setMode(next: Mode): void {
   startGame();
 }
 
+/** Как механика называется в подписях. */
+const KIND_NAME: Record<DuelKind, string> = { chain: 'Цепочки', order: 'Заказы' };
+/** Длительность дуэли по механике — для подписей; часы всё равно ставит сервер. */
+const KIND_DUEL_TIME: Record<DuelKind, string> = { chain: '1:30', order: '3:00' };
+
 /**
- * Главная клавиша: пока идёт партия — начать заново, после конца —
- * повторить. В дуэли нового образца не выдаём: там он общий с соперником.
+ * Переключатель механики. Подписан тем, куда переключит: клавиша — это
+ * действие. В дуэли и в реплее он заперт: там механику задал не прибор,
+ * а матч, и менять её на ходу значило бы бросить соперника.
  */
-function updateGoKey(): void {
+function updateKindKey(): void {
   const locked = inDuel || replay !== null;
-  goKey.toggleAttribute('disabled', locked);
-  const label = session.over ? 'Повторить' : session.started ? 'Сброс' : 'Наблюдать';
-  goKey.firstChild!.nodeValue = locked ? 'Наблюдать' : label;
+  kindKey.toggleAttribute('disabled', locked);
+  kindKey.firstChild!.nodeValue = `⇄ ${KIND_NAME[other(deviceKind)]}`;
+}
+
+function other(kind: DuelKind): DuelKind {
+  return kind === 'chain' ? 'order' : 'chain';
+}
+
+/**
+ * Расставляет механику по всему прибору: цвет корпуса, подписи, меню.
+ * Одна точка на всё — иначе части прибора разъезжаются между собой.
+ */
+function applyKind(): void {
+  // Цвет корпуса — механика того, что идёт прямо сейчас: в матче это
+  // механика матча (друг мог позвать в свою), вне матча — своя.
+  document.documentElement.dataset.kind = inDuel ? duelKind : deviceKind;
+  el<HTMLElement>('menu-kind').textContent = KIND_NAME[deviceKind].toLowerCase();
+  // В меню видна только своя механика: у каждой свой одиночный режим.
+  for (const [go, kind] of [
+    ['sprint', 'chain'],
+    ['order', 'order'],
+  ] as const) {
+    const row = document.querySelector<HTMLElement>(`#menu-list li[data-go="${go}"]`);
+    if (row) row.hidden = deviceKind !== kind;
+  }
+  el<HTMLSpanElement>('duel-when').textContent = KIND_DUEL_TIME[deviceKind];
+  el<HTMLElement>('duel-kind-note').textContent =
+    `${KIND_NAME[deviceKind]} · ${KIND_DUEL_TIME[deviceKind]}`;
+  updateKindKey();
 }
 
 // Пункта «Продолжить» здесь нет: заслонку убирает та же клавиша, что её
@@ -1556,31 +1602,8 @@ el<HTMLButtonElement>('duel-cancel').addEventListener('click', () => {
 el<HTMLButtonElement>('duel-quick').addEventListener('click', () => {
   duelSheet.hidden = true;
   menuEl.hidden = true;
-  void startDuel(undefined, pickedKind);
+  void startDuel(undefined, deviceKind);
 });
-
-/**
- * Выбранная механика дуэли. Одна на оба пути: и быстрый матч, и
- * приглашение друга идут в ту игру, которая выбрана здесь.
- */
-let pickedKind: DuelKind = loadDuelKind();
-function showPickedKind(): void {
-  el<HTMLButtonElement>('kind-order').classList.toggle('on', pickedKind === 'order');
-  el<HTMLButtonElement>('kind-chain').classList.toggle('on', pickedKind === 'chain');
-  // Время в меню — то, что игрока ждёт по нажатию: у механик оно разное.
-  el<HTMLSpanElement>('duel-when').textContent = pickedKind === 'order' ? '3:00' : '1:30';
-}
-for (const [id, kind] of [
-  ['kind-order', 'order'],
-  ['kind-chain', 'chain'],
-] as const) {
-  el<HTMLButtonElement>(id).addEventListener('click', () => {
-    pickedKind = kind;
-    saveDuelKind(kind);
-    showPickedKind();
-  });
-}
-showPickedKind();
 
 // Позвать друга — значит выбрать его в списке: кода никто не диктует, а
 // приглашение уходит ему в бота кнопкой прямо в комнату.
@@ -1660,11 +1683,19 @@ el<HTMLDivElement>('key-menu').addEventListener('click', () => {
   else closeMenu();
 });
 
-goKey.addEventListener('click', () => {
-  if (goKey.hasAttribute('disabled')) return;
+/**
+ * Щелчок переключателя: прибор целиком переходит на другую механику и
+ * сразу встаёт в её одиночный режим — иначе после переключения экран
+ * остался бы от прежней игры. Начатый заход при этом обрывается: две
+ * механики в приборе одновременно не живут, и досчитывать нечего.
+ */
+kindKey.addEventListener('click', () => {
+  if (kindKey.hasAttribute('disabled')) return;
+  deviceKind = other(deviceKind);
+  saveKind(deviceKind);
+  applyKind();
   menuEl.hidden = true;
-  void flushScore();
-  startGame();
+  setMode(SOLO[deviceKind]);
 });
 
 el<HTMLButtonElement>('mark-toggle').addEventListener('click', function () {
@@ -1697,7 +1728,7 @@ const cabinet = new Cabinet({
 async function inviteToRoom(friendCode: string): Promise<void> {
   const room = makeRoomCode();
   showRoomCode(false);
-  await startDuel(room, pickedKind);
+  await startDuel(room, deviceKind);
   try {
     const { where } = await inviteFriend(friendCode, room);
     // Говорим, куда именно позвали: «в игре» и «в Telegram» — разные
@@ -1838,7 +1869,7 @@ function frame(now: number): void {
       sound.over(false);
       showResult('Наблюдение завершено', session.score);
     }
-    updateGoKey();
+    updateKindKey();
   }
   const order = session.order();
   if ((session.timed || order) && !session.over) updateHud();
@@ -1860,6 +1891,8 @@ function frame(now: number): void {
   requestAnimationFrame(frame);
 }
 
+// Механику прибор помнит с прошлого раза: включается там, где выключили.
+applyKind();
 startGame();
 requestAnimationFrame(frame);
 

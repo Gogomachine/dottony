@@ -22,7 +22,9 @@ export type ThemeName = 'draft' | 'graphite';
 const THEME_KEY = 'doton-theme';
 const MARKS_KEY = 'doton-marks';
 const SOUND_KEY = 'doton-sound';
+/** Прежний ключ: механика была настройкой одной только дуэли. */
 const KIND_KEY = 'doton-duel-kind';
+const DEVICE_KIND_KEY = 'doton-kind';
 export function loadThemeName(): ThemeName {
   const saved = localStorage.getItem(THEME_KEY);
   if (saved === 'draft' || saved === 'graphite') return saved;
@@ -59,13 +61,19 @@ export function saveSound(on: boolean): void {
 }
 
 /**
- * Выбранная механика дуэли. Запоминается: играют обычно в одну и ту же, и
- * выбирать её каждый раз заново — лишний шаг между «хочу сыграть» и матчем.
+ * Механика прибора: цепочки или заказы. Это не настройка одного экрана, а
+ * положение переключателя на корпусе — от него зависят и меню, и дуэль, и
+ * акцентный цвет. Запоминается: прибор должен включаться там, где его
+ * выключили.
+ *
+ * Старый ключ читается на один раз: у тех, кто уже выбирал механику дуэли,
+ * переключатель встанет в привычное положение, а не сбросится.
  */
-export function loadDuelKind(): 'chain' | 'order' {
-  return localStorage.getItem(KIND_KEY) === 'chain' ? 'chain' : 'order';
+export function loadKind(): 'chain' | 'order' {
+  const saved = localStorage.getItem(DEVICE_KIND_KEY) ?? localStorage.getItem(KIND_KEY);
+  return saved === 'order' ? 'order' : 'chain';
 }
 
-export function saveDuelKind(kind: 'chain' | 'order'): void {
-  localStorage.setItem(KIND_KEY, kind);
+export function saveKind(kind: 'chain' | 'order'): void {
+  localStorage.setItem(DEVICE_KIND_KEY, kind);
 }

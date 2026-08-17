@@ -51,7 +51,15 @@
       --case-2: #f3f2ed;
       --silk: #17181b;
       --silk-2: #87847c;
+      /*
+        Акцент — это цвет механики, а не украшение. Оранжевый остаётся у
+        цепочек: с него прибор начинался. Заказы получают синий — он
+        противоположен оранжевому, поэтому переключение видно с одного
+        взгляда, и он не спорит с латунью отметок, как спорил бы жёлтый.
+        Кромка клавиши — тень своего же цвета, отсюда вторая переменная.
+      */
       --acc: #e84b23;
+      --acc-edge: #c63a15;
       /* Золото: латунь по корпусу, а не жёлтая краска. */
       --gold: #9a7413;
       --gold-bg: rgba(154, 116, 19, 0.09);
@@ -64,6 +72,15 @@
       --scope-ink: #edeae3;
       --sans: 'Inter var', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
       --mono: 'JetBrains Mono var', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    }
+    :root[data-kind='order'] {
+      --acc: #2f6ea8;
+      --acc-edge: #24567f;
+    }
+    /* На тёмном корпусе синий берём светлее: иначе он тонет в графите. */
+    :root[data-theme='graphite'][data-kind='order'] {
+      --acc: #4a8bc8;
+      --acc-edge: #2f6ea8;
     }
     :root[data-theme='graphite'] {
       --case: #242422;
@@ -477,6 +494,8 @@
       cursor: pointer;
       transition: border-color 0.12s, transform 0.09s;
     }
+    /* display: grid выше сильнее скрытия по атрибуту — возвращаем его. */
+    .menu-list li.mode[hidden] { display: none; }
     .menu-list li.mode:active { transform: translateY(1px); }
     .menu-list li.mode b { font-size: 16px; font-weight: 700; }
     .menu-list li.mode .when {
@@ -548,7 +567,7 @@
       transition: transform 0.09s, box-shadow 0.09s, opacity 0.15s;
     }
     .key:active { transform: translateY(1px); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
-    .key.acc { background: var(--acc); border-color: #c63a15; color: #fff; }
+    .key.acc { background: var(--acc); border-color: var(--acc-edge); color: #fff; }
     .key[disabled] { opacity: 0.4; cursor: default; }
     .key .sub { display: block; font-size: 8.5px; letter-spacing: 0.14em; color: var(--silk-2); margin-top: 5px; }
     .key.acc .sub { color: rgba(255, 255, 255, 0.62); }
@@ -705,7 +724,7 @@
       box-shadow: 0 1px 0 rgba(255, 255, 255, 0.05) inset;
     }
     .modal button:active { transform: translateY(1px); }
-    .modal button.acc { background: var(--acc); border-color: #c63a15; color: #fff; }
+    .modal button.acc { background: var(--acc); border-color: var(--acc-edge); color: #fff; }
     /* Итог читается как показание: заголовок над числом, по центру. */
     #over-title { text-align: center; }
     #final-score {
@@ -1028,22 +1047,15 @@
     .cab-actions { display: flex; flex-wrap: wrap; gap: 8px; }
     .cab-actions button { flex: 1 1 44%; }
 
-    /* Выбор механики дуэли: две половины одной клавиши. */
-    .pick-kind { display: flex; gap: 6px; }
-    .pick-kind .kind {
-      flex: 1;
+    /* На чём пойдёт матч: не выбор, а напоминание о положении прибора. */
+    .duel-kind {
       font-family: var(--mono);
       font-size: 10px;
       letter-spacing: 0.14em;
       text-transform: uppercase;
-      padding: 9px 6px;
-      border: 1px solid var(--edge);
-      border-radius: 8px;
-      background: transparent;
-      color: var(--silk-2);
-      cursor: pointer;
+      text-align: center;
+      color: var(--acc);
     }
-    .pick-kind .kind.on { border-color: var(--acc); color: var(--acc); }
 
     .cab-tabs { display: flex; gap: 6px; }
     .cab-tabs .tab { flex: 1; }
@@ -1256,7 +1268,8 @@
           <div class="badge-body">
             <div class="badge-head">
               <div class="menu-caption">
-                <span class="menu-kicker">Панель управления</span>
+                <!-- Механика прибора: меню у каждой своё, и надо видеть, чьё открыто. -->
+                <span class="menu-kicker">Панель · <b id="menu-kind">цепочки</b></span>
                 <b class="menu-title">Дотоскоп 36</b>
               </div>
               <div class="badge-brand"><span id="menu-brand"></span></div>
@@ -1275,9 +1288,9 @@
               </li>
               <li class="mode" data-go="duel">
                 <b>Дуэль</b>
-                <!-- Время зависит от механики: его ставит выбор в панели дуэли. -->
+                <!-- Время зависит от механики: его ставит переключатель на корпусе. -->
                 <span class="when mono" id="duel-when">1:30</span>
-                <span class="hint">Общий образец с живым соперником — на заказах или на цепочках. У каждой механики свой рейтинг.</span>
+                <span class="hint">Общий образец с живым соперником, на той же механике. У каждой свой рейтинг.</span>
               </li>
             </ul>
 
@@ -1307,13 +1320,11 @@
         <div class="modal">
           <h2>Дуэль</h2>
           <!--
-            Механику выбирают до соперника: подбор у них раздельный, и
-            приглашение друга уходит в ту же игру, что выбрана здесь.
+            Механику здесь не выбирают: она задана переключателем на
+            корпусе. Подбор у механик раздельный, и приглашение друга
+            уходит в ту игру, в которой стоит прибор.
           -->
-          <div class="pick-kind">
-            <button id="kind-order" class="kind on">Заказы</button>
-            <button id="kind-chain" class="kind">Цепочки</button>
-          </div>
+          <p class="duel-kind" id="duel-kind-note">Цепочки · 1:30</p>
           <button id="duel-quick" class="acc">Быстрый матч</button>
           <!--
             Кодов больше нет: друга зовут из списка друзей, и ему приходит
@@ -1356,6 +1367,12 @@
               и у вас. Пока окно открыто, кайма окуляра показывает цвет, за которым
               сейчас идёт резонанс.</p>
 
+            <h3>Механика</h3>
+            <p>Прибор работает в одной из двух механик, и переключает их клавиша
+              <b>⇄</b> на корпусе. Цепочки — оранжевый прибор, заказы — синий; у
+              каждой механики своё меню, своя дуэль и свой рейтинг. Переключение
+              обрывает начатый заход: две механики сразу прибор не держит.</p>
+
             <h3>Режимы</h3>
             <p><b>Спринт</b> — три минуты на максимум потенциала. Попыток сколько угодно,
               в общую таблицу идёт лучшая; счёт подтверждает сервер, переигрывая заход.</p>
@@ -1376,8 +1393,8 @@
               <b>сбой</b>; на третьем сбое заход кончается. Запас видно в приборной
               строке, рядом со счётом. Счёт захода идёт в общую таблицу — его, как и
               спринт, подтверждает сервер, переигрывая присланные касания.</p>
-            <p><b>Дуэль</b> — одинаковый образец с живым соперником. Механику
-              выбирают до матча, и у каждой свой рейтинг и своё время: цепочки —
+            <p><b>Дуэль</b> — одинаковый образец с живым соперником. Идёт она на
+              той механике, в которой стоит прибор, и время у каждой своё: цепочки —
               полторы минуты, заказы — три. В заказах запас сбоев общий с одиночным
               заходом: три упущенных окна — поражение, каким бы ни был счёт. Если
               рядом никого, соперника отыгрывает запись чужой партии — она честно
@@ -1505,7 +1522,12 @@
     <div class="keys" id="keys">
       <div class="key" id="key-profile">Профиль<span class="sub">Рекорды, друзья</span></div>
       <div class="key" id="key-menu">Меню<span class="sub">Режимы, правила</span></div>
-      <div class="key acc" id="key-go">Наблюдать<span class="sub">Новый образец</span></div>
+      <!--
+        Переключатель механики. Подписан тем, куда переключит, а не тем,
+        где стоит: клавиша называется действием, как две соседние. Где он
+        стоит сейчас, видно по цвету корпуса и по меню.
+      -->
+      <div class="key acc" id="key-kind">⇄ Заказы<span class="sub">Механика</span></div>
     </div>
 
     <!-- Подпись обучения занимает место клавиш: высота корпуса не скачет. -->
