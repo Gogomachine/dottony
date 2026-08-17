@@ -103,6 +103,7 @@ const resultCapEl = el<HTMLSpanElement>('result-cap');
 const resultBigEl = el<HTMLSpanElement>('result-big');
 const resultSubEl = el<HTMLSpanElement>('result-sub');
 const kindKey = el<HTMLDivElement>('key-kind');
+const resetKey = el<HTMLButtonElement>('reset-key');
 const duelSheet = el<HTMLDivElement>('duel-sheet');
 const rulesSheet = el<HTMLDivElement>('rules-sheet');
 const addOpponentBtn = el<HTMLButtonElement>('add-opponent');
@@ -244,7 +245,7 @@ function startGame(seed?: number): void {
   seedEl.textContent = `образец #${session.seed.toString(16)}`;
   menuSeedEl.textContent = `#${session.seed.toString(16)}`;
   updateHud();
-  updateKindKey();
+  updateKeys();
 }
 
 /** Текущее увеличение: следующая линза умножит потенциал на столько. */
@@ -485,6 +486,7 @@ function startTutorial(): void {
   keysEl.hidden = true;
   tutEl.hidden = false;
   miniCache = '';
+  updateKeys();
   tutorial.start();
 }
 
@@ -818,7 +820,7 @@ function handleDuelMessage(message: DuelServerMessage): void {
       duel.markActive();
       inDuel = true;
       duelDuration = message.duration;
-      updateKindKey();
+      updateKeys();
       // Честно помечаем запись: игрок должен знать, что соперник не живой.
       opponentName = message.ghost ? `${message.opponent} · запись` : message.opponent;
       // Сервер мог быть старее клиента: поля может не быть вовсе.
@@ -847,7 +849,7 @@ function handleDuelMessage(message: DuelServerMessage): void {
       connectionLost = false;
       duel.markActive();
       inDuel = true;
-      updateKindKey();
+      updateKeys();
       duelDuration = Math.max(1, Math.round(message.remaining));
       opponentName = message.ghost ? `${message.opponent} · запись` : message.opponent;
       // Сервер мог быть старее клиента: поля может не быть вовсе.
@@ -1429,7 +1431,7 @@ const input = new ChainInput(
       const gain = result.multiplier > 1 ? ` ×${result.multiplier}` : '';
       setStat(`Снято ${result.removed.length + result.exploded.length} · +${result.points}${gain}`, 'live');
     }
-    updateKindKey();
+    updateKeys();
     updateHud();
     // Своя заявка в одиночных режимах: в дуэли её объявит сервер.
     const claimAfter = session.leader();
@@ -1526,14 +1528,22 @@ const KIND_NAME: Record<DuelKind, string> = { chain: 'Цепочки', order: '�
 const KIND_DUEL_TIME: Record<DuelKind, string> = { chain: '1:30', order: '3:00' };
 
 /**
- * Переключатель механики. Подписан тем, куда переключит: клавиша — это
- * действие. В дуэли и в реплее он заперт: там механику задал не прибор,
- * а матч, и менять её на ходу значило бы бросить соперника.
+ * Клавиши корпуса. Переключатель механики подписан тем, куда переключит:
+ * клавиша — это действие. Маленькая клавиша нового образца подписи не
+ * имеет вовсе, поэтому говорит подсказкой, что сделает: до хода это новый
+ * образец, посреди захода — сброс, после конца — повтор.
+ *
+ * Обе заперты в дуэли и в реплее: там и механику, и образец задал матч, а
+ * не прибор.
  */
-function updateKindKey(): void {
-  const locked = inDuel || replay !== null;
+function updateKeys(): void {
+  // Во время показа заперты обе: поле под ним чужое, и новый образец
+  // подменил бы обучению доску прямо посреди объяснения.
+  const locked = inDuel || replay !== null || !tutEl.hidden;
   kindKey.toggleAttribute('disabled', locked);
   kindKey.firstChild!.nodeValue = `⇄ ${KIND_NAME[other(deviceKind)]}`;
+  resetKey.toggleAttribute('disabled', locked);
+  resetKey.title = session.over ? 'Повторить' : session.started ? 'Сброс' : 'Новый образец';
 }
 
 function other(kind: DuelKind): DuelKind {
@@ -1560,7 +1570,7 @@ function applyKind(): void {
   el<HTMLSpanElement>('duel-when').textContent = KIND_DUEL_TIME[deviceKind];
   el<HTMLElement>('duel-kind-note').textContent =
     `${KIND_NAME[deviceKind]} · ${KIND_DUEL_TIME[deviceKind]}`;
-  updateKindKey();
+  updateKeys();
 }
 
 // Пункта «Продолжить» здесь нет: заслонку убирает та же клавиша, что её
@@ -1685,17 +1695,32 @@ el<HTMLDivElement>('key-menu').addEventListener('click', () => {
 
 /**
  * Щелчок переключателя: прибор целиком переходит на другую механику и
- * сразу встаёт в её одиночный режим — иначе после переключения экран
- * остался бы от прежней игры. Начатый заход при этом обрывается: две
- * механики в приборе одновременно не живут, и досчитывать нечего.
+ * открывает её панель. В игру сразу не бросаем — переключение это выбор
+ * того, во что играть дальше, а не команда «начали». Новый образец под
+ * панелью уже готов: закрыл её — и играй.
+ *
+ * Начатый заход при этом обрывается: две механики в приборе одновременно
+ * не живут, и досчитывать нечего.
  */
 kindKey.addEventListener('click', () => {
   if (kindKey.hasAttribute('disabled')) return;
   deviceKind = other(deviceKind);
   saveKind(deviceKind);
   applyKind();
-  menuEl.hidden = true;
   setMode(SOLO[deviceKind]);
+  openMenu();
+});
+
+/**
+ * Новый образец: до хода — просто другой расклад, посреди захода — сброс,
+ * после конца — повтор. Одно движение на все три случая, поэтому и клавиша
+ * одна, маленькая, рядом со звуком и светом.
+ */
+resetKey.addEventListener('click', () => {
+  if (resetKey.hasAttribute('disabled')) return;
+  menuEl.hidden = true;
+  void flushScore();
+  startGame();
 });
 
 el<HTMLButtonElement>('mark-toggle').addEventListener('click', function () {
@@ -1869,7 +1894,7 @@ function frame(now: number): void {
       sound.over(false);
       showResult('Наблюдение завершено', session.score);
     }
-    updateKindKey();
+    updateKeys();
   }
   const order = session.order();
   if ((session.timed || order) && !session.over) updateHud();
