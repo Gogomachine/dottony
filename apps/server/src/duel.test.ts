@@ -74,8 +74,8 @@ describe('Duel', () => {
 
     const matchedA = a.last('matched');
     const matchedB = b.last('matched');
-    expect(matchedA).toMatchObject({ seed, opponent: 'Боб', duration: DUEL_SECONDS });
-    expect(matchedB).toMatchObject({ seed, opponent: 'Ада', duration: DUEL_SECONDS });
+    expect(matchedA).toMatchObject({ seed, opponent: 'Боб', duration: DUEL_SECONDS.chain });
+    expect(matchedB).toMatchObject({ seed, opponent: 'Ада', duration: DUEL_SECONDS.chain });
   });
 
   it('шлёт каждому корпус соперника целиком, а не свой', () => {
@@ -163,7 +163,7 @@ describe('Duel', () => {
     const duel = new Duel(seed, recorder('a'), recorder('b'), { now });
     const board = createBoard(seedRng(seed), DEFAULT_CONFIG);
     const path = findAnyChain(board);
-    expect(duel.applyMove('a', path, now + (DUEL_SECONDS + 2) * 1000)).toMatchObject({
+    expect(duel.applyMove('a', path, now + (DUEL_SECONDS.chain + 2) * 1000)).toMatchObject({
       ok: false,
       reason: 'duel-over',
     });
@@ -221,6 +221,27 @@ describe('дуэль на заказах', () => {
     }
     return null;
   }
+
+  it('матч на заказах втрое длиннее матча на цепочках', () => {
+    const a = recorder('a');
+    const order = new Duel(seed, a, recorder('b'), { kind: 'order' });
+    const chain = new Duel(seed, recorder('c'), recorder('d'));
+    expect(order.duration).toBe(DUEL_SECONDS.order);
+    expect(chain.duration).toBe(DUEL_SECONDS.chain);
+    expect(order.duration).toBe(180);
+    expect(chain.duration).toBe(90);
+
+    // И объявляют игрокам своё время, а не общее.
+    order.announce();
+    expect(a.last('matched')).toMatchObject({ kind: 'order', duration: DUEL_SECONDS.order });
+
+    // Сирена у каждого своя: на второй минуте заказы ещё идут.
+    const now = Date.now();
+    const live = new Duel(seed, recorder('e'), recorder('f'), { kind: 'order', now });
+    const done = new Duel(seed, recorder('g'), recorder('h'), { now });
+    expect(live.isOver(now + 120_000)).toBe(false);
+    expect(done.isOver(now + 120_000)).toBe(true);
+  });
 
   it('касание считает ядро, и счёт растёт только за заказ', () => {
     const a = recorder('a');
@@ -457,7 +478,7 @@ describe('признак рейтингового матча', () => {
     const seed = (a.last('matched') as { seed: number }).seed;
     maker.move('a', findAnyChain(createBoard(seedRng(seed), DEFAULT_CONFIG)));
 
-    fire((DUEL_SECONDS + 1) * 1000);
+    fire((DUEL_SECONDS.chain + 1) * 1000);
     expect(result().rated).toBe(true);
     const outcomes = result().outcomes;
     expect(outcomes.map((outcome) => outcome.outcome).sort()).toEqual(['loss', 'win']);
@@ -472,7 +493,7 @@ describe('признак рейтингового матча', () => {
     const { maker, fire, result } = make();
     maker.join(recorder('a'), 'КОД123');
     maker.join(recorder('b'), 'КОД123');
-    fire((DUEL_SECONDS + 1) * 1000);
+    fire((DUEL_SECONDS.chain + 1) * 1000);
     expect(result().rated).toBe(false);
   });
 
@@ -490,7 +511,7 @@ describe('признак рейтингового матча', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    fire((DUEL_SECONDS + 1) * 1000);
+    fire((DUEL_SECONDS.chain + 1) * 1000);
     expect(result().rated).toBe(false);
     // Исход живому игроку всё равно нужен — экран результата его показывает.
     expect(result().outcomes).toHaveLength(1);
@@ -562,7 +583,7 @@ describe('обрыв связи', () => {
     expect(resumed).toMatchObject({ seed, score: 30, opponent: 'Боб' });
     expect(resumed.grid).toHaveLength(DEFAULT_CONFIG.rows);
     expect(resumed.remaining).toBeGreaterThan(0);
-    expect(resumed.remaining).toBeLessThanOrEqual(DUEL_SECONDS);
+    expect(resumed.remaining).toBeLessThanOrEqual(DUEL_SECONDS.chain);
     expect(maker.stats).toEqual({ waiting: 0, duels: 1 });
   });
 
@@ -728,7 +749,7 @@ describe('призраки', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    fire((DUEL_SECONDS + 1) * 1000);
+    fire((DUEL_SECONDS.chain + 1) * 1000);
     expect(player.last('finished')).toBeDefined();
     const result = onFinish.mock.calls[0]![0] as MatchResult;
     // Призрак помечен, чтобы приложение не записало его как игрока.
@@ -739,7 +760,9 @@ describe('призраки', () => {
   it('синтетический призрак укладывается в матч и набирает примерно заданное', () => {
     const synthetic = makeSyntheticGhost(1234, 800);
     expect(synthetic.log.length).toBeGreaterThan(3);
-    expect(Math.max(...synthetic.log.map((point) => point.t))).toBeLessThanOrEqual(DUEL_SECONDS);
+    expect(Math.max(...synthetic.log.map((point) => point.t))).toBeLessThanOrEqual(
+      DUEL_SECONDS.chain,
+    );
     // Раскладка по ходам не обязана попасть точно, но должна быть в разумных пределах.
     expect(synthetic.score).toBeGreaterThanOrEqual(800);
     expect(synthetic.score).toBeLessThan(800 + 200);

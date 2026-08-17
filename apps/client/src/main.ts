@@ -1567,6 +1567,8 @@ let pickedKind: DuelKind = loadDuelKind();
 function showPickedKind(): void {
   el<HTMLButtonElement>('kind-order').classList.toggle('on', pickedKind === 'order');
   el<HTMLButtonElement>('kind-chain').classList.toggle('on', pickedKind === 'chain');
+  // Время в меню — то, что игрока ждёт по нажатию: у механик оно разное.
+  el<HTMLSpanElement>('duel-when').textContent = pickedKind === 'order' ? '3:00' : '1:30';
 }
 for (const [id, kind] of [
   ['kind-order', 'order'],

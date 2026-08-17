@@ -100,6 +100,8 @@ export class Duel {
   private finished = false;
 
   readonly kind: DuelKind;
+  /** Длительность этого матча: у механик она разная. */
+  readonly duration: number;
 
   constructor(
     seed: number,
@@ -109,6 +111,7 @@ export class Duel {
   ) {
     this.seed = seed;
     this.kind = options.kind ?? 'chain';
+    this.duration = DUEL_SECONDS[this.kind];
     this.startedAt = options.now ?? Date.now();
     for (const [player, ghost] of [
       [a, false],
@@ -133,7 +136,7 @@ export class Duel {
   }
 
   isOver(now = Date.now()): boolean {
-    return this.finished || this.elapsed(now) > DUEL_SECONDS;
+    return this.finished || this.elapsed(now) > this.duration;
   }
 
   elapsed(now = Date.now()): number {
@@ -155,7 +158,7 @@ export class Duel {
       state.player.send({
         type: 'matched',
         seed: this.seed,
-        duration: DUEL_SECONDS,
+        duration: this.duration,
         kind: this.kind,
         opponent: opponent.player.name,
         opponentMarks: cleanMarks(opponent.player.marks ?? []),
@@ -325,7 +328,7 @@ export class Duel {
       opponentMarks: cleanMarks(opponent.player.marks ?? []),
       ghost: opponent.ghost,
       ...(opponent.ghost || !opponent.player.code ? {} : { opponentCode: opponent.player.code }),
-      remaining: Math.max(0, DUEL_SECONDS - this.elapsed(now)),
+      remaining: Math.max(0, this.duration - this.elapsed(now)),
       streak: state.board.surgeStreak,
       claims: this.claims.map(({ by, ...claim }) => ({ ...claim, mine: by === playerId })),
     };

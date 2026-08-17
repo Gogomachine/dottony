@@ -33,12 +33,16 @@ const SYNTHETIC_MARKS: (string | null)[] = ['p1', 'p13', 'p10'];
  * Синтетический призрак: раскладывает целевой счёт на ходы с человеческим
  * ритмом. Нужен на старте, когда играть ещё не с кем и записей нет.
  */
-export function makeSyntheticGhost(seed: number, targetScore: number): Ghost {
+export function makeSyntheticGhost(
+  seed: number,
+  targetScore: number,
+  seconds: number = DUEL_SECONDS.chain,
+): Ghost {
   const log: ScorePoint[] = [];
   let t = randomInt(1, 4);
   let total = 0;
 
-  while (t < DUEL_SECONDS - 2 && total < targetScore) {
+  while (t < seconds - 2 && total < targetScore) {
     // Средний ход — цепочка из 3–5 точек, иногда с множителем.
     const points = [30, 30, 60, 60, 100, 150][randomInt(0, 6)]!;
     log.push({ t: Number(t.toFixed(2)), points });
@@ -60,8 +64,8 @@ export interface GhostSchedule {
 }
 
 /** Превращает запись в расписание начислений от начала матча. */
-export function ghostSchedule(ghost: Ghost): GhostSchedule[] {
+export function ghostSchedule(ghost: Ghost, seconds: number = DUEL_SECONDS.chain): GhostSchedule[] {
   return ghost.log
-    .filter((point) => point.t <= DUEL_SECONDS)
+    .filter((point) => point.t <= seconds)
     .map((point) => ({ delayMs: Math.max(0, point.t * 1000), points: point.points }));
 }

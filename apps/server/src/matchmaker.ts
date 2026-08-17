@@ -1,5 +1,5 @@
 import { randomInt } from 'node:crypto';
-import { DUEL_SECONDS, type DuelKind, type MoveLog } from '@doton/protocol';
+import { type DuelKind, type MoveLog } from '@doton/protocol';
 import type { Cell } from '@doton/core';
 import {
   Duel,
@@ -189,7 +189,7 @@ export class Matchmaker {
 
     // Призрак «играет»: начисляем очки по записанному темпу.
     const handles = this.timers.get(duel.id) ?? [];
-    for (const step of ghostSchedule(ghost)) {
+    for (const step of ghostSchedule(ghost, duel.duration)) {
       handles.push(
         this.setTimer(() => duel.advanceGhost(ghostPlayer.id, step.points), step.delayMs),
       );
@@ -204,7 +204,7 @@ export class Matchmaker {
 
     // Небольшой запас поверх длительности: последний ход игрока может
     // прийти впритык к сирене.
-    const handle = this.setTimer(() => this.settle(duel), (DUEL_SECONDS + 1) * 1000);
+    const handle = this.setTimer(() => this.settle(duel), (duel.duration + 1) * 1000);
     this.timers.set(duel.id, [...(this.timers.get(duel.id) ?? []), handle]);
     if (duel.kind === 'order') this.watchOrders(duel);
   }

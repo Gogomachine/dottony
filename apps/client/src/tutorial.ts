@@ -537,7 +537,7 @@ export class Tutorial {
     this.hud.score(this.score, 0);
     this.idleInstruments();
 
-    this.hud.time('Время', '3:00');
+    this.hud.time('Время', '1:30');
     this.say(
       6,
       'Спринт',
@@ -553,12 +553,12 @@ export class Tutorial {
     );
     await this.wait(2.8);
 
-    this.hud.time('Время', '3:00');
+    this.hud.time('Время', '1:30');
     this.hud.versus('Соперник', 2430);
     this.say(
       6,
       'Дуэль',
-      'Три минуты на одинаковом образце с живым соперником — на заказах или на цепочках. У каждой механики свой рейтинг.',
+      'Одинаковый образец с живым соперником: полторы минуты на цепочках, три минуты на заказах. У каждой механики свой рейтинг.',
     );
     await this.wait(2.8);
     this.hud.hideVersus();
