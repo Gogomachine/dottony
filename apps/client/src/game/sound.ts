@@ -8,6 +8,11 @@
  * и на слух видно, насколько она длинная, ещё до того как палец отпущен.
  * Сэмплом это стоило бы десятка файлов.
  *
+ * Каждый голос собран из трёх частей, как настоящий звук: щелчок (первые
+ * миллисекунды, самое яркое место), тело (то, что поёт) и хвост (отражения
+ * комнаты). Одна голая синусоида, какой прибор говорил раньше, слышится
+ * пищалкой из открытки именно потому, что у неё нет ни щелчка, ни хвоста.
+ *
  * Класс работает с любым контекстом Web Audio, включая offline: тот же код
  * можно отрисовать в файл и послушать, не запуская игру.
  */
@@ -20,8 +25,8 @@
 const LADDER = [0, 2, 4, 7, 9];
 
 /**
- * Нижняя нота цепочки, Гц. Соль большой октавы: снизу оставлен весь запас,
- * потому что расти цепочке некуда, если начинать высоко.
+ * Нижняя нота, Гц. Соль большой октавы: снизу оставлен весь запас, потому
+ * что расти цепочке некуда, если начинать высоко.
  */
 const ROOT = 98;
 
@@ -31,37 +36,49 @@ const ROOT = 98;
  */
 const LADDER_TOP = 20;
 
-/** Сколько голосов звучит одновременно. Больше — каша, особенно на телефоне. */
-const VOICES = 8;
+/** Сколько событий звучит одновременно. Больше — каша, особенно на телефоне. */
+const VOICES = 10;
 
 /**
- * Общая громкость. Подбиралась по отрисовке в файл: прибор говорит вполголоса
- * и не спорит с тем, что человек слушает параллельно.
+ * Общая громкость. Подбиралась отрисовкой в файл: пик всего набора чуть
+ * ниже −6 dBFS — прибор говорит вполголоса, но ему есть чем говорить.
  */
-const LEVEL = 1.9;
+const LEVEL = 2.3;
 
-/** Сколько звука уходит в отражения. */
-const WET = 0.46;
-
-/** Длина отражений, с. */
-const ROOM = 1.7;
+/** Сколько звука уходит в отражения и насколько они задержаны. */
+const WET = 0.34;
+const ROOM = 1.9;
+/**
+ * Предзадержка отражений. Без неё хвост начинается ровно там же, где сам
+ * звук, и слипается с ним в кашу; двадцать миллисекунд отделяют прибор от
+ * комнаты, в которой он стоит, — и именно это слышно как «глубина».
+ */
+const PRE_DELAY = 0.02;
 
 /** Повтор: время до первого эха и сколько от него возвращается обратно. */
 const ECHO = 0.21;
-const ECHO_BACK = 0.3;
-const ECHO_SEND = 0.24;
+const ECHO_BACK = 0.28;
+const ECHO_SEND = 0.2;
 
 /**
- * Нота ступени. Лестница не кончается на списке: она идёт теми же
- * ступенями октава за октавой. Раньше список обрывался на тринадцатой
- * точке, и длинная цепочка с этого места звучала одной нотой — как раз
- * там, где игроку и хочется слышать, что она растёт.
+ * Нота ступени лестницы. Лестница не кончается на списке: она идёт теми же
+ * ступенями октава за октавой, поэтому длинная цепочка растёт, а не упирается
+ * в потолок списка.
+ *
+ * Через неё же считаются все остальные голоса прибора. Раньше награды
+ * звучали на круглых частотах вроде 523 Гц, до которых лестнице дела нет, и
+ * набор слышался собранным из чужих кусков, а не сыгранным одним прибором.
  */
-function note(step: number): number {
-  const index = Math.min(Math.max(step, 0), LADDER_TOP);
-  const octave = Math.floor(index / LADDER.length);
-  const degree = LADDER[index % LADDER.length]!;
+function deg(index: number): number {
+  const step = Math.max(0, index);
+  const octave = Math.floor(step / LADDER.length);
+  const degree = LADDER[step % LADDER.length]!;
   return ROOT * 2 ** (octave + degree / 12);
+}
+
+/** Нота цепочки: та же лестница, но с потолком. */
+function note(step: number): number {
+  return deg(Math.min(Math.max(step, 0), LADDER_TOP));
 }
 
 /**
@@ -72,9 +89,32 @@ function note(step: number): number {
 function stepLevel(step: number): number {
   const climb = Math.min(Math.max(step, 0), LADDER_TOP) / LADDER_TOP;
   // Спад не прямой, а с ускорением: ухо чувствительнее всего к верхам, и
-  // на конце длинной цепочки нота должна быть втрое тише первой.
-  return 0.095 - 0.066 * climb ** 1.4;
+  // на конце длинной цепочки нота должна быть заметно тише первой.
+  return 0.1 - 0.062 * climb ** 1.4;
 }
+
+/**
+ * Обертоны тела. Синус — это чистая частота и ничего больше; живой звук
+ * всегда несёт над основной нотой её кратные, поэтому тело собирается из
+ * трёх: сама нота, октава и дуодецима, каждая тише предыдущей.
+ */
+const PARTIALS: [number, number][] = [
+  [1, 1],
+  [2, 0.22],
+  [3, 0.09],
+];
+
+/**
+ * Обертоны колокола. У колокола они не кратные — оттого он и слышен
+ * колоколом, а не флейтой. Отношения взяты близкими к настоящему:
+ * второй партиал почти на терцдециму выше основного.
+ */
+const BELL_PARTIALS: [number, number, number][] = [
+  // отношение, громкость, доля общей длительности
+  [1, 1, 1],
+  [2.76, 0.4, 0.7],
+  [5.4, 0.16, 0.42],
+];
 
 export interface SoundOptions {
   /** Готовый контекст — для отрисовки в файл. Обычной игре он не нужен. */
@@ -85,11 +125,15 @@ export interface SoundOptions {
 export class Sound {
   private ctx: BaseAudioContext | null;
   private master: GainNode | null = null;
+  private noiseBuffer: AudioBuffer | null = null;
   private on: boolean;
   /**
-   * Когда доиграет каждый заведённый голос. Считаем по расписанию, а не по
-   * событию `ended`: то приходит с задержкой, а при отрисовке в файл не
+   * Когда доиграет каждое заведённое событие. Считаем по расписанию, а не
+   * по событию `ended`: то приходит с задержкой, а при отрисовке в файл не
    * приходит вовсе — и запас голосов молча закрывал бы весь набор.
+   *
+   * Считаются события, а не слои: у одного щелчка реле их три, и если бы
+   * запас тратился слоями, половина звука отваливалась бы на ровном месте.
    */
   private ends: number[] = [];
 
@@ -114,7 +158,8 @@ export class Sound {
    */
   wake(): void {
     if (!this.ctx) {
-      const Ctor = window.AudioContext ?? (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      const Ctor =
+        window.AudioContext ?? (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (!Ctor) return;
       this.ctx = new Ctor();
       this.setup(this.ctx);
@@ -126,20 +171,42 @@ export class Sound {
   private setup(ctx: BaseAudioContext): void {
     const master = ctx.createGain();
     master.gain.value = this.on ? LEVEL : 0;
+
+    /**
+     * Насыщение. Мягкое ограничение добавляет к чистым тонам их кратные —
+     * те самые, которых у синуса нет, — и на телефонном динамике это
+     * слышно как «тёплый», а не «пластмассовый» звук. Кривая пологая: это
+     * подкраска, а не перегруз.
+     */
+    const drive = ctx.createWaveShaper();
+    drive.curve = this.saturation();
+    drive.oversample = '2x';
+
     // Лимитер на выходе: голоса иногда совпадают (щелчок реле и колокол
     // множителя в одном ходу), и без него такой стык щёлкал бы перегрузом.
     const limiter = ctx.createDynamicsCompressor();
-    limiter.threshold.value = -10;
-    limiter.knee.value = 10;
-    limiter.ratio.value = 8;
-    limiter.attack.value = 0.004;
-    limiter.release.value = 0.18;
-    limiter.connect(ctx.destination);
+    limiter.threshold.value = -9;
+    limiter.knee.value = 6;
+    limiter.ratio.value = 12;
+    limiter.attack.value = 0.002;
+    limiter.release.value = 0.16;
+    // Запас до потолка. Лимитер держит громкие места, но упирать их в самый
+    // край нельзя: у чужого динамика свой предел, и на нём это захрипит.
+    const ceiling = ctx.createGain();
+    ceiling.gain.value = 0.64;
+    drive.connect(limiter);
+    limiter.connect(ceiling).connect(ctx.destination);
 
     // Отражения. Без них синтезированный звук слышен как писк из телефона,
     // а с ними — как прибор, стоящий в комнате: у каждого сигнала есть
-    // место, где он прозвучал. Отдельной комнаты не нужно, хватает короткой.
+    // место, где он прозвучал.
+    const pre = ctx.createDelay(0.2);
+    pre.delayTime.value = PRE_DELAY;
     const room = ctx.createConvolver();
+    // Нормализацию выключаем: с ней громкость хвоста считает браузер, и
+    // ранние отражения, у которых уровень задан нарочно, превращались в
+    // щелчок — короткий и втрое громче самого звука.
+    room.normalize = false;
     room.buffer = this.impulse(ctx);
     const wet = ctx.createGain();
     wet.gain.value = WET;
@@ -147,7 +214,7 @@ export class Sound {
     // хвост шипит.
     const damp = ctx.createBiquadFilter();
     damp.type = 'lowpass';
-    damp.frequency.value = 2600;
+    damp.frequency.value = 3400;
 
     // Повтор. Эхо в приборе — не украшение: короткие сигналы без него
     // кончаются слишком резко, а с ним у каждого есть спад.
@@ -157,7 +224,7 @@ export class Sound {
     back.gain.value = ECHO_BACK;
     const echoDamp = ctx.createBiquadFilter();
     echoDamp.type = 'lowpass';
-    echoDamp.frequency.value = 1800;
+    echoDamp.frequency.value = 2000;
     const send = ctx.createGain();
     send.gain.value = ECHO_SEND;
     // Каждый следующий повтор глуше предыдущего: фильтр стоит в самой петле.
@@ -165,143 +232,242 @@ export class Sound {
     echoDamp.connect(back).connect(echo);
     echoDamp.connect(send);
 
-    master.connect(limiter);
+    master.connect(drive);
     master.connect(echo);
-    master.connect(room).connect(damp).connect(wet).connect(limiter);
-    send.connect(limiter);
-    send.connect(room);
+    master.connect(pre).connect(room).connect(damp).connect(wet).connect(drive);
+    send.connect(drive);
+    send.connect(pre);
     this.master = master;
+
+    // Шум держим одним буфером на весь сеанс: щелчков за партию сотни, и
+    // сочинять каждому свой отрезок случайных чисел незачем.
+    const frames = Math.ceil(ctx.sampleRate * 2);
+    const noise = ctx.createBuffer(1, frames, ctx.sampleRate);
+    const data = noise.getChannelData(0);
+    for (let i = 0; i < frames; i++) data[i] = Math.random() * 2 - 1;
+    this.noiseBuffer = noise;
+  }
+
+  /** Пологая кривая мягкого ограничения — тангенс гиперболический. */
+  private saturation(): Float32Array<ArrayBuffer> {
+    const size = 1024;
+    const curve = new Float32Array(new ArrayBuffer(size * 4));
+    const amount = 1.6;
+    for (let i = 0; i < size; i++) {
+      const x = (i / (size - 1)) * 2 - 1;
+      curve[i] = Math.tanh(x * amount) / Math.tanh(amount);
+    }
+    return curve;
   }
 
   /**
-   * Отклик комнаты: затухающий шум. Настоящую запись сюда класть незачем —
-   * файл ради полутора секунд хвоста дороже, чем весь остальной звук.
+   * Отклик комнаты: ранние отражения плюс затухающий шум. Настоящую запись
+   * сюда класть незачем — файл ради двух секунд хвоста дороже, чем весь
+   * остальной звук.
+   *
+   * Каналы считаются врозь: одинаковый шум слева и справа сложился бы в
+   * точку посередине, и вся комната схлопнулась бы обратно в моно.
    */
   private impulse(ctx: BaseAudioContext): AudioBuffer {
-    const frames = Math.ceil(ctx.sampleRate * ROOM);
-    const buffer = ctx.createBuffer(2, frames, ctx.sampleRate);
+    const rate = ctx.sampleRate;
+    const frames = Math.ceil(rate * ROOM);
+    const buffer = ctx.createBuffer(2, frames, rate);
     for (let channel = 0; channel < 2; channel++) {
       const data = buffer.getChannelData(channel);
       let smooth = 0;
       for (let i = 0; i < frames; i++) {
-        const fade = (1 - i / frames) ** 3.2;
+        const fade = (1 - i / frames) ** 3;
         // Однополюсный фильтр прямо в буфере: отражения глухие с самого
         // начала, иначе комната звенит песком.
-        smooth += 0.22 * ((Math.random() * 2 - 1) - smooth);
-        data[i] = smooth * fade;
+        smooth += 0.24 * (Math.random() * 2 - 1 - smooth);
+        data[i] = smooth * fade * 0.5;
       }
+      // Ранние отражения — несколько отдельных ударов в первые сорок
+      // миллисекунд. Именно по ним ухо считывает размер помещения; без них
+      // хвост звучит как «ревербератор», а не как стены.
+      //
+      // Каждый удар — короткий всплеск с плавным краем, а не одиночный
+      // отсчёт: одиночный это щелчок во весь спектр, слышный отдельно от
+      // звука. Слева и справа они смещены — так пара ушей и различает,
+      // что комната шире головы.
+      for (const [at, gain] of [
+        [0.0075, 0.3],
+        [0.0131, 0.22],
+        [0.0208, 0.17],
+        [0.0342, 0.12],
+      ] as const) {
+        const start = Math.floor((at + channel * 0.0013) * rate);
+        const span = Math.max(2, Math.floor(rate * 0.0016));
+        for (let i = 0; i < span && start + i < frames; i++) {
+          // Полуволна косинуса: всплеск начинается и кончается нулём.
+          const shape = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / span);
+          data[start + i]! += (Math.random() * 2 - 1) * gain * shape;
+        }
+      }
+    }
+    // Приводим отклик к своему потолку, а не к мощности, как это делает
+    // браузер. Свёртка отдаёт на коротком щелчке ровно самый громкий
+    // отсчёт отклика, помноженный на щелчок, — значит потолок отклика и
+    // есть предел, во сколько раз комната может усилить резкий звук.
+    // С мерой по мощности этот предел оказывался больше единицы, и каждый
+    // щелчок вылезал из отражений отдельным треском.
+    let energy = 0;
+    let loudest = 0;
+    for (let channel = 0; channel < 2; channel++) {
+      for (const value of buffer.getChannelData(channel)) {
+        energy += value * value;
+        loudest = Math.max(loudest, Math.abs(value));
+      }
+    }
+    // Мощность задаёт громкость хвоста, потолок — во сколько раз комната
+    // усилит короткий щелчок. Нужны оба: берём то, что строже.
+    const scale = Math.min(1 / Math.sqrt(Math.max(energy / 2, 1e-9)), 0.05 / Math.max(loudest, 1e-9));
+    for (let channel = 0; channel < 2; channel++) {
+      const data = buffer.getChannelData(channel);
+      for (let i = 0; i < frames; i++) data[i]! *= scale;
     }
     return buffer;
   }
 
   /** Время, к которому привязывается звук; own — для отрисовки в файл. */
   private when(at?: number): number {
-    return at ?? (this.ctx?.currentTime ?? 0);
+    return at ?? this.ctx?.currentTime ?? 0;
   }
 
-  /** Есть ли свободный голос к этому моменту; занимает его, если есть. */
-  private take(at: number): boolean {
+  /**
+   * Занимает голос под целое событие. Слои внутри него уже ничего не
+   * занимают: событие либо звучит целиком, либо не звучит вовсе.
+   */
+  private slot(at: number, dur: number): boolean {
     if (!this.ctx || !this.master || !this.on) return false;
     this.ends = this.ends.filter((end) => end > at);
     if (this.ends.length >= VOICES) return false;
-    this.ends.push(at);
+    this.ends.push(at + dur);
     return true;
   }
 
-  /** Уточняет, до какого момента занят последний взятый голос. */
-  private hold(until: number): void {
-    this.ends[this.ends.length - 1] = until;
+  /**
+   * Разброс высоты, доля от ноты. Живой прибор не попадает в одну и ту же
+   * частоту дважды, и десяток центов разницы — это разница между «сыграно»
+   * и «выдано автоматом».
+   */
+  private wobble(cents = 9): number {
+    return 2 ** (((Math.random() * 2 - 1) * cents) / 1200);
+  }
+
+  /** Куда посадить звук в панораме. Голоса врозь — прибор шире телефона. */
+  private out(pan: number): AudioNode {
+    const ctx = this.ctx!;
+    if (typeof ctx.createStereoPanner !== 'function') return this.master!;
+    const panner = ctx.createStereoPanner();
+    panner.pan.value = Math.max(-1, Math.min(1, pan));
+    panner.connect(this.master!);
+    return panner;
   }
 
   /**
    * Огибающая. Атака не мгновенная нарочно: острый фронт и есть та резкость,
-   * от которой звук колет ухо, а полтора десятка миллисекунд её убирают,
-   * не съедая отклика.
+   * от которой звук колет ухо, а несколько миллисекунд её убирают, не съедая
+   * отклика.
    */
-  private envelope(gain: GainNode, at: number, peak: number, dur: number, attack = 0.012): void {
+  private envelope(gain: GainNode, at: number, peak: number, dur: number, attack = 0.008): void {
     gain.gain.setValueAtTime(0.0001, at);
     gain.gain.linearRampToValueAtTime(peak, at + attack);
     gain.gain.exponentialRampToValueAtTime(0.0001, at + dur);
   }
 
   /**
-   * Тон: короткая нота, при желании со скольжением к другой частоте. Синус
-   * по умолчанию: у прямоугольника и пилы верхние гармоники режут ухо на
-   * телефонном динамике, а прибору хватает чистого тона.
+   * Тело: нота со своими обертонами, при желании со скольжением к другой
+   * частоте. Фильтр открыт на атаке и закрывается к концу — так звучит
+   * любой ударенный предмет, и именно этого движения не хватало ровному
+   * срезу.
    */
-  private tone(
+  private body(
     at: number,
     freq: number,
     dur: number,
     peak: number,
-    type: OscillatorType = 'sine',
-    to?: number,
-    cutoff = 2600,
+    options: { to?: number; cutoff?: number; open?: number; pan?: number; partials?: [number, number][] } = {},
   ): void {
     const ctx = this.ctx;
-    if (!ctx || !this.master || !this.take(at)) return;
-    this.hold(at + dur);
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
+    if (!ctx || !this.master) return;
+    const cutoff = options.cutoff ?? 2600;
+    const out = this.out(options.pan ?? 0);
     const filter = ctx.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.frequency.value = cutoff;
-    osc.type = type;
-    osc.frequency.setValueAtTime(freq, at);
-    if (to !== undefined) osc.frequency.exponentialRampToValueAtTime(to, at + dur);
-    this.envelope(gain, at, peak, dur);
-    osc.connect(filter).connect(gain).connect(this.master);
-    osc.start(at);
-    osc.stop(at + dur + 0.02);
-  }
-
-  /** Шум через полосовой фильтр — из него получаются щелчки и сирены. */
-  private hiss(at: number, freq: number, dur: number, peak: number, q = 1.4): void {
-    const ctx = this.ctx;
-    if (!ctx || !this.master || !this.take(at)) return;
-    this.hold(at + dur);
-    const frames = Math.max(1, Math.ceil(ctx.sampleRate * dur));
-    const buffer = ctx.createBuffer(1, frames, ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < frames; i++) data[i] = Math.random() * 2 - 1;
-    const source = ctx.createBufferSource();
-    source.buffer = buffer;
-    const band = ctx.createBiquadFilter();
-    band.type = 'bandpass';
-    band.frequency.value = freq;
-    band.Q.value = q;
+    filter.Q.value = 0.7;
+    filter.frequency.setValueAtTime(options.open ?? cutoff * 2.2, at);
+    filter.frequency.exponentialRampToValueAtTime(cutoff, at + dur * 0.7);
     const gain = ctx.createGain();
-    this.envelope(gain, at, peak, dur, 0.001);
-    source.connect(band).connect(gain).connect(this.master);
-    source.start(at);
-    source.stop(at + dur + 0.02);
+    this.envelope(gain, at, peak, dur);
+    filter.connect(gain).connect(out);
+
+    const detune = this.wobble();
+    for (const [ratio, weight] of options.partials ?? PARTIALS) {
+      const osc = ctx.createOscillator();
+      const part = ctx.createGain();
+      part.gain.value = weight;
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq * ratio * detune, at);
+      if (options.to !== undefined) {
+        osc.frequency.exponentialRampToValueAtTime(options.to * ratio * detune, at + dur);
+      }
+      osc.connect(part).connect(filter);
+      osc.start(at);
+      osc.stop(at + dur + 0.02);
+    }
   }
 
   /**
-   * Колокол: несущая, чуть подкрашенная модуляцией. Индекс маленький —
-   * нужен тёплый призвук, а не металлический звон.
+   * Щелчок: очень короткий отрезок шума. Всё, что ухо считывает как
+   * «дорого», живёт в первых десяти миллисекундах — там и только там
+   * прибору позволен верх, потому что резать ухо ему нечем: он кончается
+   * раньше, чем ухо успевает возмутиться.
    */
-  private bell(at: number, freq: number, dur: number, peak: number): void {
+  private click(
+    at: number,
+    freq: number,
+    dur: number,
+    peak: number,
+    options: { q?: number; pan?: number; high?: boolean } = {},
+  ): void {
     const ctx = this.ctx;
-    if (!ctx || !this.master || !this.take(at)) return;
-    this.hold(at + dur);
-    const carrier = ctx.createOscillator();
-    const mod = ctx.createOscillator();
-    const modGain = ctx.createGain();
+    if (!ctx || !this.master || !this.noiseBuffer) return;
+    const source = ctx.createBufferSource();
+    source.buffer = this.noiseBuffer;
+    const band = ctx.createBiquadFilter();
+    band.type = options.high ? 'highpass' : 'bandpass';
+    band.frequency.value = freq;
+    band.Q.value = options.q ?? 1.4;
     const gain = ctx.createGain();
-    carrier.type = 'sine';
-    carrier.frequency.value = freq;
-    mod.type = 'sine';
-    mod.frequency.value = freq * 2;
-    modGain.gain.setValueAtTime(freq * 0.5, at);
-    modGain.gain.exponentialRampToValueAtTime(1, at + dur * 0.6);
-    this.envelope(gain, at, peak, dur, 0.002);
-    mod.connect(modGain).connect(carrier.frequency);
-    carrier.connect(gain).connect(this.master);
-    mod.start(at);
-    mod.stop(at + dur + 0.02);
-    carrier.start(at);
-    carrier.stop(at + dur + 0.02);
+    this.envelope(gain, at, peak, dur, 0.0008);
+    source.connect(band).connect(gain).connect(this.out(options.pan ?? 0));
+    // Играем случайный кусок общего буфера: два одинаковых щелчка подряд
+    // ухо слышит как повтор записи.
+    source.start(at, Math.random() * 1.5, dur + 0.02);
+  }
+
+  /**
+   * Колокол: несколько некратных призвуков, каждый со своим спадом. Верхние
+   * гаснут первыми — так гаснет и настоящий металл.
+   */
+  private bell(at: number, freq: number, dur: number, peak: number, pan = 0): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.master) return;
+    const out = this.out(pan);
+    const detune = this.wobble(6);
+    // Удар языка: без него колокол начинается ниоткуда.
+    this.click(at, freq * 6, 0.005, peak * 0.55, { q: 0.8, pan, high: true });
+    for (const [ratio, weight, span] of BELL_PARTIALS) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq * ratio * detune;
+      this.envelope(gain, at, peak * weight, dur * span, 0.003);
+      osc.connect(gain).connect(out);
+      osc.start(at);
+      osc.stop(at + dur * span + 0.02);
+    }
   }
 
   // ---------- Голоса прибора ----------
@@ -309,7 +475,13 @@ export class Sound {
   /** Палец лёг на очередную точку: цепочка растёт и поёт. */
   step(index: number, at?: number): void {
     const t = this.when(at);
-    this.tone(t, note(index), 0.13, stepLevel(index), 'sine', undefined, 3000);
+    if (!this.slot(t, 0.2)) return;
+    const level = stepLevel(index);
+    // Цепочка идёт по полю — пусть идёт и по панораме: ноты расходятся
+    // веером, и длинная цепочка на слух шире короткой.
+    const pan = Math.max(-0.5, Math.min(0.5, ((index % 7) - 3) * 0.16));
+    this.click(t, 2400, 0.005, level * 0.35, { q: 0.8, pan, high: true });
+    this.body(t, note(index), 0.19, level, { cutoff: 2800, open: 5200, pan });
   }
 
   /**
@@ -318,63 +490,87 @@ export class Sound {
    */
   chain(dots: number, multiplier: number, at?: number): void {
     const t = this.when(at);
-    this.hiss(t, 550, 0.009, 0.01, 0.8);
-    // Ниже сотни герц телефонный динамик уже нем, поэтому щелчок реле не
+    if (!this.slot(t, 0.6)) return;
+    // Два щелчка подряд в паре миллисекунд — это язычок реле и его упор.
+    this.click(t, 3600, 0.004, 0.034, { q: 0.7, high: true });
+    this.click(t + 0.004, 950, 0.012, 0.038, { q: 1.1 });
+    // Ниже сотни герц телефонный динамик уже нем, поэтому низ щелчка не
     // опускаем вместе с остальными: он и так у самого пола.
-    this.tone(t, 124 - Math.min(dots, 12) * 2, 0.24, 0.08, 'sine', 88, 600);
+    this.body(t, 123.5 - Math.min(dots, 12) * 1.5, 0.26, 0.075, {
+      to: 98,
+      cutoff: 700,
+      open: 1400,
+      partials: [
+        [1, 1],
+        [2, 0.12],
+      ],
+    });
     // Множитель слышен отдельной нотой: он и есть награда за линзы.
-    if (multiplier > 1) this.bell(t + 0.06, 220 * multiplier, 0.5, 0.06);
+    if (multiplier > 1) this.bell(t + 0.06, deg(9 + multiplier), 0.55, 0.055, 0.18);
   }
 
   /** Линза отшлифована: чистый тон, ради которого цепочку и тянули. */
   lens(at?: number): void {
     const t = this.when(at);
-    this.bell(t, 440, 0.6, 0.075);
+    if (!this.slot(t, 0.7)) return;
+    this.bell(t, deg(11), 0.66, 0.07, -0.12);
   }
 
   /** Открылось окно заказа: прибор звенит цветом. */
   window(at?: number): void {
     const t = this.when(at);
-    this.tone(t, 330, 0.14, 0.07, 'sine', undefined, 2400);
-    this.tone(t + 0.12, 440, 0.18, 0.07, 'sine', undefined, 2400);
+    if (!this.slot(t, 0.4)) return;
+    this.click(t, 2600, 0.005, 0.016, { high: true, pan: -0.2 });
+    this.body(t, deg(9), 0.16, 0.065, { cutoff: 2400, open: 4200, pan: -0.2 });
+    this.body(t + 0.12, deg(11), 0.2, 0.065, { cutoff: 2600, open: 4600, pan: 0.2 });
   }
 
   /** Касание в заказах: заказ закрыт (награда) или группы не хватило. */
   order(size: number, reward: number, at?: number): void {
     const t = this.when(at);
+    if (!this.slot(t, reward > 0 ? 1.1 : 0.4)) return;
     if (reward > 0) {
-      this.tone(t, 220, 0.26, 0.07, 'sine', 494, 3000);
-      this.bell(t + 0.15, 440, 0.7, 0.08);
+      this.click(t, 3000, 0.005, 0.022, { high: true });
+      this.body(t, deg(6), 0.24, 0.065, { to: deg(10), cutoff: 3000, open: 5200 });
+      this.bell(t + 0.15, deg(11), 0.75, 0.075, 0.1);
       // Крупная группа звенит дважды: её слышно, а не только видно.
-      if (size >= 30) this.bell(t + 0.32, 660, 0.7, 0.065);
+      if (size >= 30) this.bell(t + 0.32, deg(14), 0.75, 0.06, -0.16);
     } else {
       // Отказ слышен, но не бьёт: на нём кончается окно, а не заход.
-      this.tone(t, 147, 0.32, 0.08, 'sine', 110, 700);
+      this.click(t, 700, 0.008, 0.016, { q: 1.2 });
+      this.body(t, deg(3), 0.34, 0.075, { to: ROOT * 1.12, cutoff: 800, open: 1600 });
     }
   }
 
   /** Окно упущено: низкий гудок сбоя. */
   miss(at?: number): void {
     const t = this.when(at);
-    this.tone(t, 124, 0.48, 0.085, 'sine', 82, 600);
+    if (!this.slot(t, 0.6)) return;
+    this.click(t, 480, 0.01, 0.018, { q: 1.1 });
+    this.body(t, deg(2), 0.5, 0.08, { to: ROOT * 0.84, cutoff: 700, open: 1500 });
   }
 
   /** Заявка на цвет: своя идёт вверх, чужая — вниз. */
   claim(mine: boolean, at?: number): void {
     const t = this.when(at);
+    if (!this.slot(t, 0.4)) return;
+    const pan = mine ? -0.22 : 0.22;
+    this.click(t, 2400, 0.004, 0.012, { high: true, pan });
     if (mine) {
-      this.tone(t, 350, 0.12, 0.06, 'sine', undefined, 2400);
-      this.tone(t + 0.1, 525, 0.16, 0.06, 'sine', undefined, 2400);
+      this.body(t, deg(9), 0.14, 0.055, { cutoff: 2400, open: 4200, pan });
+      this.body(t + 0.1, deg(12), 0.18, 0.055, { cutoff: 2600, open: 4400, pan });
     } else {
-      this.tone(t, 525, 0.12, 0.055, 'sine', undefined, 1800);
-      this.tone(t + 0.1, 310, 0.18, 0.055, 'sine', undefined, 1800);
+      this.body(t, deg(12), 0.14, 0.05, { cutoff: 1900, open: 3200, pan });
+      this.body(t + 0.1, deg(8), 0.2, 0.05, { cutoff: 1700, open: 3000, pan });
     }
   }
 
   /** Последние секунды: тихий отсчёт, не будильник. */
   tick(at?: number): void {
     const t = this.when(at);
-    this.tone(t, 523, 0.06, 0.04, 'sine', undefined, 2600);
+    if (!this.slot(t, 0.14)) return;
+    this.click(t, 4200, 0.004, 0.014, { high: true, pan: 0.14 });
+    this.body(t, deg(12), 0.07, 0.038, { cutoff: 2600, open: 4800, pan: 0.14 });
   }
 
   /**
@@ -383,13 +579,15 @@ export class Sound {
    */
   over(win: boolean, at?: number): void {
     const t = this.when(at);
+    if (!this.slot(t, win ? 1.4 : 1.3)) return;
     if (win) {
-      this.bell(t, 392, 0.5, 0.08);
-      this.bell(t + 0.18, 523, 0.5, 0.08);
-      this.bell(t + 0.36, 784, 0.8, 0.085);
+      this.bell(t, deg(10), 0.55, 0.075, -0.2);
+      this.bell(t + 0.18, deg(12), 0.55, 0.075, 0.2);
+      this.bell(t + 0.36, deg(15), 0.9, 0.08, 0);
     } else {
-      this.tone(t, 260, 0.5, 0.075, 'sine', 150, 1200);
-      this.tone(t + 0.46, 230, 0.66, 0.07, 'sine', 120, 1000);
+      this.click(t, 600, 0.012, 0.016, { q: 1.2 });
+      this.body(t, deg(7), 0.52, 0.07, { to: deg(2), cutoff: 1200, open: 2200, pan: -0.1 });
+      this.body(t + 0.46, deg(5), 0.7, 0.065, { to: ROOT * 1.02, cutoff: 1000, open: 1900, pan: 0.1 });
     }
   }
 }
