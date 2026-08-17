@@ -52,7 +52,15 @@ import { Bot, makeLinkToken, parseStart, type BotUpdate } from './bot.js';
 import { orderTempo, replayOrder } from './order.js';
 import { replaySprint } from './sprint.js';
 import { Store, type BoardPeriod } from './db.js';
-import { MAX_POINTS_PER_MOVE, SignupGuard } from './limits.js';
+import {
+  INVITE_LIMIT,
+  INVITE_WINDOW_MS,
+  MAX_POINTS_PER_MOVE,
+  RateGuard,
+  REQUEST_LIMIT,
+  REQUEST_WINDOW_MS,
+  SignupGuard,
+} from './limits.js';
 import { DEFAULT_GHOST_SCORE, makeSyntheticGhost, type Ghost } from './ghost.js';
 import { Matchmaker, type MatchResult } from './matchmaker.js';
 import type { DuelOutcome, DuelPlayer } from './duel.js';
@@ -75,6 +83,24 @@ export interface AppOptions {
   ghostAfterMs?: number;
   /** Логи запросов и ошибок — включаем в проде. */
   logger?: boolean;
+  /**
+   * Кому верить про адрес клиента. За балансировщиком хостинга сокет
+   * приходит от него, а не от игрока: без этого все игроки для сервера
+   * выглядят одним адресом, и любой счётчик по адресу считает их вместе.
+   * Значение — сколько прокси перед нами (у Render один). Своего
+   * балансировщика нет — оставляем выключенным: иначе заголовок
+   * X-Forwarded-For подделает кто угодно.
+   */
+  trustProxy?: boolean | number;
+  /**
+   * Откуда браузеру разрешено ходить в API. Пустой список — отражать
+   * любой источник: так удобно в разработке и не опаснее, чем сейчас
+   * (ключ игрока лежит в localStorage, и чужой странице он недоступен),
+   * но на бою список лучше задать.
+   */
+  allowedOrigins?: string[];
+  /** Потолок запросов с одного адреса в минуту. Подменяется в тестах. */
+  requestLimit?: number;
 }
 
 interface TokenPayload {
@@ -121,6 +147,7 @@ export function loggedUrl(url: string | undefined): string {
 /** Собирает приложение и готовит схему БД. */
 export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({
+    ...(options.trustProxy === undefined ? {} : { trustProxy: options.trustProxy }),
     logger: options.logger
       ? {
           serializers: {
@@ -140,12 +167,36 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   );
   await store.migrate();
 
-  await app.register(cors, { origin: true });
+  /**
+   * Мягкая остановка. Живые матчи надо досчитать раньше, чем плагин
+   * вебсокетов оборвёт соединения своим preClose: иначе игрок не увидит
+   * результата уже сыгранного матча. Хуки с одним именем идут в порядке
+   * регистрации, поэтому этот стоит здесь — до register(websocket), —
+   * хотя матчмейкера, который он останавливает, ещё нет.
+   */
+  let stopMatches = (): void => {};
+  app.addHook('preClose', () => {
+    stopMatches();
+  });
+
+  const origins = options.allowedOrigins ?? [];
+  await app.register(cors, { origin: origins.length > 0 ? origins : true });
   await app.register(jwt, { secret: options.jwtSecret });
   // Ход дуэли — это десяток клеток; всё, что больше килобайта, прислано
   // не игрой. Без потолка ws принимает кадры до 100 МиБ, и один клиент
   // может занять память сервера, ничего не нарушая формально.
   await app.register(websocket, { options: { maxPayload: 16 * 1024 } });
+
+  /**
+   * Общий потолок запросов. Отдельные двери прикрыты своими счётчиками
+   * (гостевой вход, приглашения), но перед ними стоит один общий: он не
+   * разбирает, что просят, и не даёт одной машине занять сервер целиком.
+   */
+  const requests = new RateGuard(options.requestLimit ?? REQUEST_LIMIT, REQUEST_WINDOW_MS);
+  app.addHook('onRequest', async (request, reply) => {
+    if (requests.allow(request.ip)) return;
+    await reply.code(429).header('retry-after', '60').send({ error: 'too-many' });
+  });
 
   const bot = options.telegramBotToken
     ? new Bot(options.telegramBotToken, options.jwtSecret, {
@@ -245,6 +296,17 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     }
   };
 
+  /**
+   * Незаконченные записи итогов. Матч сохраняется не сразу: сначала
+   * ответ игроку, потом база. При остановке сервера эти обещания надо
+   * дождаться, иначе последний матч пропадёт вместе с процессом.
+   */
+  const saving = new Set<Promise<unknown>>();
+  const track = (task: Promise<unknown>): void => {
+    saving.add(task);
+    void task.finally(() => saving.delete(task));
+  };
+
   const matchmaker = new Matchmaker({
     onFinish: (result) => {
       const outcomes = new Map(result.outcomes.map((entry) => [entry.playerId, entry.outcome]));
@@ -257,17 +319,19 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       });
       // Матч без единого живого игрока сохранять незачем.
       if (players.every((player) => player.ghost)) return;
-      void store
-        .saveDuel(result.duelId, result.seed, result.kind, players, result.claims)
-        .then(() =>
-          Promise.all(
-            players
-              .filter((player) => !player.ghost)
-              .map((player) => store.addTotal(player.id, player.score)),
-          ),
-        )
-        .then(() => applyRatings(result))
-        .catch((error: unknown) => app.log.error(error, 'failed to save duel'));
+      track(
+        store
+          .saveDuel(result.duelId, result.seed, result.kind, players, result.claims)
+          .then(() =>
+            Promise.all(
+              players
+                .filter((player) => !player.ghost)
+                .map((player) => store.addTotal(player.id, player.score)),
+            ),
+          )
+          .then(() => applyRatings(result))
+          .catch((error: unknown) => app.log.error(error, 'failed to save duel')),
+      );
     },
     findGhost: async (playerId, kind) => {
       if (options.duelGhosts === false) return undefined;
@@ -297,8 +361,14 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     ...(options.ghostAfterMs === undefined ? {} : { ghostAfterMs: options.ghostAfterMs }),
   });
 
-  app.addHook('onClose', () => {
+  // Хук, объявленный до плагина вебсокетов, теперь знает, что останавливать.
+  stopMatches = () => matchmaker.close();
+
+  app.addHook('onClose', async () => {
+    // На случай остановки в обход preClose: закрыть дважды безопасно.
     matchmaker.close();
+    // Итоги досчитанных матчей ещё пишутся — база закрывается после них.
+    await Promise.allSettled([...saving]);
     store.close();
   });
 
@@ -324,10 +394,11 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   // ---------- Авторизация ----------
 
   const signups = new SignupGuard();
+  const invites = new RateGuard(INVITE_LIMIT, INVITE_WINDOW_MS);
 
   app.post('/api/auth/guest', async (request, reply) => {
-    // Единственная дверь без пароля и подписи: за ней сразу заводится
-    // аккаунт, поэтому она же и единственная, где считаем частоту.
+    // Дверь без пароля и подписи: за ней сразу заводится аккаунт, поэтому
+    // общего потолка ей мало — тут счёт свой и куда более строгий.
     if (!signups.allow(request.ip)) return reply.code(429).send({ error: 'too-many' });
     const parsed = GuestAuthRequestSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
@@ -818,6 +889,9 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
    */
   app.post('/api/friends/:code/invite', async (request, reply) => {
     const user = await requireUser(request);
+    // Считаем по зовущему, а не по адресу: дверь эта — за входом, и
+    // отвечает за вызовы человек, а не сеть, из которой он пришёл.
+    if (!invites.allow(user.sub)) return reply.code(429).send({ error: 'too-many' });
     const parsedCode = FriendCodeSchema.safeParse((request.params as { code: string }).code);
     const parsedBody = InviteRequestSchema.safeParse(request.body);
     if (!parsedCode.success || !parsedBody.success) {

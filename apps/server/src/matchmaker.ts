@@ -303,14 +303,21 @@ export class Matchmaker {
     });
   }
 
-  /** Освобождает таймеры при остановке сервера. */
+  /**
+   * Остановка сервера. Живые матчи не бросаем, а досчитываем по набранному:
+   * сервер выключают по своей воле — деплоем, — и списывать за это
+   * поражение игроку, который в этот момент вёл, было бы враньём. Игроки
+   * получают обычный итог, счёт и рейтинг сохраняются.
+   */
   close(): void {
+    for (const duel of [...this.duels.values()]) this.settle(duel);
     for (const handles of this.timers.values()) {
       for (const handle of handles) this.clearTimer(handle);
     }
     this.timers.clear();
     for (const handle of this.ghostTimers.values()) this.clearTimer(handle);
     this.ghostTimers.clear();
+    this.waiting.length = 0;
   }
 
   get stats(): { waiting: number; duels: number } {

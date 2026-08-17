@@ -47,10 +47,19 @@ export function apiBase(): string {
 }
 
 /**
- * Бесплатный инстанс сервера засыпает после простоя и просыпается
- * до минуты, поэтому таймаут щедрый.
+ * Ожидание ответа. Оно двухступенчатое, потому что первый запрос и все
+ * последующие — разные истории: спящий инстанс просыпается до минуты, и
+ * именно первое обращение за это платит. Дальше сервер уже на ногах, и
+ * держать минуту на каждом запросе — значит на минуту вешать игру, если
+ * связь пропала. Первый ответ — и таймаут становится коротким.
+ *
+ * На платном сервере, который не засыпает, длинным будет только самый
+ * первый запрос сессии, а он и так уходит в фоне.
  */
-const REQUEST_TIMEOUT_MS = 70_000;
+const WAKE_TIMEOUT_MS = 70_000;
+const REQUEST_TIMEOUT_MS = 12_000;
+
+let awake = false;
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -62,8 +71,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     response = await fetch(`${BASE}${path}`, {
       ...init,
       headers,
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(awake ? REQUEST_TIMEOUT_MS : WAKE_TIMEOUT_MS),
     });
+    awake = true;
   } catch {
     throw new ApiError('network', 0);
   }

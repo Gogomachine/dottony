@@ -408,6 +408,39 @@ describe('Matchmaker', () => {
     expect(a.last('finished')).toBeDefined();
   });
 
+  it('остановка сервера досчитывает матч, а не бросает его', () => {
+    const onFinish = vi.fn();
+    const { maker } = make(onFinish);
+    const a = recorder('a', 'Ада');
+    const b = recorder('b', 'Боб');
+    maker.join(a);
+    maker.join(b);
+    const seed = (a.last('matched') as { seed: number }).seed;
+    maker.move('a', findAnyChain(createBoard(seedRng(seed), DEFAULT_CONFIG)));
+
+    // Выкладка — не повод отбирать у игроков сыгранное.
+    maker.close();
+    expect(onFinish).toHaveBeenCalledTimes(1);
+    const result = onFinish.mock.calls[0]![0] as { players: { id: string; score: number }[] };
+    expect(result.players.find((player) => player.id === 'a')?.score).toBeGreaterThan(0);
+    // Победа — по набранному, а не поражение тому, кто вёл.
+    expect(a.last('finished')).toMatchObject({ outcome: 'win' });
+    expect(b.last('finished')).toMatchObject({ outcome: 'loss' });
+    expect(maker.stats).toEqual({ waiting: 0, duels: 0 });
+
+    // Закрыть дважды — не беда: второй раз досчитывать уже нечего.
+    maker.close();
+    expect(onFinish).toHaveBeenCalledTimes(1);
+  });
+
+  it('остановка распускает очередь ожидающих', () => {
+    const { maker } = make();
+    maker.join(recorder('a'));
+    expect(maker.stats).toEqual({ waiting: 1, duels: 0 });
+    maker.close();
+    expect(maker.stats).toEqual({ waiting: 0, duels: 0 });
+  });
+
   it('выход из очереди не создаёт матч', () => {
     const { maker } = make();
     const a = recorder('a');

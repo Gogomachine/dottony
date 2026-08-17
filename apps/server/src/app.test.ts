@@ -25,6 +25,7 @@ import {
 } from '@doton/core';
 import type { DuelServerMessage, MoveLog, OrderMove } from '@doton/protocol';
 import { buildApp, loggedUrl } from './app.js';
+import { INVITE_LIMIT } from './limits.js';
 import { parseStart } from './bot.js';
 import { Store } from './db.js';
 import { replayOrder } from './order.js';
@@ -686,6 +687,47 @@ describe('бот', () => {
     expect(after.json()).toEqual({ invites: [] });
   });
 
+  it('вызовы другу под счётом: десяток за час, дальше отказ', async () => {
+    const ada = await guestToken('Ада');
+    const bob = await guestToken('Боб');
+    const bobCode = (
+      (
+        await app.inject({
+          method: 'GET',
+          url: '/api/me/friends',
+          headers: { authorization: `Bearer ${bob}` },
+        })
+      ).json() as { code: string }
+    ).code;
+    await app.inject({
+      method: 'POST',
+      url: '/api/friends',
+      headers: { authorization: `Bearer ${ada}` },
+      payload: { code: bobCode },
+    });
+    // Боб в приборе: приглашение кладётся в игру, Telegram не при чём.
+    await app.inject({
+      method: 'GET',
+      url: '/api/me/invites',
+      headers: { authorization: `Bearer ${bob}` },
+    });
+
+    const invite = (room: string) =>
+      app.inject({
+        method: 'POST',
+        url: `/api/friends/${bobCode}/invite`,
+        headers: { authorization: `Bearer ${ada}` },
+        payload: { room },
+      });
+
+    for (let i = 0; i < INVITE_LIMIT; i++) {
+      expect((await invite(`ROOM00${10 + i}`)).statusCode).toBe(200);
+    }
+    const extra = await invite('ROOM0099');
+    expect(extra.statusCode).toBe(429);
+    expect(extra.json()).toEqual({ error: 'too-many' });
+  });
+
   it('другу без Telegram сообщение не уходит — клиент предложит ссылку', async () => {
     const ada = await guestToken('Ада');
     const bob = await guestToken('Боб');
@@ -726,6 +768,66 @@ describe('бот', () => {
     const off = await without.inject({ method: 'GET', url: '/api/health' });
     expect(off.json()).toMatchObject({ telegram: false, bot: null });
     await without.close();
+  });
+});
+
+describe('пороги и границы', () => {
+  it('общий потолок отсекает поток запросов с одного адреса', async () => {
+    const app = await buildApp({ databaseUrl: ':memory:', jwtSecret: 'test-jwt', requestLimit: 3 });
+    try {
+      for (let i = 0; i < 3; i++) {
+        const ok = await app.inject({ method: 'GET', url: '/api/health' });
+        expect(ok.statusCode).toBe(200);
+      }
+      const stopped = await app.inject({ method: 'GET', url: '/api/health' });
+      expect(stopped.statusCode).toBe(429);
+      expect(stopped.json()).toEqual({ error: 'too-many' });
+      // Клиенту говорят, когда возвращаться, а не оставляют гадать.
+      expect(stopped.headers['retry-after']).toBe('60');
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('список источников, если он задан, пускает только своих', async () => {
+    const own = 'https://gogomachine.github.io';
+    const app = await buildApp({
+      databaseUrl: ':memory:',
+      jwtSecret: 'test-jwt',
+      allowedOrigins: [own],
+    });
+    try {
+      const mine = await app.inject({
+        method: 'GET',
+        url: '/api/health',
+        headers: { origin: own },
+      });
+      expect(mine.headers['access-control-allow-origin']).toBe(own);
+
+      const stranger = await app.inject({
+        method: 'GET',
+        url: '/api/health',
+        headers: { origin: 'https://evil.example' },
+      });
+      // Ответ приходит, но браузер чужой странице его не отдаст.
+      expect(stranger.headers['access-control-allow-origin']).toBeUndefined();
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('без списка источников отражается любой — так удобно в разработке', async () => {
+    const app = await buildApp({ databaseUrl: ':memory:', jwtSecret: 'test-jwt' });
+    try {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/health',
+        headers: { origin: 'http://localhost:5173' },
+      });
+      expect(response.headers['access-control-allow-origin']).toBe('http://localhost:5173');
+    } finally {
+      await app.close();
+    }
   });
 });
 
@@ -1670,6 +1772,66 @@ describe('рейтинг за дуэль', () => {
   }
 
   type Finished = Extract<DuelServerMessage, { type: 'finished' }>;
+
+  it('остановка сервера не теряет матч: игроки видят итог, база его помнит', async () => {
+    // Своя база в файле: после остановки в неё надо будет заглянуть.
+    const file = join(tmpdir(), `doton-stop-${randomUUID()}.db`);
+    const server = await buildApp({
+      databaseUrl: `file:${file}`,
+      jwtSecret: 'test-jwt',
+      duelGhosts: false,
+    });
+    await server.listen({ port: 0, host: '127.0.0.1' });
+    const address = server.server.address();
+    if (address === null || typeof address === 'string') throw new Error('no address');
+    const where = `127.0.0.1:${address.port}`;
+
+    const enter = async (name: string): Promise<{ token: string; id: string }> => {
+      const response = await server.inject({
+        method: 'POST',
+        url: '/api/auth/guest',
+        payload: { name },
+      });
+      const body = response.json() as { token: string; user: { id: string } };
+      return { token: body.token, id: body.user.id };
+    };
+    const ada = await enter('Ада');
+    const bob = await enter('Боб');
+
+    const first = await Client.open(where, ada.token);
+    const second = await Client.open(where, bob.token);
+    first.send({ type: 'join', kind: 'chain' });
+    await first.wait((message) => message.type === 'searching');
+    second.send({ type: 'join', kind: 'chain' });
+    const matched = await second.wait<Extract<DuelServerMessage, { type: 'matched' }>>(
+      (message) => message.type === 'matched',
+    );
+    first.send({ type: 'move', path: findAnyChain(createBoard(seedRng(matched.seed), DEFAULT_CONFIG)) });
+    await first.wait((message) => message.type === 'accepted');
+
+    // Выкладка посреди матча: сервер получает SIGTERM и закрывается.
+    await server.close();
+
+    // Игроки получили обычный итог, а не молчание в оборванном сокете.
+    const outcome = await first.wait<Finished>((message) => message.type === 'finished');
+    expect(outcome.outcome).toBe('win');
+    expect(outcome.score).toBeGreaterThan(0);
+    await second.wait<Finished>((message) => message.type === 'finished');
+    first.close();
+    second.close();
+
+    // И матч дописан в базу: закрытие дождалось записи.
+    const store = new Store({ url: `file:${file}` });
+    try {
+      const history = await store.duelHistory(ada.id, 10);
+      expect(history).toHaveLength(1);
+      expect(history[0]).toMatchObject({ opponentName: 'Боб', outcome: 'win', kind: 'chain' });
+      expect(history[0]?.score).toBeGreaterThan(0);
+    } finally {
+      store.close();
+      await rm(file, { force: true });
+    }
+  });
 
   /**
    * Сводит двух игроков и завершает матч сдачей первого — исход предсказуем.

@@ -23,6 +23,19 @@ if (!databaseUrl.startsWith('libsql://') && process.env.NODE_ENV === 'production
 
 const publicUrl = process.env.PUBLIC_URL ?? process.env.RENDER_EXTERNAL_URL;
 
+/**
+ * Сколько прокси стоит перед сервером. За балансировщиком хостинга без
+ * этого числа все игроки выглядят одним адресом — и счётчики запросов
+ * считают их вместе. У Render один прокси: TRUST_PROXY=1.
+ */
+const trustProxy = Number(process.env.TRUST_PROXY ?? 0);
+
+/** Кому из браузеров разрешено ходить в API. Пусто — любому. */
+const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter((origin) => origin.length > 0);
+
 // В проде логи — единственный способ увидеть, что пошло не так.
 const app = await buildApp({
   logger: process.env.NODE_ENV === 'production',
@@ -38,6 +51,8 @@ const app = await buildApp({
   // Свой публичный адрес Render подставляет сам — по нему регистрируем
   // вебхук бота. Локально переменной нет, и чужой вебхук не перебиваем.
   ...(publicUrl ? { publicUrl } : {}),
+  ...(trustProxy > 0 ? { trustProxy } : {}),
+  ...(allowedOrigins.length > 0 ? { allowedOrigins } : {}),
 });
 
 try {
@@ -46,4 +61,38 @@ try {
 } catch (error) {
   console.error(error);
   process.exit(1);
+}
+
+/**
+ * Мягкая остановка. При выкладке хостинг шлёт SIGTERM и через несколько
+ * десятков секунд добивает процесс. Без обработчика идущие матчи просто
+ * исчезали вместе с ним: ни результата, ни рейтинга, ни строки в истории.
+ * Теперь сервер досчитывает их по набранному, дожидается записи в базу и
+ * только потом выходит.
+ */
+const GRACE_MS = 15_000;
+let stopping = false;
+
+async function stop(signal: string): Promise<void> {
+  if (stopping) return;
+  stopping = true;
+  console.log(`${signal}: останавливаемся`);
+  // Страховка от зависшего закрытия: лучше выйти самому, чем быть убитым
+  // на середине записи. Таймер не держит цикл событий.
+  const hard = setTimeout(() => {
+    console.error('остановка затянулась — выходим принудительно');
+    process.exit(1);
+  }, GRACE_MS);
+  hard.unref();
+  try {
+    await app.close();
+    process.exit(0);
+  } catch (error) {
+    console.error(error);
+    process.exit(1);
+  }
+}
+
+for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+  process.on(signal, () => void stop(signal));
 }

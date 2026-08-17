@@ -35,29 +35,64 @@ export const SIGNUP_LIMIT = 60;
 export const SIGNUP_WINDOW_MS = 60 * 60 * 1000;
 
 /**
- * Счётчик на память процесса: адрес → сколько и до какого момента.
+ * Общий потолок запросов с одного адреса, шт/мин.
+ *
+ * Он не про справедливость, а про то, чтобы одна машина не завалила
+ * сервер: игре хватает пары десятков запросов в минуту (опрос
+ * приглашений раз в пять секунд — двенадцать), а за одним адресом
+ * мобильного оператора сидят десятки живых игроков, и порог обязан
+ * пропускать их всех. Скрипт же, льющий сотни запросов в секунду,
+ * упирается в потолок сразу.
+ */
+export const REQUEST_LIMIT = 1200;
+export const REQUEST_WINDOW_MS = 60 * 1000;
+
+/**
+ * Сколько приглашений в Telegram шлёт один игрок за час.
+ *
+ * Позвать можно только друга, и это уже отсекает рассылку кому попало.
+ * Но добавленный друг — это дверь, через которую можно долбить человека
+ * сообщениями бесконечно; десятка вызовов в час хватает на любой вечер.
+ */
+export const INVITE_LIMIT = 10;
+export const INVITE_WINDOW_MS = 60 * 60 * 1000;
+
+/**
+ * Счётчик на память процесса: ключ → сколько и до какого момента.
  *
  * Общего хранилища тут намеренно нет. Матчмейкер и так живёт в памяти
  * одного процесса, так что второй инстанс всё равно потребует общего
  * состояния — вот тогда счётчик и переедет туда же.
  */
-export class SignupGuard {
+export class RateGuard {
   private readonly seen = new Map<string, { count: number; until: number }>();
 
-  /** Отмечает попытку; false — с этого адреса пора притормозить. */
-  allow(address: string, now = Date.now()): boolean {
-    const entry = this.seen.get(address);
+  constructor(
+    private readonly limit: number,
+    private readonly windowMs: number,
+  ) {}
+
+  /** Отмечает попытку; false — с этого ключа пора притормозить. */
+  allow(key: string, now = Date.now()): boolean {
+    const entry = this.seen.get(key);
     if (!entry || entry.until <= now) {
-      // Заодно подметаем протухшее: иначе карта росла бы с каждым адресом.
+      // Заодно подметаем протухшее: иначе карта росла бы с каждым ключом.
       if (this.seen.size > 1000) {
-        for (const [key, value] of this.seen) {
-          if (value.until <= now) this.seen.delete(key);
+        for (const [seenKey, value] of this.seen) {
+          if (value.until <= now) this.seen.delete(seenKey);
         }
       }
-      this.seen.set(address, { count: 1, until: now + SIGNUP_WINDOW_MS });
+      this.seen.set(key, { count: 1, until: now + this.windowMs });
       return true;
     }
     entry.count += 1;
-    return entry.count <= SIGNUP_LIMIT;
+    return entry.count <= this.limit;
+  }
+}
+
+/** Гостевой вход: единственная дверь, за которой нет ни пароля, ни подписи. */
+export class SignupGuard extends RateGuard {
+  constructor() {
+    super(SIGNUP_LIMIT, SIGNUP_WINDOW_MS);
   }
 }

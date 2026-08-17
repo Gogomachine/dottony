@@ -1,5 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { SignupGuard, SIGNUP_LIMIT, SIGNUP_WINDOW_MS } from './limits.js';
+import { RateGuard, SignupGuard, SIGNUP_LIMIT, SIGNUP_WINDOW_MS } from './limits.js';
+
+describe('RateGuard', () => {
+  it('порог и окно задаются каждой двери своими', () => {
+    const guard = new RateGuard(2, 1000);
+    expect(guard.allow('ключ', 0)).toBe(true);
+    expect(guard.allow('ключ', 0)).toBe(true);
+    expect(guard.allow('ключ', 0)).toBe(false);
+    // Окно у этой двери короткое — через секунду счёт с нуля.
+    expect(guard.allow('ключ', 1001)).toBe(true);
+  });
+
+  it('ключом может быть не только адрес: у своей двери он свой', () => {
+    const guard = new RateGuard(1, 1000);
+    expect(guard.allow('игрок-1', 0)).toBe(true);
+    expect(guard.allow('игрок-1', 0)).toBe(false);
+    expect(guard.allow('игрок-2', 0)).toBe(true);
+  });
+});
 
 describe('SignupGuard', () => {
   it('пропускает до порога и отсекает дальше', () => {
