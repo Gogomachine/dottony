@@ -90,8 +90,25 @@ function stepLevel(step: number): number {
   const climb = Math.min(Math.max(step, 0), LADDER_TOP) / LADDER_TOP;
   // Спад не прямой, а с ускорением: ухо чувствительнее всего к верхам, и
   // на конце длинной цепочки нота должна быть заметно тише первой.
-  return 0.1 - 0.062 * climb ** 1.4;
+  return 0.1 - 0.078 * climb ** 1.15;
 }
+
+/**
+ * Громкость щелчков — общей долей на все голоса сразу. Щелчок нужен как
+ * признак того, что звук начался, а не как сам звук: стоит ему выйти
+ * вперёд тела, и прибор начинает клацать. Одна ручка на весь набор
+ * держит их в одинаковом отношении к телам.
+ */
+const CLICK = 0.5;
+
+/**
+ * Наклон верха на шине, дБ. Верхние гармоники и щелчки нужны — но не в
+ * той мере, в какой их даёт синтез: у настоящего прибора верх съедает
+ * корпус, стол и воздух. Полка отыгрывает это одним движением на всё,
+ * не трогая соотношений внутри голосов.
+ */
+const TILT_HZ = 3000;
+const TILT_DB = -6;
 
 /**
  * Обертоны тела. Синус — это чистая частота и ничего больше; живой звук
@@ -232,9 +249,17 @@ export class Sound {
     echoDamp.connect(back).connect(echo);
     echoDamp.connect(send);
 
-    master.connect(drive);
-    master.connect(echo);
-    master.connect(pre).connect(room).connect(damp).connect(wet).connect(drive);
+    // Полка стоит сразу за общим уровнем, до всех посылок: наклон верха
+    // должен быть одинаковым и у самого звука, и у его отражений.
+    const tilt = ctx.createBiquadFilter();
+    tilt.type = 'highshelf';
+    tilt.frequency.value = TILT_HZ;
+    tilt.gain.value = TILT_DB;
+
+    master.connect(tilt);
+    tilt.connect(drive);
+    tilt.connect(echo);
+    tilt.connect(pre).connect(room).connect(damp).connect(wet).connect(drive);
     send.connect(drive);
     send.connect(pre);
     this.master = master;
@@ -440,7 +465,7 @@ export class Sound {
     band.frequency.value = freq;
     band.Q.value = options.q ?? 1.4;
     const gain = ctx.createGain();
-    this.envelope(gain, at, peak, dur, 0.0008);
+    this.envelope(gain, at, peak * CLICK, dur, 0.0008);
     source.connect(band).connect(gain).connect(this.out(options.pan ?? 0));
     // Играем случайный кусок общего буфера: два одинаковых щелчка подряд
     // ухо слышит как повтор записи.
@@ -569,8 +594,10 @@ export class Sound {
   tick(at?: number): void {
     const t = this.when(at);
     if (!this.slot(t, 0.14)) return;
-    this.click(t, 4200, 0.004, 0.014, { high: true, pan: 0.14 });
-    this.body(t, deg(12), 0.07, 0.038, { cutoff: 2600, open: 4800, pan: 0.14 });
+    // Отсчёт звучит десять раз подряд и последним, что человек слышит в
+    // заходе: ему верх не нужен вовсе, хватает короткой ноты.
+    this.click(t, 2800, 0.004, 0.009, { high: true, pan: 0.14 });
+    this.body(t, deg(12), 0.08, 0.04, { cutoff: 2200, open: 3400, pan: 0.14 });
   }
 
   /**
