@@ -24,7 +24,21 @@ import { markChip } from './plate';
  */
 
 /** Что открыто в кабинете под шапкой профиля. */
-type CabTab = 'history' | 'friends' | 'marks';
+type CabTab = 'rating' | 'history' | 'friends' | 'marks';
+
+/**
+ * Строка раздела «Рейтинг»: режим, своё число в нём и своё место. Таблицы
+ * лежали четырьмя кнопками вразнобой, и по ним не читалось, что это одно и
+ * то же — места по режимам; здесь они собраны в один список.
+ */
+interface BoardRow {
+  name: string;
+  /** Рейтинг дуэли или рекорд захода — что в этом режиме и есть счёт. */
+  value: string;
+  /** Место в таблице; null — игрок в неё ещё не попал. */
+  place: number | null;
+  open(): void;
+}
 
 function el<T extends HTMLElement>(id: string): T {
   const found = document.getElementById(id);
@@ -83,9 +97,10 @@ export class Cabinet {
   private readonly friendsEl = el<HTMLDivElement>('cab-friends');
   private readonly friendListEl = el<HTMLOListElement>('friend-list');
   private readonly recentListEl = el<HTMLOListElement>('recent-list');
-  private readonly historyTab = el<HTMLButtonElement>('tab-history');
-  private readonly friendsTab = el<HTMLButtonElement>('tab-friends');
-  private readonly marksTab = el<HTMLButtonElement>('tab-marks');
+  private readonly navEl = el<HTMLElement>('cab-nav');
+  private readonly backEl = el<HTMLButtonElement>('cab-back');
+  private readonly ratingEl = el<HTMLDivElement>('cab-rating');
+  private readonly boardsEl = el<HTMLOListElement>('cab-boards');
   private readonly marksEl = el<HTMLDivElement>('cab-marks');
   private readonly slotsEl = el<HTMLDivElement>('cab-slots');
   private readonly slotHintEl = el<HTMLSpanElement>('cab-slot-hint');
@@ -98,28 +113,13 @@ export class Cabinet {
 
   constructor(private readonly handlers: CabinetHandlers) {
     el<HTMLSpanElement>('cab-brand').innerHTML = brandLockup(116);
-    this.historyTab.addEventListener('click', () => this.openTab('history'));
-    this.friendsTab.addEventListener('click', () => this.openTab('friends'));
-    this.marksTab.addEventListener('click', () => this.openTab('marks'));
+    for (const button of this.navEl.querySelectorAll<HTMLButtonElement>('.nav')) {
+      button.addEventListener('click', () => this.openTab(button.dataset.tab as CabTab));
+    }
+    this.backEl.addEventListener('click', () => this.openTab(null));
     this.buildCatalog();
     el<HTMLButtonElement>('cab-add-friend').addEventListener('click', () => void this.addByCode());
     el<HTMLButtonElement>('cab-link-tg').addEventListener('click', () => void this.linkTelegram());
-    el<HTMLButtonElement>('cab-rating-board').addEventListener('click', () => {
-      this.hide();
-      handlers.onRatingBoard('chain');
-    });
-    el<HTMLButtonElement>('cab-order-rating-board').addEventListener('click', () => {
-      this.hide();
-      handlers.onRatingBoard('order');
-    });
-    el<HTMLButtonElement>('cab-sprint-board').addEventListener('click', () => {
-      this.hide();
-      handlers.onSprintBoard();
-    });
-    el<HTMLButtonElement>('cab-order-board').addEventListener('click', () => {
-      this.hide();
-      handlers.onOrderBoard();
-    });
     el<HTMLButtonElement>('cab-rename').addEventListener('click', () => void this.rename());
     el<HTMLDivElement>('cab-photo').addEventListener('click', () => void this.pickAvatar());
     // Клик мимо окна закрывает кабинет — привычный жест.
@@ -140,28 +140,72 @@ export class Cabinet {
     this.overlay.hidden = true;
   }
 
-  /** Открывает кабинет и подтягивает свежие данные. */
-  async show(tab: CabTab = 'history'): Promise<void> {
+  /**
+   * Открывает кабинет и подтягивает свежие данные. Без раздела открывается
+   * сам столбик: в его строках уже написано, что за каждой, — лига, сколько
+   * матчей, сколько друзей, сколько шильдиков выдано.
+   */
+  async show(tab: CabTab | null = null): Promise<void> {
     this.overlay.hidden = false;
     this.openTab(tab);
     this.historyEl.innerHTML = '<li class="empty">Загружаю…</li>';
+    this.boardsEl.innerHTML = '<li class="empty">Загружаю…</li>';
     try {
       const [me, history] = await Promise.all([getMe(), getHistory()]);
       this.renderProfile(me);
       this.renderHistory(history.entries);
     } catch {
       this.historyEl.innerHTML = '<li class="empty">Профиль недоступен — сервер не ответил.</li>';
+      this.boardsEl.innerHTML = '<li class="empty">Таблицы недоступны — сервер не ответил.</li>';
     }
     await this.loadFriends();
   }
 
-  private openTab(tab: CabTab): void {
+  /**
+   * Открывает раздел вместо столбика; null возвращает к самому столбику.
+   * Разделов четыре, и каждый занимает всю высоту карточки — иначе в окуляр
+   * не помещается ни один.
+   */
+  private openTab(tab: CabTab | null): void {
+    this.ratingEl.hidden = tab !== 'rating';
     this.historyEl.hidden = tab !== 'history';
     this.friendsEl.hidden = tab !== 'friends';
     this.marksEl.hidden = tab !== 'marks';
-    this.historyTab.classList.toggle('active', tab === 'history');
-    this.friendsTab.classList.toggle('active', tab === 'friends');
-    this.marksTab.classList.toggle('active', tab === 'marks');
+    this.navEl.hidden = tab !== null;
+    this.backEl.hidden = tab === null;
+    if (tab !== null) {
+      const opened = this.navEl.querySelector<HTMLButtonElement>(`.nav[data-tab="${tab}"] b`);
+      el<HTMLElement>('cab-back-name').textContent = opened?.textContent ?? '';
+    }
+  }
+
+  /** Подпись раздела в столбике: что за ним, ещё до нажатия. */
+  private setNote(tab: CabTab, note: string): void {
+    el<HTMLSpanElement>(`nav-${tab}`).textContent = note;
+  }
+
+  /**
+   * Раздел «Рейтинг»: по строке на режим. Место показываем отдельно от
+   * числа — рейтинг без места не говорит ничего, а место без рейтинга
+   * говорит половину.
+   */
+  private renderBoards(rows: BoardRow[]): void {
+    this.boardsEl.innerHTML = '';
+    for (const row of rows) {
+      const item = document.createElement('li');
+      item.innerHTML =
+        '<span class="mode-name"></span><span class="value"></span><span class="place"></span>';
+      const [nameEl, valueEl, placeEl] = [...item.children] as HTMLElement[];
+      nameEl!.textContent = row.name;
+      valueEl!.textContent = row.value;
+      placeEl!.textContent = row.place === null ? '—' : `#${row.place}`;
+      placeEl!.classList.toggle('in', row.place !== null);
+      item.addEventListener('click', () => {
+        this.hide();
+        row.open();
+      });
+      this.boardsEl.appendChild(item);
+    }
   }
 
   /**
@@ -333,24 +377,46 @@ export class Cabinet {
     if (!linkBtn.hidden) linkBtn.textContent = 'Привязать Telegram';
 
     this.renderTotal(me.total);
-    // Два рейтинга рядом: у каждой механики свой, и место в своей таблице.
-    el<HTMLSpanElement>('cab-rating').textContent = String(me.rating);
-    el<HTMLSpanElement>('cab-rank').textContent =
-      me.rank === null ? 'цепочки' : `цепочки · #${me.rank}`;
-    el<HTMLSpanElement>('cab-order-rating').textContent = String(me.orderDuel.rating);
-    el<HTMLSpanElement>('cab-order-rating-rank').textContent =
-      me.orderDuel.rank === null ? 'заказы' : `заказы · #${me.orderDuel.rank}`;
-    el<HTMLSpanElement>('cab-duels').textContent = `${me.duels.won}/${me.duels.played}`;
-    // Рекорд спринта — вместе с местом: он интересен в сравнении.
-    el<HTMLSpanElement>('cab-sprint').textContent =
-      me.sprint.best === 0 ? '—' : groupDigits(me.sprint.best);
-    el<HTMLSpanElement>('cab-sprint-rank').textContent =
-      me.sprint.rank === null ? 'спринт' : `спринт · #${me.sprint.rank}`;
-    // Комбо показываем вместе с местом: рекорд интересен в сравнении.
-    el<HTMLSpanElement>('cab-order').textContent =
-      me.order.best === 0 ? '—' : groupDigits(me.order.best);
-    el<HTMLSpanElement>('cab-order-rank').textContent =
-      me.order.rank === null ? 'заказы' : `заказы · #${me.order.rank}`;
+    // Рейтингов два: дуэли на цепочках и дуэли на заказах — разные механики,
+    // и общее число врало бы про обе. Рекордов заходов тоже два, по механике
+    // на каждый, — вместе это и есть «по всем режимам».
+    const best = (value: number): string => (value === 0 ? '—' : groupDigits(value));
+    this.renderBoards([
+      {
+        name: 'Дуэль · цепочки',
+        value: String(me.rating),
+        place: me.rank,
+        open: () => this.handlers.onRatingBoard('chain'),
+      },
+      {
+        name: 'Дуэль · заказы',
+        value: String(me.orderDuel.rating),
+        place: me.orderDuel.rank,
+        open: () => this.handlers.onRatingBoard('order'),
+      },
+      {
+        name: 'Спринт · рекорд',
+        value: best(me.sprint.best),
+        place: me.sprint.rank,
+        open: () => this.handlers.onSprintBoard(),
+      },
+      {
+        name: 'Заказы · рекорд',
+        value: best(me.order.best),
+        place: me.order.rank,
+        open: () => this.handlers.onOrderBoard(),
+      },
+    ]);
+    // Дуэли своей таблицы не имеют — они и есть то, из чего складываются обе
+    // верхние строки, поэтому счёт побед стоит под ними подписью.
+    el<HTMLSpanElement>('cab-duels').textContent =
+      me.duels.played === 0
+        ? 'дуэлей ещё не было'
+        : `дуэлей ${me.duels.played} · побед ${me.duels.won}`;
+    // Подписи разделов: в столбике должно быть видно, что за строкой.
+    this.setNote('rating', me.placement ? 'калибровка' : me.league);
+    this.setNote('history', me.duels.played === 0 ? '—' : String(me.duels.played));
+    this.setNote('marks', `${me.earned.length} из ${MARKS.length}`);
 
     this.leagueEl.innerHTML =
       '<span class="league-name"></span>' +
@@ -435,6 +501,7 @@ export class Cabinet {
   private renderFriends(data: FriendsResponse): void {
     el<HTMLSpanElement>('cab-code').textContent = data.code;
     this.renderBarcode(data.code);
+    this.setNote('friends', data.friends.length === 0 ? '—' : String(data.friends.length));
 
     this.friendListEl.innerHTML = '';
     if (data.friends.length === 0) {

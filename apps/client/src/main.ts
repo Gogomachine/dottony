@@ -1677,7 +1677,7 @@ async function openCabinet(): Promise<void> {
       // Сервер молчит — кабинет покажет это сам.
     }
   }
-  await cabinet.show('history');
+  await cabinet.show();
 }
 
 /**
