@@ -144,7 +144,11 @@ applyTheme(themeName);
  * дуэль и какого цвета акцент. Двух механик в приборе одновременно нет.
  */
 let deviceKind: DuelKind = loadKind();
-/** Одиночный режим механики: у цепочек это спринт, у заказов — заход. */
+/**
+ * Одиночный режим механики. Номер режима остался прежним — `sprint` и
+ * `order`: по нему сервер принимает заходы, и переименование подписей его не
+ * касается. Игроку эти режимы называются механикой: «Цепочки» и «Тап».
+ */
 const SOLO: Record<DuelKind, Mode> = { chain: 'sprint', order: 'order' };
 let mode: Mode = SOLO[deviceKind];
 
@@ -175,9 +179,9 @@ function syncTap(): void {
 }
 
 /**
- * Активный спринт: сид и лог ходов. Спринт — соревновательный режим, и
- * его рекорд доказывается тем же способом, что и комбо: сервер
- * переигрывает заход от сида и считает счёт сам.
+ * Активный заход цепочек: сид и лог ходов. Режим соревновательный, и его
+ * рекорд доказывается тем же способом, что и в тапе: сервер переигрывает
+ * заход от сида и считает счёт сам.
  */
 let sprintRun: { seed: number; moves: MoveLog[] } | null = null;
 
@@ -226,7 +230,7 @@ function startGame(seed?: number): void {
   // на проверку одним куском.
   orderRun =
     session.mode === 'order' && !inDuel ? { seed: session.seed, moves: [], full: false } : null;
-  // Спринт пишется весь: без журнала рекорд нечем подтвердить.
+  // Заход цепочек пишется весь: без журнала рекорд нечем подтвердить.
   sprintRun =
     session.mode === 'sprint' && !replay ? { seed: session.seed, moves: [] } : null;
   renderer.resetAnims();
@@ -266,14 +270,13 @@ function nameWithMark(host: HTMLElement, name: string, mark: string | null): voi
   host.appendChild(document.createTextNode(name));
 }
 
-/** «1 заказ», «4 заказа», «7 заказов» — число решает окончание. */
-function orderWord(count: number): string {
-  const teens = count % 100;
-  const last = count % 10;
-  if (teens >= 11 && teens <= 14) return `${count} заказов`;
-  if (last === 1) return `${count} заказ`;
-  if (last >= 2 && last <= 4) return `${count} заказа`;
-  return `${count} заказов`;
+/**
+ * Сколько заказов закрыто. Раньше число склоняло за собой слово — «1 заказ»,
+ * «4 заказа», «7 заказов»; «сделано» не склоняется вовсе, и правило про
+ * одиннадцать-четырнадцать вместе с ним больше не нужно.
+ */
+function doneWord(count: number): string {
+  return `сделано ${count}`;
 }
 
 /** «10 000» — крупные числа читаются только с разрядами. */
@@ -296,7 +299,7 @@ function updateHud(): void {
     // В заказах справа — счёт закрытых, а шкала делений отдана окну: она
     // и есть таймер, только не всей партии, а текущего резонанса.
     showFails();
-    timeLabelEl.textContent = 'Заказы';
+    timeLabelEl.textContent = 'Сделано';
     timeEl.textContent = String((session.run?.orders ?? 0));
     const lit = Math.round((order.remaining / session.cfg.orderWindow) * TICKS);
     // Последние секунды окна шкала краснеет — это видно боковым зрением.
@@ -524,7 +527,7 @@ function firstVisit(): boolean {
   }
 }
 
-// ---------- Спринт ----------
+// ---------- Цепочки: заход и рекорд ----------
 
 function guestName(): string {
   const existing = savedName();
@@ -534,7 +537,7 @@ function guestName(): string {
 }
 
 /**
- * Конец спринта: отдаём заход на проверку и показываем место. Счёт на
+ * Конец захода цепочек: отдаём его на проверку и показываем место. Счёт на
  * экране — свой, но в таблицу идёт только пересчитанный сервером.
  */
 async function finishSprint(run: { seed: number; moves: MoveLog[] }, score: number): Promise<void> {
@@ -567,7 +570,7 @@ async function finishSprint(run: { seed: number; moves: MoveLog[] }, score: numb
 
 async function showSprintBoard(period: BoardPeriod = boardPeriod): Promise<void> {
   boardPeriod = period;
-  showOverModal({ title: 'Рекорды спринта', note: 'Загружаю таблицу…', viewing: true });
+  showOverModal({ title: 'Рекорды · цепочки', note: 'Загружаю таблицу…', viewing: true });
   showBoardTabs('sprint');
   try {
     const board = await getSprintBoard(period);
@@ -583,11 +586,11 @@ async function showSprintBoard(period: BoardPeriod = boardPeriod): Promise<void>
     overNoteEl.hidden = false;
     overNoteEl.textContent = board.me
       ? `${period === 'day' ? 'Сегодня' : 'Твой рекорд'} ${groupDigits(board.me.score)} · ${board.me.rank}-е место`
-      : 'Сыграй спринт, чтобы попасть в таблицу.';
+      : 'Сыграй цепочки, чтобы попасть в таблицу.';
     renderSprintBoard(board);
   } catch {
     overNoteEl.hidden = false;
-    overNoteEl.textContent = 'Таблица спринта недоступна. Попробуй позже.';
+    overNoteEl.textContent = 'Таблица цепочек недоступна. Попробуй позже.';
     boardListEl.hidden = true;
   }
 }
@@ -934,7 +937,7 @@ function handleDuelMessage(message: DuelServerMessage): void {
         title: 'Дуэль',
         note:
           message.error === 'unauthorized'
-            ? 'Нужен вход. Сыграй спринт — он создаст профиль.'
+            ? 'Нужен вход. Сыграй цепочки — они создадут профиль.'
             : 'Связь с сервером потеряна.',
       });
       endDuel();
@@ -966,7 +969,7 @@ async function startDuel(room?: string, kind: DuelKind = 'chain'): Promise<void>
   }
   duelKind = kind;
   showOverModal({
-    title: room ? 'Ждём друга' : kind === 'order' ? 'Дуэль · заказы' : 'Дуэль · цепочки',
+    title: room ? 'Ждём друга' : `Дуэль · ${KIND_NAME[kind].toLowerCase()}`,
     note: 'Подключаюсь — бесплатный сервер просыпается до минуты…',
     waiting: true,
     ...(room ? { room } : {}),
@@ -982,7 +985,7 @@ async function startDuel(room?: string, kind: DuelKind = 'chain'): Promise<void>
 
 async function showRatingBoard(kind: 'chain' | 'order' = 'chain'): Promise<void> {
   showOverModal({
-    title: kind === 'order' ? 'Рейтинг заказов' : 'Рейтинг цепочек',
+    title: `Рейтинг · ${KIND_NAME[kind].toLowerCase()}`,
     note: 'Загружаю таблицу…',
     viewing: true,
   });
@@ -1127,7 +1130,7 @@ async function finishOrder(run: { seed: number; moves: OrderMove[]; full: boolea
 
 async function showOrderBoard(period: BoardPeriod = boardPeriod): Promise<void> {
   boardPeriod = period;
-  showOverModal({ title: 'Рекорды заказов', note: 'Загружаю таблицу…', viewing: true });
+  showOverModal({ title: 'Рекорды · тап', note: 'Загружаю таблицу…', viewing: true });
   showBoardTabs('order');
   try {
     const board = await getOrderBoard(period);
@@ -1135,7 +1138,7 @@ async function showOrderBoard(period: BoardPeriod = boardPeriod): Promise<void> 
       overNoteEl.hidden = false;
       overNoteEl.textContent =
         period === 'day'
-          ? 'Сегодня заказов ещё никто не сдавал. Закрой хоть один — и ты первый.'
+          ? 'Сегодня заказов ещё никто не закрывал. Закрой хоть один — и ты первый.'
           : 'Таблица пока пуста. Считается счёт захода: 25 точек цвета окна за одно касание.';
       boardListEl.hidden = true;
       return;
@@ -1143,11 +1146,11 @@ async function showOrderBoard(period: BoardPeriod = boardPeriod): Promise<void> 
     overNoteEl.hidden = false;
     overNoteEl.textContent = board.me
       ? `${period === 'day' ? 'Сегодня' : 'Твой рекорд'} ${groupDigits(board.me.score)} · ${board.me.rank}-е место`
-      : 'Сдай заход заказов, чтобы попасть в таблицу.';
+      : 'Сыграй тап, чтобы попасть в таблицу.';
     renderOrderBoard(board);
   } catch {
     overNoteEl.hidden = false;
-    overNoteEl.textContent = 'Таблица заказов недоступна. Попробуй позже.';
+    overNoteEl.textContent = 'Таблица тапа недоступна. Попробуй позже.';
     boardListEl.hidden = true;
   }
 }
@@ -1168,7 +1171,7 @@ function renderOrderBoard(board: OrderLeaderboardResponse): void {
     const who = item.children[1] as HTMLElement;
     nameWithMark(who.children[0] as HTMLElement, entry.name, entry.mark);
     // Заказы подписью под именем: по ним видно, из чего сложился счёт.
-    (who.children[1] as HTMLElement).textContent = orderWord(entry.orders);
+    (who.children[1] as HTMLElement).textContent = doneWord(entry.orders);
     (item.children[2] as HTMLElement).textContent = groupDigits(entry.score);
     boardListEl.appendChild(item);
   }
@@ -1522,8 +1525,12 @@ function setMode(next: Mode): void {
   startGame();
 }
 
-/** Как механика называется в подписях. */
-const KIND_NAME: Record<DuelKind, string> = { chain: 'Цепочки', order: 'Заказы' };
+/**
+ * Как механика называется в подписях. Одиночный режим у каждой один, и зовут
+ * его так же, как саму механику: отдельные имена вроде «спринта» приходилось
+ * держать в голове рядом с механикой, ничего к ней не добавляя.
+ */
+const KIND_NAME: Record<DuelKind, string> = { chain: 'Цепочки', order: 'Тап' };
 /** Длительность дуэли по механике — для подписей; часы всё равно ставит сервер. */
 const KIND_DUEL_TIME: Record<DuelKind, string> = { chain: '1:30', order: '3:00' };
 
@@ -1644,6 +1651,9 @@ function closeWindows(): boolean {
     // Поиск соперника без своего окна шёл бы вслепую — обрываем вместе с ним.
     if (waitingForOpponent) endDuel();
     viewingOnly = false;
+    // Закрыли окно клавишей, а не кнопкой в нём: путь назад в кабинет тут не
+    // нужен — клавиша ведёт в своё место сама.
+    boardFromCabinet = false;
     overlay.hidden = true;
     closed = true;
   }
@@ -1730,11 +1740,25 @@ el<HTMLButtonElement>('mark-toggle').addEventListener('click', function () {
   this.classList.toggle('on', on);
 });
 
+/**
+ * Таблицу открыли из кабинета — значит, и закрыть её надо в кабинет, а не
+ * на голое поле. Кабинет перед этим прячется: иначе таблица легла бы поверх
+ * него, а он выше окна по слою.
+ */
+let boardFromCabinet = false;
+
+function fromCabinet<A extends unknown[]>(open: (...args: A) => void): (...args: A) => void {
+  return (...args: A) => {
+    boardFromCabinet = true;
+    open(...args);
+  };
+}
+
 const cabinet = new Cabinet({
   onReplay: (duelId) => void startReplay(duelId),
-  onRatingBoard: (kind) => void showRatingBoard(kind),
-  onSprintBoard: () => void showSprintBoard(),
-  onOrderBoard: () => void showOrderBoard(),
+  onRatingBoard: fromCabinet((kind: 'chain' | 'order') => void showRatingBoard(kind)),
+  onSprintBoard: fromCabinet(() => void showSprintBoard()),
+  onOrderBoard: fromCabinet(() => void showOrderBoard()),
   onInvite: (friendCode) => void inviteToRoom(friendCode),
   onMarks: (marks) => {
     savePlate(marks);
@@ -1804,6 +1828,13 @@ modalBtn.addEventListener('click', () => {
     // Смотрели таблицу — партия под окном не тронута.
     viewingOnly = false;
     overlay.hidden = true;
+    // Пришли из кабинета — туда и возвращаемся, на тот же «Рейтинг», из
+    // которого таблицу открыли. Иначе закрытие выкидывало на поле с меню
+    // поверх него, будто кабинета и не было.
+    if (boardFromCabinet) {
+      boardFromCabinet = false;
+      void cabinet.show('rating');
+    }
     return;
   }
   if (waitingForOpponent) {
@@ -1884,7 +1915,7 @@ function frame(now: number): void {
       // заход уже не трогает, и на нём остался бы последний живой отсчёт.
       showFails();
       sound.over(false);
-      showResult(`Прибор сбоит · ${orderWord(session.run?.orders ?? 0)}`, session.score);
+      showResult(`Прибор сбоит · ${doneWord(session.run?.orders ?? 0)}`, session.score);
       setStat('Запас сбоев исчерпан — заход окончен', 'warn');
       // Заход кончился — его и отдаём на проверку: счёт в таблицу ставит
       // сервер, переиграв присланные касания.

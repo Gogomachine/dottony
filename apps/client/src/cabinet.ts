@@ -74,9 +74,9 @@ function shortDate(iso: string): string {
 export interface CabinetHandlers {
   onReplay(duelId: string): void;
   onRatingBoard(kind: 'chain' | 'order'): void;
-  /** Таблица рекордов спринта. */
+  /** Таблица рекордов цепочек. */
   onSprintBoard(): void;
-  /** Таблица рекордов заказов. */
+  /** Таблица рекордов тапа. */
   onOrderBoard(): void;
   /**
    * Позвать друга в матч: снаружи это открывает приватную комнату.
@@ -377,7 +377,7 @@ export class Cabinet {
     if (!linkBtn.hidden) linkBtn.textContent = 'Привязать Telegram';
 
     this.renderTotal(me.total);
-    // Рейтингов два: дуэли на цепочках и дуэли на заказах — разные механики,
+    // Рейтингов два: дуэли на цепочках и дуэли в тапе — разные механики,
     // и общее число врало бы про обе. Рекордов заходов тоже два, по механике
     // на каждый, — вместе это и есть «по всем режимам».
     const best = (value: number): string => (value === 0 ? '—' : groupDigits(value));
@@ -389,19 +389,19 @@ export class Cabinet {
         open: () => this.handlers.onRatingBoard('chain'),
       },
       {
-        name: 'Дуэль · заказы',
+        name: 'Дуэль · тап',
         value: String(me.orderDuel.rating),
         place: me.orderDuel.rank,
         open: () => this.handlers.onRatingBoard('order'),
       },
       {
-        name: 'Спринт · рекорд',
+        name: 'Цепочки · рекорд',
         value: best(me.sprint.best),
         place: me.sprint.rank,
         open: () => this.handlers.onSprintBoard(),
       },
       {
-        name: 'Заказы · рекорд',
+        name: 'Тап · рекорд',
         value: best(me.order.best),
         place: me.order.rank,
         open: () => this.handlers.onOrderBoard(),
@@ -578,7 +578,7 @@ export class Cabinet {
         : opponent;
       // Дата и механика: по счёту 700:600 не понять, во что играли.
       (who.children[1] as HTMLElement).textContent =
-        `${shortDate(entry.playedAt)} · ${entry.kind === 'order' ? 'заказы' : 'цепочки'}`;
+        `${shortDate(entry.playedAt)} · ${entry.kind === 'order' ? 'тап' : 'цепочки'}`;
       (item.children[2] as HTMLElement).textContent =
         `${entry.score}:${entry.opponentScore ?? 0}`;
 
