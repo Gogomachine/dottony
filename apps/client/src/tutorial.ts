@@ -55,7 +55,7 @@ export interface TutorialHud {
   mini(state: MiniState): void;
   /** Кайма окуляра в цвете заявки. */
   tint(color: Color | null): void;
-  /** Вспышка экранчика: заявку перебили. */
+  /** Мигание экранчика: заявку перебили. */
   flash(): void;
   /** Счётчик цепочки в углу окуляра. */
   chain(length: number): void;
@@ -335,7 +335,7 @@ export class Tutorial {
     this.idleInstruments();
 
     await this.chainAct();
-    await this.lensAct();
+    await this.flashAct();
     await this.cascadeAct();
     const color = await this.claimAct();
     await this.resonanceAct(color);
@@ -370,8 +370,8 @@ export class Tutorial {
     await this.wait(1.9);
   }
 
-  /** 2. Линза: цепочка от десяти точек оставляет заряд. */
-  private async lensAct(): Promise<void> {
+  /** 2. Вспышка: цепочка от десяти точек оставляет заряд. */
+  private async flashAct(): Promise<void> {
     this.reset(2);
     const path: Cell[] = [
       { r: 0, c: 1 },
@@ -388,20 +388,20 @@ export class Tutorial {
     this.paint(path, 0);
     this.say(
       2,
-      'Линза',
-      `Цепочка от ${cfg.surgeChainLength} точек шлифует линзу — кольцо с ядром на месте последней точки. Сама по себе она ничего не даёт: её надо собрать следующей цепочкой.`,
+      'Вспышка',
+      `Цепочка от ${cfg.surgeChainLength} точек оставляет вспышку — кольцо с ядром на месте последней точки. Сама по себе она ничего не даёт: её надо собрать следующей цепочкой.`,
     );
     await this.wait(2.2);
     const result = await this.play(path, 0.13);
     if (typeof result !== 'string' && result.charged) {
       await this.wait(0.9);
       this.renderer.pulse(result.charged);
-      this.hud.stat('Линза отшлифована', 'live');
+      this.hud.stat('Вспышка заряжена', 'live');
     }
     await this.wait(1.8);
   }
 
-  /** 3. Увеличение: линзы подряд множат потенциал. */
+  /** 3. Увеличение: вспышки подряд множат потенциал. */
   private async cascadeAct(): Promise<void> {
     this.reset(3);
     const first: Cell[] = [
@@ -418,13 +418,13 @@ export class Tutorial {
     this.say(
       3,
       'Увеличение',
-      'Собранная линза даёт вспышку 3×3 и увеличение: одна — ×2, вторая подряд — ×3, третья — ×4. Цепочка без линзы сбрасывает его на единицу.',
+      'Собранная вспышка даёт взрыв 3×3 и увеличение: одна — ×2, вторая подряд — ×3, третья — ×4. Цепочка без вспышки сбрасывает его на единицу.',
     );
     await this.wait(2.4);
     await this.play(first);
     await this.wait(1.6);
 
-    // Продолжаем серию: ещё одна линза — и увеличение растёт.
+    // Продолжаем серию: ещё одна вспышка — и увеличение растёт.
     const spot: Cell = { r: 3, c: 2 };
     this.board.grid[spot.r]![spot.c]!.charged = true;
     const second = this.chainThrough(spot, 4);
@@ -506,7 +506,7 @@ export class Tutorial {
     this.say(
       5,
       'Резонанс',
-      `Восемь секунд цепочки заявленного цвета дают ×${cfg.phaseMultiplier}. Множители перемножаются: увеличение ×3 в резонансе даёт ×6 — ради этого линзы и копят к началу фазы.`,
+      `Восемь секунд цепочки заявленного цвета дают ×${cfg.phaseMultiplier}. Множители перемножаются: увеличение ×3 в резонансе даёт ×6 — ради этого вспышки и копят к началу фазы.`,
     );
     await this.wait(2.4);
 

@@ -37,16 +37,16 @@ interface ChainWave {
 
 const GHOST_LIFE = FEEL.ghostLife;
 const SHOCK_LIFE = 0.5;
-/** Метка отшлифованной линзы, в долях радиуса точки. */
-const LENS_RING = 0.62;
-const LENS_CORE = 0.2;
+/** Метка заряженной вспышки, в долях радиуса точки. */
+const FLASH_RING = 0.62;
+const FLASH_CORE = 0.2;
 
 function newAnim(): DotAnim {
   return { offset: 0, velocity: 0, delay: 0, scale: 1, scaleVelocity: 0, squash: 0 };
 }
 
 /**
- * Canvas-рендер поля: точки, линзы, линия цепочки, падение.
+ * Canvas-рендер поля: точки, вспышки, линия цепочки, падение.
  * Свечение — только как ответ на действие (стайлгайд «Цепи»).
  */
 export class Renderer {
@@ -288,12 +288,12 @@ export class Renderer {
         ctx.fill();
 
         // Метка цвета: сама фигура важнее оттенка для тех, кто цвета
-        // различает плохо. Под линзой её не рисуем — они бы наложились.
+        // различает плохо. Под вспышкой её не рисуем — они бы наложились.
         if (this.marks && !content.charged) {
           this.drawMark(content.color, center.x, y, radius * anim.scale);
         }
         if (content.charged) {
-          this.drawLens(center.x, y, radius * anim.scale);
+          this.drawFlash(center.x, y, radius * anim.scale);
         }
       }
     }
@@ -367,21 +367,21 @@ export class Renderer {
   }
 
   /**
-   * Метка линзы на точке — кольцо с ядром внутри. Раньше она повторяла
+   * Метка вспышки на точке — кольцо с ядром внутри. Раньше она повторяла
    * эмблему прибора; эмблема сменилась, а метка осталась, и правильно:
    * её дело не украшать, а читаться на точке любого из четырёх цветов —
    * с этим кольцо справляется лучше всего.
    */
-  private drawLens(x: number, y: number, radius: number): void {
+  private drawFlash(x: number, y: number, radius: number): void {
     const ctx = this.ctx;
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.92)';
     ctx.lineWidth = Math.max(1.4, radius * 0.15);
     ctx.beginPath();
-    ctx.arc(x, y, radius * LENS_RING, 0, Math.PI * 2);
+    ctx.arc(x, y, radius * FLASH_RING, 0, Math.PI * 2);
     ctx.stroke();
     ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
     ctx.beginPath();
-    ctx.arc(x, y, radius * LENS_CORE, 0, Math.PI * 2);
+    ctx.arc(x, y, radius * FLASH_CORE, 0, Math.PI * 2);
     ctx.fill();
   }
 

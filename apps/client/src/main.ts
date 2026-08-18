@@ -252,7 +252,7 @@ function startGame(seed?: number): void {
   updateKeys();
 }
 
-/** Текущее увеличение: следующая линза умножит потенциал на столько. */
+/** Текущее увеличение: следующая вспышка умножит потенциал на столько. */
 function updateStreak(streak: number): void {
   const active = streak > 0;
   gainEl.hidden = !active;
@@ -397,7 +397,7 @@ function updateMini(): void {
 }
 
 /**
- * Заявка объявлена. Своя — короткий отчёт, чужая — вспышка экранчика:
+ * Заявка объявлена. Своя — короткий отчёт, чужая — мигание экранчика:
  * это тот самый момент, когда действие соперника видно на своём приборе.
  * Перебили — только если цвет забрали у тебя; на свободное окно это слово
  * было бы неправдой.
@@ -414,7 +414,7 @@ function announceClaim(mine: boolean, length: number, outbid: boolean): void {
   if (outbid && navigator.vibrate) navigator.vibrate(FEEL.hapticMax);
 }
 
-/** Вспышка экранчика — знак, что цвет ушёл к сопернику. */
+/** Мигание экранчика — знак, что цвет ушёл к сопернику. */
 function flashMini(): void {
   miniEl.classList.remove('flash');
   // Перезапуск анимации: без перерисовки класс вернётся тем же кадром.
@@ -1424,7 +1424,7 @@ const input = new ChainInput(
     // Голос хода: в заказах он свой, там говорит отчёт о заказе.
     if (!cfg.features.tap) {
       sound.chain(result.removed.length, result.multiplier);
-      if (result.charged !== null) sound.lens();
+      if (result.charged !== null) sound.flash();
     }
     if (reportOrder(result.removed.length)) {
       const fire = session.lastFire;

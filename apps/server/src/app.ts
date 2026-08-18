@@ -645,7 +645,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
 
     const { points, moves } = parsed.data;
     // Один ход не может стоить сколько угодно: даже самая длинная цепочка
-    // с каскадом линз в резонансе не даёт и близко столько.
+    // с каскадом вспышек в резонансе не даёт и близко столько.
     if (points > moves * MAX_POINTS_PER_MOVE) {
       return reply.code(400).send({ error: 'implausible' });
     }
@@ -772,7 +772,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
 
     return (
       'dotoscope — прибор для наблюдения за круглыми объектами.\n' +
-      'Соединяй точки, шлифуй линзы, вызывай друзей на дуэль.\n\n' +
+      'Соединяй точки, копи вспышки, вызывай друзей на дуэль.\n\n' +
       'ROUND THINGS INC'
     );
   };
