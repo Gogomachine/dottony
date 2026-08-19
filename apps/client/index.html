@@ -1056,12 +1056,20 @@
     }
     .catalog { display: flex; flex-wrap: wrap; gap: 6px; }
 
-    /* Смайлики на пропуск: сетка вместо ввода, набор закрыт. */
+    /*
+      Смайлики на пропуск: сетка вместо ввода. Набор закрытый, но большой —
+      весь стандартный, — поэтому у сетки есть потолок высоты и прокрутка.
+      Потолок в долях окуляра, а не в точках: на низком экране карточка и так
+      прокручивается, и сетка во весь её рост оставила бы игрока без опоры.
+    */
     .faces {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(38px, 1fr));
       gap: 4px;
       padding: 8px;
+      max-height: 42vh;
+      overflow-y: auto;
+      overscroll-behavior: contain;
       background: var(--case-2);
       border: 1px solid var(--edge);
       border-radius: 8px;

@@ -125,7 +125,6 @@ export class Cabinet {
     }
     this.backEl.addEventListener('click', () => this.openTab(null));
     this.buildCatalog();
-    this.buildFaces();
     el<HTMLButtonElement>('cab-add-friend').addEventListener('click', () => void this.addByCode());
     el<HTMLButtonElement>('cab-link-tg').addEventListener('click', () => void this.linkTelegram());
     this.renameEl.addEventListener('click', () => this.startRename());
@@ -391,22 +390,38 @@ export class Cabinet {
   }
 
   /**
-   * Сетка смайликов. Строится один раз при заводе кабинета: набор общий для
-   * всех, меняется в нём только подсветка выбранного.
+   * Сетка смайликов. Собирается при первом открытии, а не при заводе
+   * кабинета: знаков в наборе больше тысячи, и заводить столько кнопок тому,
+   * кто в профиль не заходил, незачем. Дальше сетка живёт готовой — меняется
+   * в ней только подсветка выбранного.
    */
   private buildFaces(): void {
+    if (this.facesEl.childElementCount > 0) return;
+    // Кнопки складываем в отрывок и вставляем разом: тысяча вставок подряд
+    // заставила бы страницу пересчитывать раскладку тысячу раз.
+    const batch = document.createDocumentFragment();
     for (const face of FACES) {
       const pick = document.createElement('button');
       pick.dataset.face = face;
       pick.textContent = face;
       pick.addEventListener('click', () => void this.setFace(face));
-      this.facesEl.appendChild(pick);
+      batch.appendChild(pick);
     }
+    this.facesEl.appendChild(batch);
   }
 
   /** Открывает и закрывает сетку: нажатие на фото — то же самое движение. */
   private toggleFaces(): void {
-    this.facesEl.hidden = !this.facesEl.hidden;
+    if (!this.facesEl.hidden) {
+      this.facesEl.hidden = true;
+      return;
+    }
+    this.buildFaces();
+    this.facesEl.hidden = false;
+    this.showAvatar(this.photoEl.textContent ?? '');
+    // Прокручиваем к выбранному: искать его в тысяче знаков глазами — не
+    // выбор, а поиск.
+    this.facesEl.querySelector('button.on')?.scrollIntoView({ block: 'center' });
   }
 
   /** Ставит смайлик на пропуск и закрывает сетку. */
