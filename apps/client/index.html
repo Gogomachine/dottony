@@ -1018,6 +1018,31 @@
       margin-bottom: 8px;
     }
     .catalog { display: flex; flex-wrap: wrap; gap: 6px; }
+
+    /* Смайлики на пропуск: сетка вместо ввода, набор закрыт. */
+    .faces {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(38px, 1fr));
+      gap: 4px;
+      padding: 8px;
+      background: var(--case-2);
+      border: 1px solid var(--edge);
+      border-radius: 8px;
+    }
+    /* display: grid сильнее скрытия по атрибуту — возвращаем его. */
+    .faces[hidden] { display: none; }
+    .faces button {
+      border: 0;
+      background: transparent;
+      border-radius: 6px;
+      padding: 4px 0;
+      font-size: 22px;
+      line-height: 1.1;
+      cursor: pointer;
+    }
+    .faces button:active { transform: translateY(1px); }
+    /* Выбранный обведён: на пропуске он же и стоит. */
+    .faces button.on { background: color-mix(in srgb, var(--acc) 22%, transparent); }
     /*
       Имя со шильдиком: значок идёт перед именем, не разрывая строки.
       Подписи в приборной строке сюда не входят: шильдик к ним не ставится
@@ -1504,7 +1529,7 @@
 
           <div class="badge-body">
             <div class="badge-head">
-              <div class="photo" id="cab-photo" title="Поставить смайлик"></div>
+              <div class="photo" id="cab-photo" title="Выбрать смайлик"></div>
               <div class="badge-brand"><span id="cab-brand"></span></div>
             </div>
 
@@ -1515,6 +1540,14 @@
             <div id="cab-league" class="cab-league"></div>
             <span id="cab-login" class="cab-login"></span>
             <button id="cab-link-tg" hidden>Привязать Telegram</button>
+
+            <!--
+              Смайлик на пропуск. Раньше его спрашивало системное окно: на
+              телефоне оно открывает клавиатуру смайликов, но вместе с ней и
+              буквы, и чужие наборы, и склейки из нескольких значков. Набор
+              закрытый — как у шильдиков: выбрать можно, ввести нечего.
+            -->
+            <div id="cab-faces" class="faces" hidden></div>
 
             <!--
               Разделы кабинета столбиком, по строке на раздел. Раньше числа

@@ -27,6 +27,7 @@ export {
   cleanMarks,
 } from './marks.js';
 export type { Mark, MarkKind } from './marks.js';
+export { FACES, isFace } from './faces.js';
 export {
   newRating,
   updateRating,

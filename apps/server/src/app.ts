@@ -35,6 +35,7 @@ import {
 } from '@doton/protocol';
 import {
   cleanMarks,
+  isFace,
   leagueMark,
   markAllowed,
   MARK_BIG,
@@ -485,11 +486,18 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return { marks };
   });
 
-  /** Смайлик на пропуске: единственное, что игрок рисует о себе сам. */
+  /**
+   * Смайлик на пропуске: единственное, что игрок рисует о себе сам. Набор
+   * закрытый и лежит в ядре — оттуда его берёт и сетка выбора в кабинете, и
+   * эта проверка. Своего смайлика игрок не присылает: аватар видит соперник,
+   * и принимать сюда что попало значит заводить себе модерацию.
+   */
   app.post('/api/me/avatar', async (request, reply) => {
     const user = await requireUser(request);
     const parsed = AvatarRequestSchema.safeParse(request.body);
-    if (!parsed.success) return reply.code(400).send({ error: 'bad-avatar' });
+    if (!parsed.success || !isFace(parsed.data.avatar)) {
+      return reply.code(400).send({ error: 'bad-avatar' });
+    }
     await store.setAvatar(user.sub, parsed.data.avatar);
     return { avatar: parsed.data.avatar };
   });

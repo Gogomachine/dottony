@@ -14,6 +14,7 @@ import {
   startOrder,
   tapOrder,
   MARKS,
+  FACES,
   MARK_BIG,
   MARK_STREAK,
   tapGroup,
@@ -1035,7 +1036,7 @@ describe('API', () => {
     expect(a).toBe(b);
   });
 
-  it('смайлик на пропуске сохраняется, а текст вместо него не проходит', async () => {
+  it('смайлик на пропуске берётся только из набора прибора', async () => {
     const token = await guestToken('Ада');
     const me = async (): Promise<{ avatar: string | null }> => {
       const response = await app.inject({
@@ -1055,18 +1056,20 @@ describe('API', () => {
 
     expect((await me()).avatar).toBeNull();
 
-    expect((await put('🔭')).statusCode).toBe(200);
-    expect((await me()).avatar).toBe('🔭');
+    const first = FACES[0]!;
+    const second = FACES[FACES.length - 1]!;
+    expect((await put(first)).statusCode).toBe(200);
+    expect((await me()).avatar).toBe(first);
+    expect((await put(second)).statusCode).toBe(200);
+    expect((await me()).avatar).toBe(second);
 
-    // Составной смайлик — тоже смайлик: он из нескольких символов.
-    expect((await put('👨‍🚀')).statusCode).toBe(200);
-    expect((await me()).avatar).toBe('👨‍🚀');
-
-    // Место под фото рассчитано на знак, а не на слово.
-    for (const bad of ['Ада', '42', 'x🔭', '']) {
+    // Набор закрытый: не проходит ни слово, ни число, ни чужой смайлик —
+    // даже настоящий. Иначе на пропуске у соперника могло бы оказаться что
+    // угодно, и проверять это было бы нечем.
+    for (const bad of ['Ада', '42', 'x🔭', '', '🔭', '👨‍🚀']) {
       expect((await put(bad)).statusCode).toBe(400);
     }
-    expect((await me()).avatar).toBe('👨‍🚀');
+    expect((await me()).avatar).toBe(second);
   });
 
   it('спринт: заход попадает в таблицу с пересчитанным счётом', async () => {

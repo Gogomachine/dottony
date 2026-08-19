@@ -1,4 +1,4 @@
-import { cleanMarks, markById, MARKS } from '@doton/core';
+import { cleanMarks, FACES, markById, MARKS } from '@doton/core';
 import type { DuelHistoryEntry, FriendsResponse, MeResponse } from '@doton/protocol';
 import {
   addFriend,
@@ -105,6 +105,7 @@ export class Cabinet {
   private readonly slotsEl = el<HTMLDivElement>('cab-slots');
   private readonly slotHintEl = el<HTMLSpanElement>('cab-slot-hint');
   private readonly catalogEl = el<HTMLDivElement>('cab-catalog');
+  private readonly facesEl = el<HTMLDivElement>('cab-faces');
   /** Выбранные шильдики, выданные отметки и ячейка, которую заполняют. */
   private marks: (string | null)[] = cleanMarks([]);
   private earned: string[] = [];
@@ -118,10 +119,11 @@ export class Cabinet {
     }
     this.backEl.addEventListener('click', () => this.openTab(null));
     this.buildCatalog();
+    this.buildFaces();
     el<HTMLButtonElement>('cab-add-friend').addEventListener('click', () => void this.addByCode());
     el<HTMLButtonElement>('cab-link-tg').addEventListener('click', () => void this.linkTelegram());
     el<HTMLButtonElement>('cab-rename').addEventListener('click', () => void this.rename());
-    el<HTMLDivElement>('cab-photo').addEventListener('click', () => void this.pickAvatar());
+    el<HTMLDivElement>('cab-photo').addEventListener('click', () => this.toggleFaces());
     // Клик мимо окна закрывает кабинет — привычный жест.
     this.overlay.addEventListener('click', (event) => {
       if (event.target === this.overlay) this.hide();
@@ -167,6 +169,9 @@ export class Cabinet {
    * не помещается ни один.
    */
   private openTab(tab: CabTab | null): void {
+    // Сетка смайликов закрывается вместе со сменой раздела: она открыта под
+    // фото и в разделе только мешалась бы, отодвигая его вниз.
+    this.facesEl.hidden = true;
     this.ratingEl.hidden = tab !== 'rating';
     this.historyEl.hidden = tab !== 'history';
     this.friendsEl.hidden = tab !== 'friends';
@@ -332,23 +337,36 @@ export class Cabinet {
   }
 
   /**
-   * Смайлик вместо фотографии. Спрашиваем системным окном: на телефоне оно
-   * открывает клавиатуру смайликов, а это ровно то, что нужно.
+   * Сетка смайликов. Строится один раз при заводе кабинета: набор общий для
+   * всех, меняется в нём только подсветка выбранного.
    */
-  private async pickAvatar(): Promise<void> {
-    const answer = prompt('Смайлик на пропуск:', this.photoEl.textContent ?? '');
-    if (answer === null) return;
-    const emoji = answer.trim();
-    if (emoji.length === 0) return;
+  private buildFaces(): void {
+    for (const face of FACES) {
+      const pick = document.createElement('button');
+      pick.dataset.face = face;
+      pick.textContent = face;
+      pick.addEventListener('click', () => void this.setFace(face));
+      this.facesEl.appendChild(pick);
+    }
+  }
 
+  /** Открывает и закрывает сетку: нажатие на фото — то же самое движение. */
+  private toggleFaces(): void {
+    this.facesEl.hidden = !this.facesEl.hidden;
+  }
+
+  /** Ставит смайлик на пропуск и закрывает сетку. */
+  private async setFace(face: string): Promise<void> {
     const previous = this.photoEl.textContent ?? '';
-    this.showAvatar(emoji);
+    this.showAvatar(face);
+    this.facesEl.hidden = true;
     try {
-      await setAvatar(emoji);
+      await setAvatar(face);
     } catch {
-      // Сервер не принял: вернём как было и скажем прямо.
+      // Сервер не принял: вернём как было и скажем прямо. Набор закрытый, так
+      // что причина тут может быть только одна — до сервера не дошло.
       this.showAvatar(previous);
-      this.loginEl.textContent = 'Нужен смайлик — буквы и цифры не подойдут';
+      this.loginEl.textContent = 'Смайлик не сохранился — сервер не ответил';
     }
   }
 
@@ -356,6 +374,9 @@ export class Cabinet {
   private showAvatar(emoji: string): void {
     this.photoEl.textContent = emoji;
     this.photoEl.classList.toggle('has-emoji', emoji.length > 0);
+    for (const pick of this.facesEl.querySelectorAll<HTMLElement>('button')) {
+      pick.classList.toggle('on', pick.dataset.face === emoji);
+    }
   }
 
   private renderProfile(me: MeResponse): void {
