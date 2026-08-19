@@ -473,6 +473,44 @@ describe('бот', () => {
     expect(calls.some((call) => call.method === 'sendMessage')).toBe(false);
   });
 
+  it('имя держится за аккаунтом Telegram, а не берётся заново из профиля', async () => {
+    // Новый вход из Telegram — это открытие мини-приложения заново: токена у
+    // клиента может не быть вовсе, и аккаунт находится по одному initData.
+    const enter = () =>
+      app.inject({
+        method: 'POST',
+        url: '/api/auth/telegram',
+        payload: { initData: signedInitData({ id: 777, username: 'cucumber' }) },
+      });
+    const first = (await enter()).json() as { token: string; user: { name: string } };
+    // При заведении аккаунта имя берётся из Telegram: своего игрок ещё не дал.
+    expect(first.user.name).toBe('cucumber');
+
+    const renamed = await app.inject({
+      method: 'POST',
+      url: '/api/me/name',
+      headers: { authorization: `Bearer ${first.token}` },
+      payload: { name: 'Огурец' },
+    });
+    expect((renamed.json() as { user: { name: string } }).user.name).toBe('Огурец');
+
+    // И при следующем входе, и в карточке стоит выбранное игроком, а не
+    // Telegram: имя оттуда берётся один раз, при заведении аккаунта.
+    const again = (await enter()).json() as { token: string; user: { name: string } };
+    expect(again.user.name).toBe('Огурец');
+    const me = await app.inject({
+      method: 'GET',
+      url: '/api/me',
+      headers: { authorization: `Bearer ${again.token}` },
+    });
+    expect((me.json() as { name: string }).name).toBe('Огурец');
+
+    // Нажатие Start в боте имя тоже не трогает: аккаунт уже есть.
+    await app.inject(update('/start', { id: 777, username: 'cucumber' }));
+    const afterStart = (await enter()).json() as { user: { name: string } };
+    expect(afterStart.user.name).toBe('Огурец');
+  });
+
   it('простой /start заводит игрока и разрешает боту писать', async () => {
     const response = await app.inject(update('/start'));
     expect(response.statusCode).toBe(200);
