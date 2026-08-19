@@ -266,6 +266,11 @@ export class Store {
     );
     // Код друга: короткий, его диктуют вслух и шлют ссылкой.
     await this.addColumnIfMissing('users', 'friend_code', 'TEXT');
+    // Смену имени игрок тратит один раз: имя приходит из Telegram, и одна
+    // осознанная замена ему положена, а дальше по нему его знают соперники,
+    // друзья и таблицы. Тем, кто завёлся раньше правила, замена не сгорает:
+    // колонка по умолчанию нулевая, и их первая смена ещё впереди.
+    await this.addColumnIfMissing('users', 'renamed', 'INTEGER NOT NULL DEFAULT 0');
     // Заявки на цвет резонанса: общие для матча, поэтому лежат на дуэли,
     // а не на игроке. Без них реплей взял бы цвет фазы из сида и разошёлся
     // бы со счётом. У матчей, сыгранных до заявок, колонка пуста.
@@ -1345,11 +1350,28 @@ export class Store {
     });
   }
 
-  async renameUser(id: string, name: string): Promise<void> {
-    await this.client.execute({
-      sql: 'UPDATE users SET name = ? WHERE id = ?',
+  /**
+   * Меняет имя, если замена ещё не потрачена. Проверка стоит в самом
+   * запросе, а не рядом с ним: два одновременных нажатия иначе прошли бы
+   * оба — оба увидели бы нетронутый признак и оба записали бы своё имя.
+   *
+   * Возвращает false, если замена уже была: снаружи это отказ, а не ошибка.
+   */
+  async renameUser(id: string, name: string): Promise<boolean> {
+    const result = await this.client.execute({
+      sql: 'UPDATE users SET name = ?, renamed = 1 WHERE id = ? AND renamed = 0',
       args: [name, id],
     });
+    return result.rowsAffected > 0;
+  }
+
+  /** Потрачена ли замена имени. */
+  async renamed(id: string): Promise<boolean> {
+    const rows = await this.client.execute({
+      sql: 'SELECT renamed FROM users WHERE id = ?',
+      args: [id],
+    });
+    return Number(rows.rows[0]?.renamed ?? 0) === 1;
   }
 
   close(): void {

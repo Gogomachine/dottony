@@ -2,6 +2,7 @@ import { cleanMarks, FACES, markById, MARKS } from '@doton/core';
 import type { DuelHistoryEntry, FriendsResponse, MeResponse } from '@doton/protocol';
 import {
   addFriend,
+  ApiError,
   setAvatar,
   setMarks,
   getFriends,
@@ -92,6 +93,7 @@ export class Cabinet {
   private readonly nameEl = el<HTMLSpanElement>('cab-name');
   private readonly loginEl = el<HTMLSpanElement>('cab-login');
   private readonly photoEl = el<HTMLDivElement>('cab-photo');
+  private readonly renameEl = el<HTMLButtonElement>('cab-rename');
   private readonly leagueEl = el<HTMLDivElement>('cab-league');
   private readonly historyEl = el<HTMLOListElement>('cab-history');
   private readonly friendsEl = el<HTMLDivElement>('cab-friends');
@@ -122,7 +124,7 @@ export class Cabinet {
     this.buildFaces();
     el<HTMLButtonElement>('cab-add-friend').addEventListener('click', () => void this.addByCode());
     el<HTMLButtonElement>('cab-link-tg').addEventListener('click', () => void this.linkTelegram());
-    el<HTMLButtonElement>('cab-rename').addEventListener('click', () => void this.rename());
+    this.renameEl.addEventListener('click', () => void this.rename());
     el<HTMLDivElement>('cab-photo').addEventListener('click', () => this.toggleFaces());
     // Клик мимо окна закрывает кабинет — привычный жест.
     this.overlay.addEventListener('click', (event) => {
@@ -300,14 +302,24 @@ export class Cabinet {
   }
 
   private async rename(): Promise<void> {
-    const answer = prompt('Новое имя:', this.nameEl.textContent ?? '');
+    // Про единственность говорим в самом вопросе: отдельным окном «точно
+    // ли?» это было бы два окна подряд об одном и том же.
+    const answer = prompt('Новое имя. Сменить его можно только раз:', this.nameEl.textContent ?? '');
     if (answer === null) return;
     const next = answer.trim().slice(0, 24);
     if (next.length === 0) return;
     try {
       this.nameEl.textContent = await rename(next);
-    } catch {
-      this.loginEl.textContent = 'Имя не сохранилось — попробуй ещё раз';
+      // Замена потрачена — карандаш больше не нужен.
+      this.renameEl.hidden = true;
+    } catch (error) {
+      // Отказ по исчерпанной замене — не сбой связи: имя уже меняли, просто
+      // на другом устройстве, и карандаш здесь ещё не успел погаснуть.
+      const used = error instanceof ApiError && error.status === 409;
+      this.renameEl.hidden = used;
+      this.loginEl.textContent = used
+        ? 'Имя уже менялось — оно даётся на одну замену'
+        : 'Имя не сохранилось — попробуй ещё раз';
     }
   }
 
@@ -388,6 +400,8 @@ export class Cabinet {
     this.showMarks(marks);
     this.handlers.onMarks(marks);
     this.nameEl.textContent = me.name;
+    // Замена имени одна на аккаунт: потратил — карандаша больше нет.
+    this.renameEl.hidden = !me.canRename;
     this.showAvatar(me.avatar ?? '');
     const logins = me.identities.map((identity) => LOGIN_NAMES[identity.kind] ?? identity.kind);
     this.loginEl.textContent = `вход: ${logins.join(', ')}`;

@@ -447,11 +447,17 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
 
   /** Смена имени. Токен несёт имя, поэтому выдаём новый. */
+  /**
+   * Смена имени. Она одна на аккаунт: имя приходит из Telegram, и одной
+   * осознанной замены игроку хватает — дальше по этому имени его знают
+   * соперники, друзья и таблицы, и менять его туда-сюда значит путать их.
+   */
   app.post('/api/me/name', async (request, reply) => {
     const user = await requireUser(request);
     const parsed = RenameRequestSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
-    await store.renameUser(user.sub, parsed.data.name);
+    const changed = await store.renameUser(user.sub, parsed.data.name);
+    if (!changed) return reply.code(409).send({ error: 'rename-used' });
     return issueToken(user.sub, parsed.data.name);
   });
 
@@ -682,6 +688,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       earned,
       duelRating,
       duelRank,
+      renamed,
     ] = await Promise.all([
         store.ratingOf(user.sub),
         store.ratingRank(user.sub),
@@ -698,6 +705,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         ownedMarks(user.sub),
         store.ratingOf(user.sub, 'order'),
         store.ratingRank(user.sub, 'order'),
+        store.renamed(user.sub),
       ]);
     const up = nextLeague(rating.rating);
     const league = leagueOf(rating.rating);
@@ -730,6 +738,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       order: { best: order, orders, rank: orderRank },
       marks,
       earned,
+      canRename: !renamed,
     };
   });
 

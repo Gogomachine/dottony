@@ -473,6 +473,50 @@ describe('бот', () => {
     expect(calls.some((call) => call.method === 'sendMessage')).toBe(false);
   });
 
+  it('имя меняется один раз: вторая попытка не проходит', async () => {
+    const enter = () =>
+      app.inject({
+        method: 'POST',
+        url: '/api/auth/telegram',
+        payload: { initData: signedInitData({ id: 778, username: 'cucumber' }) },
+      });
+    const first = (await enter()).json() as { token: string; user: { name: string } };
+    const me = async (token: string): Promise<{ name: string; canRename: boolean }> =>
+      (
+        await app.inject({
+          method: 'GET',
+          url: '/api/me',
+          headers: { authorization: `Bearer ${token}` },
+        })
+      ).json() as { name: string; canRename: boolean };
+    const put = (token: string, name: string) =>
+      app.inject({
+        method: 'POST',
+        url: '/api/me/name',
+        headers: { authorization: `Bearer ${token}` },
+        payload: { name },
+      });
+
+    // Имя из Telegram заменой не считается: игрок своего ещё не давал.
+    expect(await me(first.token)).toMatchObject({ name: 'cucumber', canRename: true });
+
+    const renamed = await put(first.token, 'Огурец');
+    expect(renamed.statusCode).toBe(200);
+    const token = (renamed.json() as { token: string }).token;
+    expect(await me(token)).toMatchObject({ name: 'Огурец', canRename: false });
+
+    // Вторая замена отклоняется, и имя остаётся прежним.
+    const again = await put(token, 'Огурец Второй');
+    expect(again.statusCode).toBe(409);
+    expect(again.json()).toEqual({ error: 'rename-used' });
+    expect(await me(token)).toMatchObject({ name: 'Огурец', canRename: false });
+
+    // Новый вход из Telegram замену не возвращает: она на аккаунте, а не
+    // на устройстве.
+    const back = (await enter()).json() as { token: string };
+    expect(await me(back.token)).toMatchObject({ name: 'Огурец', canRename: false });
+  });
+
   it('имя держится за аккаунтом Telegram, а не берётся заново из профиля', async () => {
     // Новый вход из Telegram — это открытие мини-приложения заново: токена у
     // клиента может не быть вовсе, и аккаунт находится по одному initData.

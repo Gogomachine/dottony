@@ -273,6 +273,12 @@ export interface FriendsResponse {
 
 export interface MeResponse {
   name: string;
+  /**
+   * Осталась ли замена имени. Она одна на аккаунт: имя приходит из Telegram,
+   * и одной осознанной замены хватает — дальше по нему игрока знают соперники
+   * и таблицы.
+   */
+  canRename: boolean;
   /** Смайлик на пропуске; null — игрок его ещё не ставил. */
   avatar: string | null;
   rating: number;
