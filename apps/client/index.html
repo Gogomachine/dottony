@@ -93,6 +93,15 @@
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    /*
+     * Скрытие атрибутом сильнее раскладки. Браузер прячет [hidden] правилом
+     * `display: none`, но любое своё `display: flex` или `grid` его
+     * перебивает — и элемент, которому в коде поставили hidden, остаётся на
+     * экране. Ловушка тихая: в разметке всё верно, в состоянии всё верно, а
+     * на экране лишний блок. Разбирали её здесь трижды, поэтому закрыта
+     * разом, а не оговоркой у каждого правила.
+     */
+    [hidden] { display: none !important; }
     html, body { height: 100%; }
     /* Корпус занимает экран целиком: прибор — не карточка на столе, а сама
        поверхность, к которой поднесли глаз. Стола за ним больше нет. */
@@ -496,8 +505,6 @@
       cursor: pointer;
       transition: border-color 0.12s, transform 0.09s;
     }
-    /* display: grid выше сильнее скрытия по атрибуту — возвращаем его. */
-    .menu-list li.mode[hidden] { display: none; }
     .menu-list li.mode:active { transform: translateY(1px); }
     .menu-list li.mode b { font-size: 16px; font-weight: 700; }
     .menu-list li.mode .when {
@@ -931,6 +938,36 @@
     }
     .badge-name span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     #cab-rename { padding: 6px 9px; flex: 0 0 auto; }
+
+    /* Ввод имени: тем же начертанием, каким имя стоит на пропуске. */
+    .name-edit { display: flex; flex-direction: column; gap: 7px; }
+    .name-edit input {
+      width: 100%;
+      padding: 7px 10px;
+      font-family: inherit;
+      font-size: 19px;
+      font-weight: 800;
+      font-style: italic;
+      letter-spacing: -0.01em;
+      text-transform: uppercase;
+      line-height: 1.2;
+      color: var(--silk);
+      background: var(--case-2);
+      border: 1px solid var(--edge);
+      border-radius: 8px;
+    }
+    .name-edit input:focus { outline: none; border-color: var(--acc); }
+    .name-edit .note {
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--silk-2);
+    }
+    /* Отказ говорит тем же местом, что и предупреждение: строка одна. */
+    .name-edit .note.warn { color: var(--acc); }
+    .name-edit .row { display: flex; gap: 8px; }
+    .name-edit .row button { flex: 1; }
     .cab-login {
       font-family: var(--mono);
       font-size: 9px;
@@ -1029,8 +1066,6 @@
       border: 1px solid var(--edge);
       border-radius: 8px;
     }
-    /* display: grid сильнее скрытия по атрибуту — возвращаем его. */
-    .faces[hidden] { display: none; }
     .faces button {
       border: 0;
       background: transparent;
@@ -1103,7 +1138,6 @@
       color: var(--silk-2);
       font-variant-numeric: tabular-nums;
     }
-    .cab-nav[hidden] { display: none; }
 
     /* Возврат к столбику: он же заголовок открытого раздела. */
     .cab-back {
@@ -1118,8 +1152,6 @@
       border-radius: 8px;
       cursor: pointer;
     }
-    /* display выше сильнее скрытия по атрибуту — возвращаем его. */
-    .cab-back[hidden] { display: none; }
     .cab-back .arrow { color: var(--acc); font-size: 14px; line-height: 1; }
     .cab-back b { font-size: 14px; font-weight: 700; }
 
@@ -1533,9 +1565,31 @@
               <div class="badge-brand"><span id="cab-brand"></span></div>
             </div>
 
-            <div class="badge-name">
+            <div class="badge-name" id="cab-name-row">
               <span id="cab-name"></span>
               <button id="cab-rename" title="Сменить имя">✎</button>
+            </div>
+
+            <!--
+              Ввод имени прямо в карточке. Системное окно спрашивало его
+              чужим шрифтом поверх всего прибора, а замена одна на аккаунт —
+              такое стоит делать там же, где имя и стоит, и видеть при этом,
+              как оно ляжет на пропуск.
+            -->
+            <div class="name-edit" id="cab-name-edit" hidden>
+              <input
+                id="cab-name-input"
+                type="text"
+                maxlength="24"
+                autocomplete="off"
+                spellcheck="false"
+                aria-label="Новое имя"
+              />
+              <span class="note" id="cab-name-note">Имя меняется один раз</span>
+              <div class="row">
+                <button id="cab-name-cancel">Отмена</button>
+                <button id="cab-name-save" class="acc">Сохранить</button>
+              </div>
             </div>
             <div id="cab-league" class="cab-league"></div>
             <span id="cab-login" class="cab-login"></span>

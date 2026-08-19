@@ -94,6 +94,10 @@ export class Cabinet {
   private readonly loginEl = el<HTMLSpanElement>('cab-login');
   private readonly photoEl = el<HTMLDivElement>('cab-photo');
   private readonly renameEl = el<HTMLButtonElement>('cab-rename');
+  private readonly nameRowEl = el<HTMLDivElement>('cab-name-row');
+  private readonly nameEditEl = el<HTMLDivElement>('cab-name-edit');
+  private readonly nameInputEl = el<HTMLInputElement>('cab-name-input');
+  private readonly nameNoteEl = el<HTMLSpanElement>('cab-name-note');
   private readonly leagueEl = el<HTMLDivElement>('cab-league');
   private readonly historyEl = el<HTMLOListElement>('cab-history');
   private readonly friendsEl = el<HTMLDivElement>('cab-friends');
@@ -124,7 +128,14 @@ export class Cabinet {
     this.buildFaces();
     el<HTMLButtonElement>('cab-add-friend').addEventListener('click', () => void this.addByCode());
     el<HTMLButtonElement>('cab-link-tg').addEventListener('click', () => void this.linkTelegram());
-    this.renameEl.addEventListener('click', () => void this.rename());
+    this.renameEl.addEventListener('click', () => this.startRename());
+    el<HTMLButtonElement>('cab-name-cancel').addEventListener('click', () => this.stopRename());
+    el<HTMLButtonElement>('cab-name-save').addEventListener('click', () => void this.saveName());
+    this.nameInputEl.addEventListener('keydown', (event) => {
+      // Ввод с клавиатуры доводят клавишей, а не поиском кнопки глазами.
+      if (event.key === 'Enter') void this.saveName();
+      if (event.key === 'Escape') this.stopRename();
+    });
     el<HTMLDivElement>('cab-photo').addEventListener('click', () => this.toggleFaces());
     // Клик мимо окна закрывает кабинет — привычный жест.
     this.overlay.addEventListener('click', (event) => {
@@ -171,9 +182,10 @@ export class Cabinet {
    * не помещается ни один.
    */
   private openTab(tab: CabTab | null): void {
-    // Сетка смайликов закрывается вместе со сменой раздела: она открыта под
-    // фото и в разделе только мешалась бы, отодвигая его вниз.
+    // Сетка смайликов и ввод имени закрываются вместе со сменой раздела:
+    // оба открыты в шапке и в разделе только мешались бы, отодвигая его вниз.
     this.facesEl.hidden = true;
+    this.stopRename();
     this.ratingEl.hidden = tab !== 'rating';
     this.historyEl.hidden = tab !== 'history';
     this.friendsEl.hidden = tab !== 'friends';
@@ -301,25 +313,55 @@ export class Cabinet {
     }
   }
 
-  private async rename(): Promise<void> {
-    // Про единственность говорим в самом вопросе: отдельным окном «точно
-    // ли?» это было бы два окна подряд об одном и том же.
-    const answer = prompt('Новое имя. Сменить его можно только раз:', this.nameEl.textContent ?? '');
-    if (answer === null) return;
-    const next = answer.trim().slice(0, 24);
-    if (next.length === 0) return;
+  /** Открывает ввод вместо строки имени: меняем там же, где оно стоит. */
+  private startRename(): void {
+    this.nameRowEl.hidden = true;
+    this.nameEditEl.hidden = false;
+    this.setNameNote('Имя меняется один раз', false);
+    this.nameInputEl.value = this.nameEl.textContent ?? '';
+    this.nameInputEl.focus();
+    this.nameInputEl.select();
+  }
+
+  /** Закрывает ввод, ничего не меняя. */
+  private stopRename(): void {
+    this.nameEditEl.hidden = true;
+    this.nameRowEl.hidden = false;
+  }
+
+  /** Строка под вводом: сперва предупреждение, потом отказ, если он был. */
+  private setNameNote(text: string, bad: boolean): void {
+    this.nameNoteEl.textContent = text;
+    this.nameNoteEl.className = `note${bad ? ' warn' : ''}`;
+  }
+
+  private async saveName(): Promise<void> {
+    const next = this.nameInputEl.value.trim().slice(0, 24);
+    if (next.length === 0) {
+      this.setNameNote('Имя не может быть пустым', true);
+      return;
+    }
+    // Прежнее имя менять незачем — и тратить на него единственную замену
+    // тем более: закрываем ввод молча.
+    if (next === this.nameEl.textContent) {
+      this.stopRename();
+      return;
+    }
     try {
       this.nameEl.textContent = await rename(next);
       // Замена потрачена — карандаш больше не нужен.
       this.renameEl.hidden = true;
+      this.stopRename();
     } catch (error) {
       // Отказ по исчерпанной замене — не сбой связи: имя уже меняли, просто
       // на другом устройстве, и карандаш здесь ещё не успел погаснуть.
-      const used = error instanceof ApiError && error.status === 409;
-      this.renameEl.hidden = used;
-      this.loginEl.textContent = used
-        ? 'Имя уже менялось — оно даётся на одну замену'
-        : 'Имя не сохранилось — попробуй ещё раз';
+      if (error instanceof ApiError && error.status === 409) {
+        this.renameEl.hidden = true;
+        this.stopRename();
+        this.loginEl.textContent = 'Имя уже менялось — оно даётся на одну замену';
+        return;
+      }
+      this.setNameNote('Не сохранилось — попробуй ещё раз', true);
     }
   }
 
