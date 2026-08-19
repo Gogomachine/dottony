@@ -699,6 +699,9 @@ function showOverModal(options: {
   // Пока ждём соперника, единственное осмысленное действие — отменить поиск.
   waitingForOpponent = options.waiting ?? false;
   viewingOnly = options.viewing ?? false;
+  // Окно не для просмотра — значит путь назад в кабинет к нему не относится:
+  // возвращать туда после конца матча или отмены поиска было бы неожиданно.
+  if (!viewingOnly) boardFromCabinet = false;
   modalBtn.textContent = waitingForOpponent
     ? 'Отменить'
     : viewingOnly
