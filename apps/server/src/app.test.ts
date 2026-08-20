@@ -1381,6 +1381,52 @@ describe('API', () => {
     expect(me).toBeNull();
   });
 
+  it('жетоны: платят за доведённый заход, и не чаще, чем заход идёт', async () => {
+    const token = await guestToken('Сменщик');
+    const tokensOf = async (): Promise<number> => {
+      const me = await app.inject({
+        method: 'GET',
+        url: '/api/me',
+        headers: { authorization: `Bearer ${token}` },
+      });
+      return (me.json() as { tokens: number }).tokens;
+    };
+    expect(await tokensOf()).toBe(0);
+
+    // Отклонённый заход не заход: журнал не сошёлся — платить не за что.
+    const bad = await app.inject({
+      method: 'POST',
+      url: '/api/sprint',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { seed: 777, moves: playHonestRun(777 ^ 0xdeadbeef, 5).moves },
+    });
+    expect(bad.statusCode).toBe(400);
+    expect(await tokensOf()).toBe(0);
+
+    const honest = playHonestRun(12345, 4);
+    const sprint = await app.inject({
+      method: 'POST',
+      url: '/api/sprint',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { seed: 12345, moves: honest.moves },
+    });
+    expect(sprint.statusCode).toBe(200);
+    expect(await tokensOf()).toBe(1);
+
+    // Второй заход подряд честен по счёту, но пришёл раньше, чем заход мог
+    // закончиться, — жетон за него не дают. Счёт при этом засчитан.
+    const run = seedWithOrders(1);
+    const order = await app.inject({
+      method: 'POST',
+      url: '/api/order',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { seed: run.seed, moves: run.moves },
+    });
+    expect(order.statusCode).toBe(200);
+    expect((order.json() as { record: boolean }).record).toBe(true);
+    expect(await tokensOf()).toBe(1);
+  });
+
   it('шильдики: выбор сохраняется и приходит в карточку', async () => {
     const token = await guestToken('Ада');
     const free = MARKS.filter((mark) => mark.needs === undefined);
@@ -2003,6 +2049,22 @@ describe('рейтинг за дуэль', () => {
 
     const board = await app.inject({ method: 'GET', url: '/api/rating' });
     expect((board.json() as { entries: unknown[] }).entries).toEqual([]);
+  });
+
+  it('жетоны: матч оплачивают обоим — и победителю, и проигравшему', async () => {
+    const tokens: [string, string] = [await guest('Проигравший'), await guest('Победитель')];
+    await playDuel(tokens);
+
+    // Рейтинг досылают после записи матча, поэтому к этому мигу жетоны
+    // уже начислены: отдельного ожидания не нужно.
+    for (const token of tokens) {
+      const me = await app.inject({
+        method: 'GET',
+        url: '/api/me',
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect((me.json() as { tokens: number }).tokens).toBe(1);
+    }
   });
 
   it('дуэль на заказах двигает свой рейтинг, а не рейтинг цепочек', async () => {

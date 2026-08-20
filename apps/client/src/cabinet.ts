@@ -469,6 +469,7 @@ export class Cabinet {
     if (!linkBtn.hidden) linkBtn.textContent = 'Привязать Telegram';
 
     this.renderTotal(me.total);
+    el<HTMLSpanElement>('cab-tokens').textContent = groupDigits(me.tokens);
     // Рейтингов два: дуэли на цепочках и дуэли в тапе — разные механики,
     // и общее число врало бы про обе. Рекордов заходов тоже два, по механике
     // на каждый, — вместе это и есть «по всем режимам».

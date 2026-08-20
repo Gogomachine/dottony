@@ -271,6 +271,11 @@ export class Store {
     // друзья и таблицы. Тем, кто завёлся раньше правила, замена не сгорает:
     // колонка по умолчанию нулевая, и их первая смена ещё впереди.
     await this.addColumnIfMissing('users', 'renamed', 'INTEGER NOT NULL DEFAULT 0');
+    // Жетоны: валюта прибора. Копятся за доведённые до конца заходы и матчи,
+    // тратятся на шильдики и замену имени. Рядом лежит время последней
+    // выдачи — по нему держится темп начисления.
+    await this.addColumnIfMissing('users', 'tokens', 'INTEGER NOT NULL DEFAULT 0');
+    await this.addColumnIfMissing('users', 'tokens_at', 'TEXT');
     // Заявки на цвет резонанса: общие для матча, поэтому лежат на дуэли,
     // а не на игроке. Без них реплей взял бы цвет фазы из сида и разошёлся
     // бы со счётом. У матчей, сыгранных до заявок, колонка пуста.
@@ -1363,6 +1368,35 @@ export class Store {
       args: [name, id],
     });
     return result.rowsAffected > 0;
+  }
+
+  /**
+   * Выдаёт жетон за доведённый до конца заход — но не чаще, чем раз в
+   * `gapSeconds`. Проверка стоит в самом запросе, а не рядом с ним: два
+   * захода, досланные разом, иначе прошли бы оба — оба увидели бы старое
+   * время и оба записали бы по жетону.
+   *
+   * Возвращает false, если жетон не положен: снаружи это не ошибка, а
+   * обычный ответ — заход засчитан, а жетон за него уже был.
+   */
+  async grantToken(id: string, gapSeconds: number): Promise<boolean> {
+    const result = await this.client.execute({
+      sql: `UPDATE users
+               SET tokens = tokens + 1, tokens_at = datetime('now')
+             WHERE id = ?
+               AND (tokens_at IS NULL OR tokens_at <= datetime('now', ?))`,
+      args: [id, `-${gapSeconds} seconds`],
+    });
+    return result.rowsAffected > 0;
+  }
+
+  /** Сколько жетонов у игрока сейчас. */
+  async tokensOf(id: string): Promise<number> {
+    const rows = await this.client.execute({
+      sql: 'SELECT tokens FROM users WHERE id = ?',
+      args: [id],
+    });
+    return Number(rows.rows[0]?.tokens ?? 0);
   }
 
   /** Потрачена ли замена имени. */

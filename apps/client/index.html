@@ -1228,6 +1228,15 @@
       text-transform: uppercase;
       color: rgba(255, 255, 255, 0.75);
     }
+    .tot-coins {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      margin-top: 4px;
+      padding-top: 6px;
+      border-top: 1px solid rgba(255, 255, 255, 0.28);
+    }
+    .tot-coins-value { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
 
     .history {
       list-style: none;
@@ -1672,6 +1681,12 @@
             </div>
             <div class="tot-bar"><i id="cab-total-bar"></i></div>
             <span id="cab-total-next" class="tot-next"></span>
+            <!-- Жетоны копятся за доведённые до конца заходы: это не очки,
+                 а счёт смен, поэтому они стоят отдельной строкой. -->
+            <div class="tot-coins">
+              <span class="tot-label">Жетоны</span>
+              <span id="cab-tokens" class="tot-coins-value mono">0</span>
+            </div>
           </div>
         </div>
       </div>

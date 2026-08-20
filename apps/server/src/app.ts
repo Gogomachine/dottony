@@ -61,6 +61,7 @@ import {
   REQUEST_LIMIT,
   REQUEST_WINDOW_MS,
   SignupGuard,
+  TOKEN_GAP_SECONDS,
 } from './limits.js';
 import { DEFAULT_GHOST_SCORE, makeSyntheticGhost, type Ghost } from './ghost.js';
 import { Matchmaker, type MatchResult } from './matchmaker.js';
@@ -327,7 +328,12 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
             Promise.all(
               players
                 .filter((player) => !player.ghost)
-                .map((player) => store.addTotal(player.id, player.score)),
+                // Матч дают в жетонах столько же, сколько соло-заход: время
+                // он занимает то же, а звать в дуэль выгоднее, чем прятаться
+                // от неё.
+                .map((player) =>
+                  Promise.all([store.addTotal(player.id, player.score), payToken(player.id)]),
+                ),
             ),
           )
           .then(() => applyRatings(result))
@@ -462,6 +468,15 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
 
   /**
+   * Жетон за доведённый до конца заход или матч. Платим за то, что игрок
+   * доиграл, а не за то, что выиграл: проигравшему заход стоил того же
+   * времени, и брать с него дважды незачем.
+   */
+  const payToken = async (userId: string): Promise<void> => {
+    await store.grantToken(userId, TOKEN_GAP_SECONDS);
+  };
+
+  /**
    * Что игроку сейчас положено носить: выданное навсегда плюс золото, пока
    * он держит вечную таблицу. Второе живёт не в базе, а в самой таблице,
    * поэтому спрашивается заново каждый раз.
@@ -531,6 +546,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       parsed.data.seed,
       JSON.stringify(parsed.data.moves),
     );
+    await payToken(user.sub);
     // Первое место дня — отметка на корпус. Считаем по дневной таблице:
     // вечная слишком неподвижна, чтобы за неё что-то выдавать.
     if ((await store.sprintRank(user.sub, 'day')) === 1) {
@@ -595,6 +611,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       parsed.data.seed,
       JSON.stringify(parsed.data.moves),
     );
+    await payToken(user.sub);
     if ((await store.orderRank(user.sub, 'day')) === 1) {
       await store.grantMark(user.sub, 'e-order');
     }
@@ -689,6 +706,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       duelRating,
       duelRank,
       renamed,
+      tokens,
     ] = await Promise.all([
         store.ratingOf(user.sub),
         store.ratingRank(user.sub),
@@ -706,6 +724,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         store.ratingOf(user.sub, 'order'),
         store.ratingRank(user.sub, 'order'),
         store.renamed(user.sub),
+        store.tokensOf(user.sub),
       ]);
     const up = nextLeague(rating.rating);
     const league = leagueOf(rating.rating);
@@ -739,6 +758,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       marks,
       earned,
       canRename: !renamed,
+      tokens,
     };
   });
 
