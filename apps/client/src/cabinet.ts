@@ -1,8 +1,9 @@
-import { cleanMarks, FACES, markById, MARKS } from '@doton/core';
+import { cleanMarks, FACES, markAllowed, markById, MARKS, type Mark } from '@doton/core';
 import type { DuelHistoryEntry, FriendsResponse, MeResponse } from '@doton/protocol';
 import {
   addFriend,
   ApiError,
+  buyMark,
   setAvatar,
   setMarks,
   getFriends,
@@ -117,6 +118,14 @@ export class Cabinet {
   private earned: string[] = [];
   private slot = 0;
   private miniApp: string | null = null;
+  /** Жетоны игрока: по ним видно, хватает ли на наклейку. */
+  private tokens = 0;
+  /**
+   * Наклейка, на которую занесена рука: первое нажатие называет цену,
+   * второе покупает. Диалога подтверждения нет — он бы спрашивал то же
+   * самое, только окном поверх каталога.
+   */
+  private buying: string | null = null;
 
   constructor(private readonly handlers: CabinetHandlers) {
     el<HTMLSpanElement>('cab-brand').innerHTML = brandLockup(116);
@@ -185,6 +194,8 @@ export class Cabinet {
     // оба открыты в шапке и в разделе только мешались бы, отодвигая его вниз.
     this.facesEl.hidden = true;
     this.stopRename();
+    // Занесённая над наклейкой рука опускается: цену называют заново.
+    this.buying = null;
     this.ratingEl.hidden = tab !== 'rating';
     this.historyEl.hidden = tab !== 'history';
     this.friendsEl.hidden = tab !== 'friends';
@@ -242,15 +253,49 @@ export class Cabinet {
       pick.dataset.mark = mark.id;
       if (mark.needs !== undefined) pick.dataset.needs = mark.needs;
       pick.appendChild(markChip(mark));
-      pick.addEventListener('click', () => {
-        // Невыданная отметка не молчит: нажатие рассказывает, за что дают.
-        if (mark.needs !== undefined && !this.earned.includes(mark.id)) {
-          this.slotHintEl.textContent = mark.needs;
-          return;
-        }
-        void this.put(mark.id);
-      });
+      pick.addEventListener('click', () => void this.take(mark));
       this.catalogEl.appendChild(pick);
+    }
+  }
+
+  /**
+   * Нажатие по каталогу. Своё — ставим в ячейку; чужое — объясняем, откуда
+   * его берут: отметку заслуживают, наклейку покупают. Второе нажатие по
+   * названной цене её и платит.
+   */
+  private async take(mark: Mark): Promise<void> {
+    if (markAllowed(mark.id, this.earned)) {
+      this.buying = null;
+      await this.put(mark.id);
+      return;
+    }
+    // Невыданная отметка не молчит: нажатие рассказывает, за что дают.
+    if (mark.price === undefined) {
+      this.buying = null;
+      this.slotHintEl.textContent = mark.needs ?? '';
+      return;
+    }
+    if (this.tokens < mark.price) {
+      this.buying = null;
+      this.slotHintEl.textContent = `${mark.price} жетонов · у вас ${this.tokens}`;
+      return;
+    }
+    if (this.buying !== mark.id) {
+      this.buying = mark.id;
+      this.slotHintEl.textContent = `${mark.price} жетонов · нажмите ещё раз`;
+      return;
+    }
+    this.buying = null;
+    try {
+      const bought = await buyMark(mark.id);
+      this.tokens = bought.tokens;
+      this.earned = bought.earned;
+      el<HTMLSpanElement>('cab-tokens').textContent = groupDigits(bought.tokens);
+      // Купленное сразу надевается: за ним и шли.
+      await this.put(mark.id);
+      this.slotHintEl.textContent = `осталось ${bought.tokens} жетонов`;
+    } catch {
+      this.slotHintEl.textContent = 'не купилось — попробуйте ещё раз';
     }
   }
 
@@ -285,10 +330,9 @@ export class Cabinet {
     this.slotHintEl.textContent = `Ячейка ${this.slot + 1} · выберите шильдик`;
     for (const pick of this.catalogEl.querySelectorAll<HTMLElement>('.pick')) {
       pick.classList.toggle('on', pick.dataset.mark === marks[this.slot]);
-      // Отметку за игру видно всегда: каталог заодно и список целей.
-      const locked =
-        pick.dataset.needs !== undefined && !this.earned.includes(pick.dataset.mark ?? '');
-      pick.classList.toggle('locked', locked);
+      // Чужое видно всегда: каталог заодно и список того, к чему идти —
+      // и целей за игру, и того, что лежит на прилавке.
+      pick.classList.toggle('locked', !markAllowed(pick.dataset.mark ?? '', this.earned));
     }
   }
 
@@ -453,6 +497,7 @@ export class Cabinet {
     // гасит золото, когда место в таблице потеряно, — свой корпус поэтому
     // приводим к серверному, а не к тому, что помнит устройство.
     this.earned = me.earned;
+    this.tokens = me.tokens;
     const marks = cleanMarks(me.marks);
     this.showMarks(marks);
     this.handlers.onMarks(marks);
@@ -509,7 +554,10 @@ export class Cabinet {
     // Подписи разделов: в столбике должно быть видно, что за строкой.
     this.setNote('rating', me.placement ? 'калибровка' : me.league);
     this.setNote('history', me.duels.played === 0 ? '—' : String(me.duels.played));
-    this.setNote('marks', `${me.earned.length} из ${MARKS.length}`);
+    // Считаем не выданное, а носимое: кличка есть у всех даром, и «0 из 64»
+    // на полном каталоге кличек читалось бы как поломка.
+    const mine = MARKS.filter((mark) => markAllowed(mark.id, me.earned)).length;
+    this.setNote('marks', `${mine} из ${MARKS.length}`);
 
     this.leagueEl.innerHTML =
       '<span class="league-name"></span>' +

@@ -14,6 +14,8 @@ import {
   startOrder,
   tapOrder,
   MARKS,
+  markAllowed,
+  STICKER_PRICE,
   FACES,
   MARK_BIG,
   MARK_STREAK,
@@ -1429,8 +1431,9 @@ describe('API', () => {
 
   it('шильдики: выбор сохраняется и приходит в карточку', async () => {
     const token = await guestToken('Ада');
-    const free = MARKS.filter((mark) => mark.needs === undefined);
-    const mine = [free[0]!.id, free[20]!.id] as const;
+    // Даром носятся клички: их и ставим — покупка проверяется отдельно.
+    const free = MARKS.filter((mark) => markAllowed(mark.id));
+    const mine = [free[0]!.id, free[free.length - 1]!.id] as const;
 
     const saved = await app.inject({
       method: 'PUT',
@@ -1461,7 +1464,7 @@ describe('API', () => {
       return response.json();
     };
 
-    const id = MARKS.find((mark) => mark.needs === undefined)!.id;
+    const id = MARKS.find((mark) => markAllowed(mark.id))!.id;
     // Номера не из каталога гасят ячейку, а не занимают её.
     expect(await put([id, 'p999', id])).toEqual({ marks: [id, null, null] });
     // Больше трёх корпус не примет вовсе.
@@ -1472,6 +1475,87 @@ describe('API', () => {
       payload: { marks: [id, id, id, id] },
     });
     expect(тесно.statusCode).toBe(400);
+  });
+
+  it('наклейки: без жетонов не продаются, а отметки за игру не продаются вовсе', async () => {
+    const token = await guestToken('Бедный');
+    const buy = async (id: string): Promise<number> => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/me/marks/buy',
+        headers: { authorization: `Bearer ${token}` },
+        payload: { id },
+      });
+      return response.statusCode;
+    };
+
+    // Наклейка есть в продаже, но платить нечем.
+    expect(await buy('s0')).toBe(402);
+    // Отметка за игру, золото и кличка цены не имеют: первую и второе
+    // заслуживают, третья и так у всех.
+    expect(await buy('e-order')).toBe(400);
+    expect(await buy('g-sprint')).toBe(400);
+    expect(await buy('p21')).toBe(400);
+    expect(await buy('s999')).toBe(400);
+
+    const me = await app.inject({
+      method: 'GET',
+      url: '/api/me',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect((me.json() as { earned: string[] }).earned).toEqual([]);
+  });
+
+  it('наклейки: покупка снимает цену, выдаёт наклейку и второй раз не берёт', async () => {
+    // База в файле: жетоны надо доначислить со стороны — заработать сотню
+    // заходов в тесте нельзя, их разделяет минута.
+    const file = join(tmpdir(), `doton-buy-${randomUUID()}.db`);
+    const shop = await buildApp({ databaseUrl: `file:${file}`, jwtSecret: 'test-jwt' });
+    const db = createClient({ url: `file:${file}` });
+    try {
+      const auth = await shop.inject({
+        method: 'POST',
+        url: '/api/auth/guest',
+        payload: { name: 'Покупатель' },
+      });
+      const token = (auth.json() as { token: string }).token;
+      await db.execute(`UPDATE users SET tokens = ${STICKER_PRICE + 3}`);
+
+      const buy = async (): Promise<{ statusCode: number; json: () => unknown }> =>
+        shop.inject({
+          method: 'POST',
+          url: '/api/me/marks/buy',
+          headers: { authorization: `Bearer ${token}` },
+          payload: { id: 's0' },
+        });
+
+      const bought = await buy();
+      expect(bought.statusCode).toBe(200);
+      expect(bought.json()).toEqual({ tokens: 3, earned: ['s0'] });
+
+      // Купленную наклейку теперь пускают на корпус — до покупки не пускали.
+      const worn = await shop.inject({
+        method: 'PUT',
+        url: '/api/me/marks',
+        headers: { authorization: `Bearer ${token}` },
+        payload: { marks: ['s0', 's1'] },
+      });
+      expect(worn.json()).toEqual({ marks: ['s0', null, null] });
+
+      // Второй раз ту же наклейку не продают, и жетоны за неё не берут.
+      const again = await buy();
+      expect(again.statusCode).toBe(409);
+      const me = await shop.inject({
+        method: 'GET',
+        url: '/api/me',
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect((me.json() as { tokens: number }).tokens).toBe(3);
+    } finally {
+      db.close();
+      await shop.close();
+      await rm(file, { force: true });
+    }
   });
 
   it('шильдики: отметку за игру дают за первое место дня', async () => {
@@ -1606,7 +1690,7 @@ describe('API', () => {
     const response = await app.inject({
       method: 'PUT',
       url: '/api/me/marks',
-      payload: { marks: [MARKS.find((mark) => mark.needs === undefined)!.id] },
+      payload: { marks: [MARKS.find((mark) => markAllowed(mark.id))!.id] },
     });
     expect(response.statusCode).toBe(401);
   });

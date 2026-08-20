@@ -7,6 +7,7 @@ import {
   AddFriendRequestSchema,
   AddScoreRequestSchema,
   AvatarRequestSchema,
+  BuyMarkRequestSchema,
   MarksRequestSchema,
   DuelClientMessageSchema,
   FriendCodeSchema,
@@ -17,6 +18,7 @@ import {
   SubmitSprintRequestSchema,
   TelegramAuthRequestSchema,
   type AuthResponse,
+  type BuyMarkResponse,
   type OrderLeaderboardResponse,
   type DuelServerMessage,
   type DuelHistoryEntry,
@@ -38,6 +40,7 @@ import {
   isFace,
   leagueMark,
   markAllowed,
+  markPrice,
   MARK_BIG,
   MARK_DUELS,
   MARK_STREAK,
@@ -505,6 +508,30 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     );
     await store.setMarks(user.sub, marks);
     return { marks };
+  });
+
+  /**
+   * Покупка наклейки за жетоны. Цену называет сервер по каталогу ядра:
+   * присланной цене верить нельзя, а другой цены у наклейки нет — она одна
+   * на все.
+   *
+   * Отметки за игру и золото сюда не проходят: у них нет цены, и это не
+   * упущение — купить их нельзя, в этом вся их ценность.
+   */
+  app.post('/api/me/marks/buy', async (request, reply) => {
+    const user = await requireUser(request);
+    const parsed = BuyMarkRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
+    const price = markPrice(parsed.data.id);
+    if (price === null) return reply.code(400).send({ error: 'not-for-sale' });
+
+    const outcome = await store.buyMark(user.sub, parsed.data.id, price);
+    if (outcome === 'poor') return reply.code(402).send({ error: 'not-enough' });
+    if (outcome === 'owned') return reply.code(409).send({ error: 'owned' });
+
+    const [tokens, earned] = await Promise.all([store.tokensOf(user.sub), ownedMarks(user.sub)]);
+    const response: BuyMarkResponse = { tokens, earned };
+    return response;
   });
 
   /**

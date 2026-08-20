@@ -96,6 +96,15 @@ export const MarksRequestSchema = z.object({
   marks: z.array(z.string().max(16).nullable()).max(3),
 });
 
+/**
+ * Покупка шильдика за жетоны: номер из каталога ядра. Цену клиент не
+ * присылает — её знает сервер, и присланная цена была бы приглашением
+ * назначить себе свою.
+ */
+export const BuyMarkRequestSchema = z.object({
+  id: z.string().max(16),
+});
+
 export const InviteRequestSchema = z.object({
   room: z.string().trim().min(4).max(16),
 });
@@ -312,13 +321,22 @@ export interface MeResponse {
     rank: number | null;
     placement: { played: number; required: number } | null;
   };
-  /** Спринт: личный рекорд за три минуты и место в таблице. */
+  /** Цепочки: личный рекорд за заход и место в таблице. */
   sprint: { best: number; rank: number | null };
-  /** Челлендж бесконечного режима: лучший ход и место в таблице. */
+  /** Тап: лучший заход, сколько в нём сделано и место в таблице. */
   order: { best: number; orders: number; rank: number | null };
   /** Шильдики корпуса: три ячейки, пустая — null. */
   marks: (string | null)[];
-  /** Отметки, которые прибор уже выдал за игру. */
+  /**
+   * Всё, что игроку положено носить сверх бесплатного: выданное за игру,
+   * купленное за жетоны и золото, пока он держит таблицу.
+   */
+  earned: string[];
+}
+
+/** Что стало после покупки: остаток жетонов и обновлённый список своего. */
+export interface BuyMarkResponse {
+  tokens: number;
   earned: string[];
 }
 

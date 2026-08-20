@@ -14,7 +14,7 @@
 export type MarkKind =
   /** Служебный шильдик: набитая на корпусе краска. Есть у всех. */
   | 'plate'
-  /** Наклейка: смайл на маленькой белой наклейке. Есть у всех. */
+  /** Наклейка: смайл на маленькой белой наклейке. Покупается за жетоны. */
   | 'sticker'
   /** Отметка за игру: выдаётся прибором навсегда, купить нельзя. */
   | 'earned'
@@ -28,6 +28,8 @@ export interface Mark {
   glyph: string;
   /** За что выдаётся — только у отметок за игру. */
   needs?: string;
+  /** Сколько стоит в жетонах — только у того, что продаётся. */
+  price?: number;
 }
 
 /** Сколько шильдиков помещается на корпусе. */
@@ -59,9 +61,21 @@ const PLATES: readonly { id: string; glyph: string }[] = [
 ];
 
 /**
+ * Цена наклейки в жетонах. Одна на все: ни одна наклейка не лучше другой,
+ * и разная цена означала бы, что лучше, — а выбирают их по вкусу, а не по
+ * весу. Полсотни жетонов — это примерно час за прибором: наклейка должна
+ * быть покупкой на вечер, а не на месяц.
+ */
+export const STICKER_PRICE = 50;
+
+/**
  * Наклейки. Смайлы отобраны так, чтобы ни один не читался как жест или
  * знак принадлежности: на чужом экране всё это должно быть просто
  * картинкой, а не сообщением.
+ *
+ * Наклейки — единственное, что в приборе продаётся. Кличка есть у каждого
+ * даром, отметки за игру не продаются вовсе, а наклейка ничего о хозяине не
+ * утверждает — за неё можно брать жетоны, ничего не обещая взамен.
  */
 const STICKERS: readonly string[] = [
   '🔭', '🔬', '⚗️', '🧪', '🧲', '💡', '🔋', '📡', '🛰️', '⏱️',
@@ -88,13 +102,13 @@ export const MARK_BIG = 30;
 export const MARK_DUELS = 100;
 
 const EARNED: readonly Mark[] = [
-  { id: 'e-order', kind: 'earned', glyph: 'ДЕНЬ ЗАКАЗЫ', needs: 'Первое место дня в заказах' },
-  { id: 'e-sprint', kind: 'earned', glyph: 'ДЕНЬ СПРИНТ', needs: 'Первое место дня в спринте' },
+  { id: 'e-order', kind: 'earned', glyph: 'ДЕНЬ ТАП', needs: 'Первое место дня в тапе' },
+  { id: 'e-sprint', kind: 'earned', glyph: 'ДЕНЬ ЦЕПОЧКИ', needs: 'Первое место дня в цепочках' },
   {
     id: 'e-run',
     kind: 'earned',
     glyph: `СЕРИЯ ${MARK_STREAK}`,
-    needs: `${MARK_STREAK} окон заказов подряд за один заход`,
+    needs: `${MARK_STREAK} окон подряд за один заход тапа`,
   },
   {
     id: 'e-big',
@@ -123,14 +137,14 @@ const GOLD: readonly Mark[] = [
   {
     id: 'g-order',
     kind: 'gold',
-    glyph: '#1 ЗАКАЗЫ',
-    needs: 'Первое место в вечной таблице заказов — пока не обогнали',
+    glyph: '#1 ТАП',
+    needs: 'Первое место в вечной таблице тапа — пока не обогнали',
   },
   {
     id: 'g-sprint',
     kind: 'gold',
-    glyph: '#1 СПРИНТ',
-    needs: 'Первое место в вечной таблице спринта — пока не обогнали',
+    glyph: '#1 ЦЕПОЧКИ',
+    needs: 'Первое место в вечной таблице цепочек — пока не обогнали',
   },
 ];
 
@@ -149,7 +163,12 @@ export const MARKS: readonly Mark[] = [
   ...GOLD,
   ...EARNED,
   ...PLATES.map(({ id, glyph }) => ({ id, kind: 'plate' as const, glyph })),
-  ...STICKERS.map((glyph, index) => ({ id: `s${index}`, kind: 'sticker' as const, glyph })),
+  ...STICKERS.map((glyph, index) => ({
+    id: `s${index}`,
+    kind: 'sticker' as const,
+    glyph,
+    price: STICKER_PRICE,
+  })),
 ];
 
 const BY_ID = new Map(MARKS.map((mark) => [mark.id, mark]));
@@ -159,13 +178,25 @@ export function markById(id: string): Mark | undefined {
 }
 
 /**
- * Положен ли шильдик игроку. Служебные и наклейки — всем; отметку за игру и
- * золото носит только тот, за кем прибор их сейчас числит.
+ * Положен ли шильдик игроку. Даром носится только то, что ничем не
+ * обусловлено, — кличка прибора: корпус не должен быть пустым с первого
+ * запуска. Всё остальное — купленную наклейку, отметку за игру, золото —
+ * носит лишь тот, за кем прибор её сейчас числит.
  */
-export function markAllowed(id: string, earned: readonly string[] = []): boolean {
+export function markAllowed(id: string, owned: readonly string[] = []): boolean {
   const mark = BY_ID.get(id);
   if (!mark) return false;
-  return (mark.kind !== 'earned' && mark.kind !== 'gold') || earned.includes(id);
+  if (mark.needs === undefined && mark.price === undefined) return true;
+  return owned.includes(id);
+}
+
+/**
+ * Цена шильдика в жетонах; null — этот не продаётся. Отметки за игру и
+ * золото цены не имеют вовсе, и это не забывчивость: их цена в том, что
+ * купить их нельзя.
+ */
+export function markPrice(id: string): number | null {
+  return BY_ID.get(id)?.price ?? null;
 }
 
 /** Золотой ли это шильдик: такие снимаются, как только место потеряно. */

@@ -1,6 +1,7 @@
 import type {
   AuthResponse,
   BoardPeriod,
+  BuyMarkResponse,
   OrderLeaderboardResponse,
   OrderMove,
   DuelHistoryResponse,
@@ -187,6 +188,17 @@ export function setMarks(marks: (string | null)[]): Promise<{ marks: (string | n
   return request<{ marks: (string | null)[] }>('/api/me/marks', {
     method: 'PUT',
     body: JSON.stringify({ marks }),
+  });
+}
+
+/**
+ * Покупает наклейку за жетоны. Цену не шлём — её знает сервер; отсюда
+ * уходит только номер из каталога.
+ */
+export function buyMark(id: string): Promise<BuyMarkResponse> {
+  return request<BuyMarkResponse>('/api/me/marks/buy', {
+    method: 'POST',
+    body: JSON.stringify({ id }),
   });
 }
 

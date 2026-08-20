@@ -1390,6 +1390,63 @@ export class Store {
     return result.rowsAffected > 0;
   }
 
+  /**
+   * Покупка шильдика: выдаёт его и списывает жетоны — или не делает ничего.
+   *
+   * Возвращает, чем кончилось: `owned` — эта наклейка у игрока уже есть,
+   * `poor` — не хватило жетонов. Снаружи и то и другое — отказ, а не ошибка.
+   *
+   * Транзакции здесь нет намеренно: `client.transaction()` берёт своё
+   * подключение, а с `url: ':memory:'` — вместе с ним и свою пустую базу,
+   * так что после неё сервер перестаёт видеть даже таблицу users. Поэтому
+   * порядок держит сам себя:
+   *
+   * 1. Спрашиваем разом счёт и есть ли уже такая наклейка — обычный отказ
+   *    отвечает по делу и ничего не трогает. «Она у тебя уже есть» здесь
+   *    важнее, чем «не хватает жетонов»: у хозяина наклейки денег тоже
+   *    может не быть, и цена того, что он и так носит, ему ни о чём.
+   * 2. Выдаём наклейку. Строка уникальная, поэтому двух покупок одной и той
+   *    же не бывает даже с двух устройств разом: второй INSERT не проходит,
+   *    и платить по нему уже не за что.
+   * 3. Списываем цену с условием в самом запросе. Если счёт всё-таки успел
+   *    уйти между шагами, выданное отбираем обратно.
+   *
+   * Порядок выбран так, что редкий обрыв между шагами оставляет игроку
+   * наклейку, а не забирает жетоны: ошибаться прибор должен в пользу того,
+   * кто за ним сидит.
+   */
+  async buyMark(userId: string, markId: string, price: number): Promise<'ok' | 'poor' | 'owned'> {
+    const state = await this.client.execute({
+      sql: `SELECT tokens,
+                   EXISTS (SELECT 1 FROM user_marks WHERE user_id = u.id AND mark_id = ?) AS owned
+              FROM users u WHERE u.id = ?`,
+      args: [markId, userId],
+    });
+    const row = state.rows[0];
+    if (!row) return 'poor';
+    if (Number(row.owned) === 1) return 'owned';
+    if (Number(row.tokens) < price) return 'poor';
+
+    const given = await this.client.execute({
+      sql: `INSERT INTO user_marks (user_id, mark_id) VALUES (?, ?)
+            ON CONFLICT (user_id, mark_id) DO NOTHING`,
+      args: [userId, markId],
+    });
+    if (given.rowsAffected === 0) return 'owned';
+    const paid = await this.client.execute({
+      sql: 'UPDATE users SET tokens = tokens - ? WHERE id = ? AND tokens >= ?',
+      args: [price, userId, price],
+    });
+    if (paid.rowsAffected === 0) {
+      await this.client.execute({
+        sql: 'DELETE FROM user_marks WHERE user_id = ? AND mark_id = ?',
+        args: [userId, markId],
+      });
+      return 'poor';
+    }
+    return 'ok';
+  }
+
   /** Сколько жетонов у игрока сейчас. */
   async tokensOf(id: string): Promise<number> {
     const rows = await this.client.execute({
