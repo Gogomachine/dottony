@@ -428,6 +428,9 @@ function flashMini(): void {
  * Обучение пишет в те же приборы, что и партия: свой рендер и свои
  * подписи ему не нужны, иначе показ разошёлся бы с игрой.
  */
+const tutBackEl = el<HTMLButtonElement>('tut-back');
+const tutNextEl = el<HTMLButtonElement>('tut-next');
+
 const tutorial = new Tutorial(renderer, {
   score: (value, streak) => {
     scoreEl.textContent = groupDigits(value);
@@ -454,6 +457,10 @@ const tutorial = new Tutorial(renderer, {
   },
   hideVersus: () => {
     vsFieldEl.hidden = true;
+  },
+  paging: (canBack, last) => {
+    tutBackEl.disabled = !canBack;
+    tutNextEl.textContent = last ? 'Понятно' : 'Дальше';
   },
   stat: (text, kind) => setStat(text, kind),
   mini: (state) => showMini(state),
@@ -1620,6 +1627,9 @@ menuEl.addEventListener('click', (event) => {
 });
 
 el<HTMLButtonElement>('tut-skip').addEventListener('click', () => stopTutorial());
+// Показ листают руками: «Дальше» на последнем шаге его и закрывает.
+el<HTMLButtonElement>('tut-next').addEventListener('click', () => tutorial.next());
+el<HTMLButtonElement>('tut-back').addEventListener('click', () => tutorial.back());
 
 el<HTMLButtonElement>('rules-close').addEventListener('click', () => {
   rulesSheet.hidden = true;

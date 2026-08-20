@@ -31,6 +31,9 @@ import type { Renderer } from './game/renderer';
 
 const cfg = DEFAULT_CONFIG;
 
+/** Цвет окна в показе тапа: один на все шаги, чтобы они были узнаваемы. */
+const TAP_WINDOW: Color = 1;
+
 /** Секунд на переход пальца между соседними точками. */
 const STEP = 0.17;
 /** То же в спешке — в окне заявки время дорого. */
@@ -71,6 +74,8 @@ export interface TutorialHud {
   caption(step: number, total: number, title: string, text: string): void;
   /** Запас сбоев третьим полем приборной строки — как в бою. */
   fails(left: number, of: number): void;
+  /** Кнопки листания: можно ли назад и последний ли это шаг. */
+  paging(canBack: boolean, last: boolean): void;
   /** Сценарий кончился или прерван. */
   finish(): void;
 }
@@ -79,11 +84,17 @@ export interface TutorialHud {
 const HALT = Symbol('halt');
 
 /**
- * Шагов в сценарии. У каждой механики он свой: показывать игроку, пришедшему
- * за тапом, как ведут цепочку пальцем — значит учить не тому прибору,
- * который у него в руках.
+ * Перелистнули шаг, не досмотрев. Сворачивает его ожидания так же, как HALT
+ * закрывает весь показ, — но само обучение при этом продолжается.
  */
-const STEPS = { chain: 6, order: 5 } as const satisfies Record<DuelKind, number>;
+const SKIP = Symbol('skip');
+
+/**
+ * Сценарий у каждой механики свой: показывать игроку, пришедшему за тапом,
+ * как ведут цепочку пальцем — значит учить не тому прибору, который у него
+ * в руках. Сколько в сценарии шагов, знает он сам — считать их отдельной
+ * константой значит помнить о ней при каждой правке.
+ */
 
 export class Tutorial {
   active = false;
@@ -96,6 +107,14 @@ export class Tutorial {
   private score = 0;
   /** Механика показа: она решает, какой сценарий идёт. */
   private kind: DuelKind = 'chain';
+  /** Какой шаг открыт сейчас и не листают ли его прямо в эту секунду. */
+  private step = 0;
+  private total = 0;
+  private skipping = false;
+  /** Цвет, заявленный на шаге про заявку: следующий шаг показывает его фазу. */
+  private claimed: Color = 0;
+  /** Сколько заказов закрыто по ходу показа тапа. */
+  private done = 0;
   private stopped = false;
   private clock = 0;
   private clockRuns = false;
@@ -113,6 +132,7 @@ export class Tutorial {
   start(kind: DuelKind = 'chain'): void {
     if (this.active) return;
     this.kind = kind;
+    this.total = this.script().length;
     this.active = true;
     this.stopped = false;
     this.score = 0;
@@ -183,7 +203,7 @@ export class Tutorial {
     return new Promise((resolve, reject) => {
       this.timers.push({
         left: seconds,
-        go: () => (this.stopped ? reject(HALT) : resolve()),
+        go: () => (this.stopped ? reject(HALT) : this.skipping ? reject(SKIP) : resolve()),
       });
     });
   }
@@ -195,7 +215,7 @@ export class Tutorial {
         to,
         passed: 0,
         total: seconds,
-        go: () => (this.stopped ? reject(HALT) : resolve()),
+        go: () => (this.stopped ? reject(HALT) : this.skipping ? reject(SKIP) : resolve()),
       };
     });
   }
@@ -337,8 +357,9 @@ export class Tutorial {
     this.hud.ticks(0);
   }
 
-  private say(step: number, title: string, text: string): void {
-    this.hud.caption(step, STEPS[this.kind], title, text);
+  /** Подпись под окуляром. Номер шага и их число берутся из сценария. */
+  private say(title: string, text: string): void {
+    this.hud.caption(this.step + 1, this.total, title, text);
   }
 
   /**
@@ -414,49 +435,109 @@ export class Tutorial {
 
   // ---------- Сценарий ----------
 
+  /**
+   * Шаги показа. Раньше они шли подряд сами: игрок не успевал прочитать
+   * подпись, а перечитать её было нельзя — показ уже уехал дальше. Теперь
+   * каждый шаг доигрывает свою сцену и останавливается, а листает игрок.
+   */
+  private script(): (() => Promise<void>)[] {
+    return this.kind === 'order'
+      ? [
+          () => this.tapStepAct(),
+          () => this.orderStepAct(),
+          () => this.growStepAct(),
+          () => this.failStepAct(),
+          () => this.tapModesAct(),
+          () => this.doneAct(),
+        ]
+      : [
+          () => this.chainAct(),
+          () => this.flashAct(),
+          () => this.cascadeAct(),
+          () => this.claimAct(),
+          () => this.resonanceAct(),
+          () => this.modesAct(),
+          () => this.doneAct(),
+        ];
+  }
+
   private async run(): Promise<void> {
     this.hud.score(0, 0);
     this.hud.hideVersus();
     this.idleInstruments();
+    await this.showStep(0);
+  }
 
-    if (this.kind === 'order') {
-      await this.runTap();
+  /** Играет шаг и останавливается: следующий откроет кнопка. */
+  private async showStep(index: number): Promise<void> {
+    const script = this.script();
+    const step = script[index];
+    if (!step) {
+      this.stop();
       return;
     }
+    this.step = index;
+    this.skipping = false;
+    // Последний шаг — прощание: листать с него некуда, кнопка закрывает показ.
+    this.hud.paging(index > 0, index === script.length - 1);
+    try {
+      await step();
+    } catch (error) {
+      if (error === HALT) throw error;
+      if (error !== SKIP) throw error;
+    }
+  }
 
-    await this.chainAct();
-    await this.flashAct();
-    await this.cascadeAct();
-    const color = await this.claimAct();
-    await this.resonanceAct(color);
-    await this.modesAct();
+  /** Листает вперёд; с последнего шага — закрывает показ. */
+  next(): void {
+    if (!this.active) return;
+    if (this.step + 1 >= this.script().length) {
+      this.stop();
+      return;
+    }
+    this.jump(this.step + 1);
+  }
 
-    this.say(STEPS.chain, 'Готово', 'Это весь прибор. Дальше — образец и ваши руки.');
-    this.hud.stat('Готов к наблюдению', '');
-    await this.wait(1.9);
-    this.stop();
+  /** Листает назад: шаг проигрывается заново, с чистого расклада. */
+  back(): void {
+    if (!this.active || this.step === 0) return;
+    this.jump(this.step - 1);
   }
 
   /**
-   * Сценарий тапа. Механика другая с первого движения: здесь не ведут палец,
-   * а нажимают, и время отсчитывает не партия, а окно.
+   * Обрывает сцену текущего шага и открывает другой. Ожидания будим руками:
+   * иначе шаг, который ещё ведёт палец, дорисовал бы его поверх нового.
    */
-  private async runTap(): Promise<void> {
-    const window: Color = 1;
-    await this.tapStepAct();
-    let done = await this.orderStepAct(window);
-    done = await this.growStepAct(window, done);
-    await this.failStepAct(window, done);
-    await this.tapModesAct();
+  private jump(index: number): void {
+    this.skipping = true;
+    this.clockRuns = false;
+    const waiting = this.timers;
+    this.timers = [];
+    const tween = this.tween;
+    this.tween = null;
+    for (const timer of waiting) timer.go();
+    tween?.go();
+    this.chain = [];
+    this.pointer = null;
+    this.hud.finger(null);
+    void this.showStep(index).catch((error: unknown) => {
+      if (error !== HALT) throw error;
+    });
+  }
 
-    this.say(STEPS.order, 'Готово', 'Это весь прибор. Дальше — образец и ваши руки.');
+  /** Прощание: тот же шаг сценария, только без сцены. */
+  private async doneAct(): Promise<void> {
+    this.reset(this.step + 1);
+    this.hud.hideVersus();
+    this.idleInstruments();
+    this.say('Готово', 'Это весь прибор. Дальше — образец и ваши руки.');
     this.hud.stat('Готов к наблюдению', '');
-    await this.wait(1.9);
-    this.stop();
+    await this.wait(0.1);
   }
 
   /** 1. Касание: снимается вся связная группа, вести палец не нужно. */
   private async tapStepAct(): Promise<void> {
+    this.done = 0;
     this.reset(1);
     this.idleInstruments();
     this.paint(
@@ -472,7 +553,6 @@ export class Tutorial {
       0,
     );
     this.say(
-      1,
       'Касание',
       'Здесь не ведут палец, а нажимают: одно касание снимает всю связную группу точек этого цвета. Сколько их в ней — решает поле.',
     );
@@ -482,7 +562,8 @@ export class Tutorial {
   }
 
   /** 2. Окно: прибор звенит цветом, и нужно 25 точек этого цвета за раз. */
-  private async orderStepAct(window: Color): Promise<number> {
+  private async orderStepAct(): Promise<void> {
+    const window = TAP_WINDOW;
     this.reset(2);
     this.paint(
       [
@@ -498,73 +579,58 @@ export class Tutorial {
     );
     this.orderInstruments(window, cfg.orderWindow, 0);
     this.say(
-      2,
       'Окно',
       `Прибор звенит случайным цветом ${cfg.orderWindow} секунд и сразу берёт следующий. Задача одна: снять ${cfg.orderTarget} точек этого цвета за одно касание.`,
     );
-    await this.countWindow(window, cfg.orderWindow, cfg.orderWindow - 3, 0);
-    const done = await this.tapAt({ r: 1, c: 1 }, window, 0);
+    await this.countWindow(window, cfg.orderWindow, cfg.orderWindow - 3, this.done);
+    this.done = await this.tapAt({ r: 1, c: 1 }, window, this.done);
     await this.wait(2.2);
-    return done;
   }
 
   /** 3. Пятно: его растят, разбирая всё вокруг, — и снимают одним касанием. */
-  private async growStepAct(window: Color, done: number): Promise<number> {
+  private async growStepAct(): Promise<void> {
+    const window = TAP_WINDOW;
     this.reset(3);
     const spot = this.blob(window, cfg.orderTarget + 1);
-    this.orderInstruments(window, cfg.orderWindow, done);
+    this.orderInstruments(window, cfg.orderWindow, this.done);
     this.say(
-      3,
       'Пятно',
       'Размер группы задаёт поле, а не палец: пятно нужного цвета выращивают, разбирая всё вокруг. Ровно 25 стоят 100, каждая точка сверху — ещё столько же.',
     );
-    await this.countWindow(window, cfg.orderWindow, cfg.orderWindow - 4, done);
-    const next = await this.tapAt(spot[Math.floor(spot.length / 2)] ?? spot[0]!, window, done);
+    await this.countWindow(window, cfg.orderWindow, cfg.orderWindow - 4, this.done);
+    this.done = await this.tapAt(spot[Math.floor(spot.length / 2)] ?? spot[0]!, window, this.done);
     await this.wait(2.4);
-    return next;
   }
 
   /** 4. Сбой: окно, закрытое впустую, стоит запаса. */
-  private async failStepAct(window: Color, done: number): Promise<void> {
+  private async failStepAct(): Promise<void> {
+    const window = TAP_WINDOW;
     this.reset(4);
-    this.orderInstruments(window, 4, done);
+    this.orderInstruments(window, 4, this.done);
     this.say(
-      4,
       'Сбои',
       `Окно, закрытое без единого заказа, — сбой. На третьем заход кончается, и запас видно в приборной строке рядом со счётом.`,
     );
     await this.wait(1.4);
-    await this.countWindow(window, 3, 0, done);
+    await this.countWindow(window, 3, 0, this.done);
     this.hud.fails(cfg.orderLives - 1, cfg.orderLives);
     this.hud.stat(`Окно упущено · сбой 1 из ${cfg.orderLives}`, 'warn');
     this.hud.flash();
     await this.wait(2.6);
   }
 
-  /** 5. Режимы: тот же прибор играет соло и в дуэли. */
+  /** Режимы тапа: тем же прибором играют соло и против соперника. */
   private async tapModesAct(): Promise<void> {
-    this.reset(5);
-    this.hud.hideVersus();
+    this.reset(this.step + 1);
     this.hud.score(this.score, 0);
     this.idleInstruments();
-
     this.hud.time('Сделано', '7');
-    this.say(
-      5,
-      'Тап',
-      'Окна идут подряд, пока не кончится запас сбоев. В общую таблицу идёт счёт захода — его подтверждает сервер, переигрывая присланные касания.',
-    );
-    await this.wait(2.8);
-
-    this.hud.time('Время', '3:00');
     this.hud.versus('Соперник', 2430);
     this.say(
-      5,
-      'Дуэль',
-      'Тот же прибор играет и против живого соперника — три минуты на одинаковом образце. У каждой механики свой рейтинг, а переключает их клавиша ⇄ на корпусе.',
+      'Режимы',
+      'Окна идут подряд, пока не кончится запас сбоев; в таблицу идёт счёт захода. Дуэль — тот же образец с живым соперником, три минуты. А клавиша ⇄ на корпусе возвращает к цепочкам, со своим меню и своим рейтингом.',
     );
-    await this.wait(3);
-    this.hud.hideVersus();
+    await this.wait(0.1);
   }
 
   /** 1. Цепочка: соседние точки одного цвета, в любую сторону. */
@@ -581,7 +647,6 @@ export class Tutorial {
     ];
     this.paint(path, 2);
     this.say(
-      1,
       'Цепочка',
       'Ведите палец по соседним точкам одного цвета — по горизонтали, вертикали и по диагонали. Цепочка идёт от трёх точек, и каждая следующая дороже предыдущей.',
     );
@@ -607,7 +672,6 @@ export class Tutorial {
     ];
     this.paint(path, 0);
     this.say(
-      2,
       'Вспышка',
       `Цепочка от ${cfg.surgeChainLength} точек оставляет вспышку — кольцо с ядром на месте последней точки. Сама по себе она ничего не даёт: её надо собрать следующей цепочкой.`,
     );
@@ -636,7 +700,6 @@ export class Tutorial {
       { r: 2, c: 3 },
     ]);
     this.say(
-      3,
       'Увеличение',
       'Собранная вспышка даёт взрыв 3×3 и увеличение: одна — ×2, вторая подряд — ×3, третья — ×4. Цепочка без вспышки сбрасывает его на единицу.',
     );
@@ -655,11 +718,10 @@ export class Tutorial {
   }
 
   /** 4. Заявка: битва за цвет резонанса в окне перед фазой. */
-  private async claimAct(): Promise<Color> {
+  private async claimAct(): Promise<void> {
     this.reset(4);
     this.hud.versus('Соперник', 1980);
     this.say(
-      4,
       'Битва за цвет',
       `Цикл открывается окном заявки на ${cfg.claimWindow} секунд, резонанс идёт сразу за ним. Цепочка от ${cfg.claimChainLength} точек ставит свой цвет — и он загорится у обоих.`,
     );
@@ -689,7 +751,6 @@ export class Tutorial {
     this.hud.stat('Заявку перебили · 7', 'warn');
     this.hud.flash();
     this.say(
-      4,
       'Битва за цвет',
       'Перебить заявку можно только цепочкой длиннее — считается длина, а не скорость. Кайма окуляра всё время показывает цвет, за которым сейчас идёт резонанс.',
     );
@@ -710,21 +771,23 @@ export class Tutorial {
     await this.play(answer, STEP_FAST);
     this.claims.push({ cycle: 1, color: myColor, length: answer.length, t: this.clock, mine: true });
     this.hud.stat(`Заявка · цепь ${answer.length}`, 'live');
+    // Цвет держим на приборе: следующий шаг показывает его же фазу, а
+    // перелистнуть на него можно и не досмотрев этот.
+    this.claimed = myColor;
     // Часы придерживаем сразу: пока игрок читает итог заявки, окно не
     // должно закрыться само. Следующий шаг подведёт их к фазе, а отматывать
     // назад нельзя — на экранчике это выглядит как сбой прибора.
     this.clockRuns = false;
     await this.wait(1.6);
-    return myColor;
   }
 
   /** 5. Что даёт цвет: множители перемножаются. */
-  private async resonanceAct(color: Color): Promise<void> {
+  private async resonanceAct(): Promise<void> {
+    const color = this.claimed;
     // Доводим часы до фазы: цвет заявлен, резонанс загорается им.
     this.clock = Math.max(this.clock, cfg.phasePeriod + cfg.claimWindow - 0.6);
     this.clockRuns = true;
     this.say(
-      5,
       'Резонанс',
       `Восемь секунд цепочки заявленного цвета дают ×${cfg.phaseMultiplier}. Множители перемножаются: увеличение ×3 в резонансе даёт ×6 — ради этого вспышки и копят к началу фазы.`,
     );
@@ -750,37 +813,21 @@ export class Tutorial {
     this.hud.tint(null);
   }
 
-  /** 6. Режимы: три способа играть — быстро, по одному. */
+  /**
+   * Режимы. Шаг один на все три: листает игрок, и разбивать их на страницы,
+   * которые всё равно читаются за раз, значило бы заставлять его жать кнопку
+   * ради одной строки.
+   */
   private async modesAct(): Promise<void> {
-    this.reset(6);
-    this.hud.hideVersus();
+    this.reset(this.step + 1);
     this.hud.score(this.score, 0);
     this.idleInstruments();
-
     this.hud.time('Время', '3:00');
-    this.say(
-      6,
-      'Цепочки',
-      'Три минуты на максимум потенциала. Попыток сколько угодно, в общую таблицу идёт лучшая — счёт подтверждает сервер, переигрывая заход.',
-    );
-    await this.wait(2.6);
-
-    this.hud.time('Сделано', '7');
-    this.say(
-      6,
-      'Тап',
-      'Вторая механика прибора, её включает клавиша ⇄ на корпусе. Прибор звенит цветом 18 секунд: снять 25 точек этого цвета за одно касание. Три пустых окна — заход окончен.',
-    );
-    await this.wait(2.8);
-
-    this.hud.time('Время', '1:30');
     this.hud.versus('Соперник', 2430);
     this.say(
-      6,
-      'Дуэль',
-      'Одинаковый образец с живым соперником: полторы минуты на цепочках, три минуты на заказах. У каждой механики свой рейтинг.',
+      'Режимы',
+      'Цепочки — три минуты на максимум потенциала, в таблицу идёт лучший заход. Дуэль — тот же образец с живым соперником, полторы минуты. А клавиша ⇄ на корпусе включает вторую механику, тап, со своим меню и своим рейтингом.',
     );
-    await this.wait(2.8);
-    this.hud.hideVersus();
+    await this.wait(0.1);
   }
 }

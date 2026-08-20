@@ -590,7 +590,7 @@
       border-radius: 8px;
       padding: 11px 13px 13px;
       box-shadow: 0 1px 0 rgba(255, 255, 255, 0.55) inset, 0 2px 4px rgba(0, 0, 0, 0.1);
-      /* Ровно столько же, сколько занимает ряд клавиш: корпус не дёргается. */
+      /* Не меньше ряда клавиш, который она собой заменяет: корпус не дёргается. */
       min-height: 74px;
     }
     .tut[hidden] { display: none; }
@@ -624,6 +624,10 @@
       color: var(--silk-2);
       cursor: pointer;
     }
+    .tut-paging { display: flex; gap: 8px; margin-top: 10px; }
+    .tut-page { flex: 1; padding: 7px 10px; }
+    /* Кончился показ — «Дальше» становится выходом из него. */
+    .tut-page[disabled] { opacity: 0.4; cursor: default; }
     .tut-text {
       margin: 7px 0 0;
       font-size: 12.5px;
@@ -1724,6 +1728,14 @@
         <button class="tut-skip" id="tut-skip">Пропустить</button>
       </div>
       <p class="tut-text" id="tut-text"></p>
+      <!--
+        Листают шаги руками: показ идёт ровно столько, сколько игрок готов
+        на него смотреть. Сам по себе он больше никуда не спешит.
+      -->
+      <div class="tut-paging">
+        <button class="tut-page" id="tut-back">Назад</button>
+        <button class="tut-page acc" id="tut-next">Дальше</button>
+      </div>
     </div>
 
     <div class="foot">
