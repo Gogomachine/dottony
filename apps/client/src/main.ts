@@ -445,6 +445,13 @@ const tutorial = new Tutorial(renderer, {
     });
   },
   versus: (name, score) => showVersus(name, score),
+  fails: (left, of) => {
+    // Тем же полем и той же краской, что в бою: последний запас горит.
+    vsFieldEl.hidden = false;
+    vsNameEl.textContent = 'Запас';
+    vsScoreEl.textContent = `${left} / ${of}`;
+    vsFieldEl.className = `field${left <= 1 ? ' warn' : ''}`;
+  },
   hideVersus: () => {
     vsFieldEl.hidden = true;
   },
@@ -490,7 +497,8 @@ function startTutorial(): void {
   tutEl.hidden = false;
   miniCache = '';
   updateKeys();
-  tutorial.start();
+  // Обучение показывает ту механику, в которой стоит прибор.
+  tutorial.start(deviceKind);
 }
 
 /** Возврат к прибору: показ кончился или его закрыли кнопкой. */

@@ -1,18 +1,22 @@
 import {
   applyMove,
+  applyTap,
   bestClaim,
   cellAt,
   claimWindowAt,
   createBoard,
+  orderReward,
   phaseStateAt,
   seedRng,
+  tapGroup,
   DEFAULT_CONFIG,
   type Board,
   type Cell,
   type Claim,
   type Color,
 } from '@doton/core';
-import { miniState, type MiniState } from './game/mini';
+import type { DuelKind } from '@doton/protocol';
+import { miniState, orderMini, type MiniState } from './game/mini';
 import type { Renderer } from './game/renderer';
 
 /**
@@ -65,6 +69,8 @@ export interface TutorialHud {
   finger(at: Point | null): void;
   /** Подпись под окуляром. */
   caption(step: number, total: number, title: string, text: string): void;
+  /** Запас сбоев третьим полем приборной строки — как в бою. */
+  fails(left: number, of: number): void;
   /** Сценарий кончился или прерван. */
   finish(): void;
 }
@@ -72,7 +78,12 @@ export interface TutorialHud {
 /** Прерывание сценария: обучение закрыли на середине. */
 const HALT = Symbol('halt');
 
-const STEPS = 6;
+/**
+ * Шагов в сценарии. У каждой механики он свой: показывать игроку, пришедшему
+ * за тапом, как ведут цепочку пальцем — значит учить не тому прибору,
+ * который у него в руках.
+ */
+const STEPS = { chain: 6, order: 5 } as const satisfies Record<DuelKind, number>;
 
 export class Tutorial {
   active = false;
@@ -83,6 +94,8 @@ export class Tutorial {
   phaseColor: Color | null = null;
 
   private score = 0;
+  /** Механика показа: она решает, какой сценарий идёт. */
+  private kind: DuelKind = 'chain';
   private stopped = false;
   private clock = 0;
   private clockRuns = false;
@@ -97,8 +110,9 @@ export class Tutorial {
     private readonly hud: TutorialHud,
   ) {}
 
-  start(): void {
+  start(kind: DuelKind = 'chain'): void {
     if (this.active) return;
+    this.kind = kind;
     this.active = true;
     this.stopped = false;
     this.score = 0;
@@ -324,7 +338,78 @@ export class Tutorial {
   }
 
   private say(step: number, title: string, text: string): void {
-    this.hud.caption(step, STEPS, title, text);
+    this.hud.caption(step, STEPS[this.kind], title, text);
+  }
+
+  /**
+   * Экранчик и приборная строка в тапе: окно, его цвет и отсчёт. Собирается
+   * тем же `orderMini`, что и в бою, — объяснение не должно расходиться с
+   * прибором даже в мелочи.
+   */
+  private orderInstruments(color: Color, remaining: number, done: number): void {
+    this.hud.mini(orderMini({ color, remaining, cycle: 1 }, cfg));
+    this.hud.tint(color);
+    this.hud.time('Сделано', String(done));
+    this.hud.ticks(remaining / cfg.orderWindow);
+  }
+
+  /** Отсчёт окна: экранчик и шкала идут вниз, как в настоящем заходе. */
+  private async countWindow(color: Color, from: number, to: number, done: number): Promise<void> {
+    for (let left = from; left >= to; left--) {
+      this.orderInstruments(color, left, done);
+      await this.wait(0.5);
+    }
+  }
+
+  /**
+   * Касание: палец приходит на точку и снимает всю связную группу её цвета.
+   * Отчёт о ходе тот же, что в бою: заказ закрыт, не хватило или пятно
+   * просто выросло.
+   */
+  private async tapAt(from: Cell, window: Color | null, done: number): Promise<number> {
+    this.pointer = this.renderer.center(from);
+    this.hud.finger(this.pointer);
+    this.renderer.pulse(from);
+    await this.wait(0.65);
+
+    const group = tapGroup(this.board, from, cfg);
+    const color = cellAt(this.board.grid, from)?.color ?? null;
+    const old = this.board.grid;
+    const result = applyTap(this.board, from, cfg, null, window);
+    this.hud.finger(null);
+    this.pointer = null;
+    if (typeof result === 'string') return done;
+
+    this.board = result.board;
+    this.renderer.animateMove(old, result);
+    const reward = window !== null && color === window ? orderReward(group.length, cfg) : 0;
+    if (reward > 0) {
+      this.score += reward;
+      this.hud.score(this.score, 0);
+      this.hud.points(reward, 1, this.renderer.center(from));
+      this.hud.stat(`Заказ · ${group.length} точек · +${reward}`, 'live');
+      return done + 1;
+    }
+    // До первого окна говорить про пятно рано: игрок ещё не знает, зачем оно.
+    this.hud.stat(
+      window === null
+        ? `Снято ${group.length}`
+        : color === window
+          ? `${group.length} — не хватило до ${cfg.orderTarget}`
+          : `Снято ${group.length} · пятно растёт`,
+      '',
+    );
+    return done;
+  }
+
+  /** Пятно нужного цвета: связная область, которую растят под одно касание. */
+  private blob(color: Color, cells: number): Cell[] {
+    const spot: Cell[] = [];
+    for (let r = 0; r < cfg.rows && spot.length < cells; r++) {
+      for (let c = 0; c < cfg.cols && spot.length < cells; c++) spot.push({ r, c });
+    }
+    this.paint(spot, color);
+    return spot;
   }
 
   // ---------- Сценарий ----------
@@ -334,6 +419,11 @@ export class Tutorial {
     this.hud.hideVersus();
     this.idleInstruments();
 
+    if (this.kind === 'order') {
+      await this.runTap();
+      return;
+    }
+
     await this.chainAct();
     await this.flashAct();
     await this.cascadeAct();
@@ -341,10 +431,140 @@ export class Tutorial {
     await this.resonanceAct(color);
     await this.modesAct();
 
-    this.say(STEPS, 'Готово', 'Это весь прибор. Дальше — образец и ваши руки.');
+    this.say(STEPS.chain, 'Готово', 'Это весь прибор. Дальше — образец и ваши руки.');
     this.hud.stat('Готов к наблюдению', '');
     await this.wait(1.9);
     this.stop();
+  }
+
+  /**
+   * Сценарий тапа. Механика другая с первого движения: здесь не ведут палец,
+   * а нажимают, и время отсчитывает не партия, а окно.
+   */
+  private async runTap(): Promise<void> {
+    const window: Color = 1;
+    await this.tapStepAct();
+    let done = await this.orderStepAct(window);
+    done = await this.growStepAct(window, done);
+    await this.failStepAct(window, done);
+    await this.tapModesAct();
+
+    this.say(STEPS.order, 'Готово', 'Это весь прибор. Дальше — образец и ваши руки.');
+    this.hud.stat('Готов к наблюдению', '');
+    await this.wait(1.9);
+    this.stop();
+  }
+
+  /** 1. Касание: снимается вся связная группа, вести палец не нужно. */
+  private async tapStepAct(): Promise<void> {
+    this.reset(1);
+    this.idleInstruments();
+    this.paint(
+      [
+        { r: 2, c: 1 },
+        { r: 2, c: 2 },
+        { r: 2, c: 3 },
+        { r: 3, c: 1 },
+        { r: 3, c: 2 },
+        { r: 3, c: 3 },
+        { r: 4, c: 2 },
+      ],
+      0,
+    );
+    this.say(
+      1,
+      'Касание',
+      'Здесь не ведут палец, а нажимают: одно касание снимает всю связную группу точек этого цвета. Сколько их в ней — решает поле.',
+    );
+    await this.wait(2.2);
+    await this.tapAt({ r: 3, c: 2 }, null, 0);
+    await this.wait(1.9);
+  }
+
+  /** 2. Окно: прибор звенит цветом, и нужно 25 точек этого цвета за раз. */
+  private async orderStepAct(window: Color): Promise<number> {
+    this.reset(2);
+    this.paint(
+      [
+        { r: 0, c: 0 },
+        { r: 0, c: 1 },
+        { r: 1, c: 0 },
+        { r: 1, c: 1 },
+        { r: 1, c: 2 },
+        { r: 2, c: 1 },
+        { r: 2, c: 2 },
+      ],
+      window,
+    );
+    this.orderInstruments(window, cfg.orderWindow, 0);
+    this.say(
+      2,
+      'Окно',
+      `Прибор звенит случайным цветом ${cfg.orderWindow} секунд и сразу берёт следующий. Задача одна: снять ${cfg.orderTarget} точек этого цвета за одно касание.`,
+    );
+    await this.countWindow(window, cfg.orderWindow, cfg.orderWindow - 3, 0);
+    const done = await this.tapAt({ r: 1, c: 1 }, window, 0);
+    await this.wait(2.2);
+    return done;
+  }
+
+  /** 3. Пятно: его растят, разбирая всё вокруг, — и снимают одним касанием. */
+  private async growStepAct(window: Color, done: number): Promise<number> {
+    this.reset(3);
+    const spot = this.blob(window, cfg.orderTarget + 1);
+    this.orderInstruments(window, cfg.orderWindow, done);
+    this.say(
+      3,
+      'Пятно',
+      'Размер группы задаёт поле, а не палец: пятно нужного цвета выращивают, разбирая всё вокруг. Ровно 25 стоят 100, каждая точка сверху — ещё столько же.',
+    );
+    await this.countWindow(window, cfg.orderWindow, cfg.orderWindow - 4, done);
+    const next = await this.tapAt(spot[Math.floor(spot.length / 2)] ?? spot[0]!, window, done);
+    await this.wait(2.4);
+    return next;
+  }
+
+  /** 4. Сбой: окно, закрытое впустую, стоит запаса. */
+  private async failStepAct(window: Color, done: number): Promise<void> {
+    this.reset(4);
+    this.orderInstruments(window, 4, done);
+    this.say(
+      4,
+      'Сбои',
+      `Окно, закрытое без единого заказа, — сбой. На третьем заход кончается, и запас видно в приборной строке рядом со счётом.`,
+    );
+    await this.wait(1.4);
+    await this.countWindow(window, 3, 0, done);
+    this.hud.fails(cfg.orderLives - 1, cfg.orderLives);
+    this.hud.stat(`Окно упущено · сбой 1 из ${cfg.orderLives}`, 'warn');
+    this.hud.flash();
+    await this.wait(2.6);
+  }
+
+  /** 5. Режимы: тот же прибор играет соло и в дуэли. */
+  private async tapModesAct(): Promise<void> {
+    this.reset(5);
+    this.hud.hideVersus();
+    this.hud.score(this.score, 0);
+    this.idleInstruments();
+
+    this.hud.time('Сделано', '7');
+    this.say(
+      5,
+      'Тап',
+      'Окна идут подряд, пока не кончится запас сбоев. В общую таблицу идёт счёт захода — его подтверждает сервер, переигрывая присланные касания.',
+    );
+    await this.wait(2.8);
+
+    this.hud.time('Время', '3:00');
+    this.hud.versus('Соперник', 2430);
+    this.say(
+      5,
+      'Дуэль',
+      'Тот же прибор играет и против живого соперника — три минуты на одинаковом образце. У каждой механики свой рейтинг, а переключает их клавиша ⇄ на корпусе.',
+    );
+    await this.wait(3);
+    this.hud.hideVersus();
   }
 
   /** 1. Цепочка: соседние точки одного цвета, в любую сторону. */
