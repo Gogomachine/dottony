@@ -287,10 +287,17 @@
       justify-content: center;
       box-shadow: 0 1px 0 rgba(255, 255, 255, 0.55) inset, 0 2px 3px rgba(0, 0, 0, 0.1);
       font-family: var(--mono);
-      font-size: 11px;
-      color: var(--silk-2);
+      /* Знак крупный и в цвет текста: это единственное, что на клавише есть,
+         и подписи под ней нет — с приглушённым мелким знаком клавиша
+         превращалась в пустой кружок, по которому не угадать, что она
+         делает. */
+      font-size: 16px;
+      color: var(--silk);
       transition: transform 0.09s;
     }
+    /* Нота оптически легче и мельче соседей — ей добавлено кегля, чтобы в
+       ряду все четыре знака читались одинаково крупными. */
+    #sound-toggle { font-size: 18px; }
     .mbtn:active { transform: translateY(1px); }
     .mbtn.on { color: var(--acc); border-color: var(--acc); }
     /* В матче образец общий с соперником — своего не выдаём. */
