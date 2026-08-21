@@ -58,16 +58,6 @@ export const FriendCodeSchema = z
 export const AddFriendRequestSchema = z.object({ code: FriendCodeSchema });
 
 /**
- * Досыл набранного в режимах без конца партии. Ходы нужны для проверки
- * правдоподобия: сервер не видел этой партии и не может пересчитать её
- * ядром, как дуэль или спринт.
- */
-export const AddScoreRequestSchema = z.object({
-  points: z.number().int().min(1).max(200_000),
-  moves: z.number().int().min(1).max(2000),
-});
-
-/**
  * Заход режима заказов. Ход здесь — одно касание, поэтому и присылается
  * одна клетка: остальное — группу под ней, награду, смену окна — сервер
  * считает сам, переигрывая заход ядром от сида. Числу клиента он не верит
@@ -312,8 +302,6 @@ export interface MeResponse {
   /** Сколько рейтинговых матчей сыграно и сколько нужно; null — калибровка пройдена. */
   placement: { played: number; required: number } | null;
   duels: { played: number; won: number };
-  /** Наработка прибора: весь потенциал за всё время, во всех режимах. */
-  total: number;
   /** Способы входа: гость, Telegram, кошелёк. */
   identities: IdentityInfo[];
   /**

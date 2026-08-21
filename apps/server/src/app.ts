@@ -5,7 +5,6 @@ import websocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import {
   AddFriendRequestSchema,
-  AddScoreRequestSchema,
   AvatarRequestSchema,
   BuyRequestSchema,
   FrameRequestSchema,
@@ -63,7 +62,6 @@ import { Store, type BoardPeriod } from './db.js';
 import {
   INVITE_LIMIT,
   INVITE_WINDOW_MS,
-  MAX_POINTS_PER_MOVE,
   RateGuard,
   REQUEST_LIMIT,
   REQUEST_WINDOW_MS,
@@ -339,7 +337,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
                 // он занимает то же, а звать в дуэль выгоднее, чем прятаться
                 // от неё.
                 .map((player) =>
-                  Promise.all([store.addTotal(player.id, player.score), payToken(player.id)]),
+                  payToken(player.id),
                 ),
             ),
           )
@@ -577,9 +575,6 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   /**
    * Заход спринта. Клиент присылает ходы, сервер переигрывает их ядром и
    * сам считает счёт: в таблицу попадает только подтверждённое пересчётом.
-   *
-   * В наработку отсюда ничего не добавляем: потенциал спринта клиент шлёт
-   * по ходу партии обычным досылом, и зачесть их дважды нельзя.
    */
   app.post('/api/sprint', async (request, reply) => {
     const user = await requireUser(request);
@@ -714,27 +709,6 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return store.duelRecord(user.sub);
   });
 
-  /**
-   * Досыл потенциала из режимов, которые сервер не пересчитывает целиком.
-   * Дуэли сюда не ходят: их очки сервер считает сам и засчитывает у себя.
-   */
-  app.post('/api/me/score', async (request, reply) => {
-    const user = await requireUser(request);
-    const parsed = AddScoreRequestSchema.safeParse(request.body);
-    if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
-
-    const { points, moves } = parsed.data;
-    // Один ход не может стоить сколько угодно: даже самая длинная цепочка
-    // с каскадом вспышек в резонансе не даёт и близко столько.
-    if (points > moves * MAX_POINTS_PER_MOVE) {
-      return reply.code(400).send({ error: 'implausible' });
-    }
-
-    const result = await store.addScore(user.sub, points, moves);
-    if (result === 'too-fast') return reply.code(429).send({ error: 'too-fast' });
-    return result;
-  });
-
   /** Карточка игрока: рейтинг, лига, место и сводка по дуэлям. */
   app.get('/api/me', async (request): Promise<MeResponse> => {
     const user = await requireUser(request);
@@ -743,7 +717,6 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       rank,
       duels,
       identities,
-      total,
       avatar,
       sprint,
       sprintRank,
@@ -762,7 +735,6 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         store.ratingRank(user.sub),
         store.duelRecord(user.sub),
         store.identitiesOf(user.sub),
-        store.totalScore(user.sub),
         store.avatarOf(user.sub),
         store.bestSprint(user.sub),
         store.sprintRank(user.sub),
@@ -793,7 +765,6 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
           ? null
           : { played: rating.games, required: PLACEMENT_GAMES },
       duels,
-      total,
       identities,
       orderDuel: {
         rating: duelRating.rating,

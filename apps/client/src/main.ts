@@ -30,7 +30,6 @@ import {
   hasAuth,
   inviteFriend,
   isTelegram,
-  postScore,
   syncTelegramTheme,
   resetAuth,
   savedName,
@@ -1052,54 +1051,10 @@ function renderRatingBoard(board: RatingLeaderboardResponse): void {
   }
 }
 
-// ---------- Наработка прибора ----------
-
-/**
- * Потенциал из режимов, у которых нет конца партии, копится здесь и уходит
- * на сервер пачками. Слать каждый ход было бы расточительно, а копить до
- * конца партии нельзя — её попросту нет.
- *
- * Дуэли сюда не попадают: их очки сервер считает сам.
- */
-let pendingScore = { points: 0, moves: 0 };
-let flushTimer = 0;
-
-function countScore(points: number): void {
-  // Заказы в наработку не идут: там счёт — награды за окна, и мешать их с
-  // потенциалом, которым живёт весь остальной прибор, нельзя.
-  if (inDuel || replay || mode === 'order') return;
-  pendingScore.points += points;
-  pendingScore.moves += 1;
-  if (flushTimer !== 0) return;
-  flushTimer = window.setTimeout(() => {
-    flushTimer = 0;
-    void flushScore();
-  }, 15_000);
-}
-
-async function flushScore(): Promise<void> {
-  if (!apiAvailable || !hasAuth()) return;
-  const batch = pendingScore;
-  if (batch.points === 0) return;
-  // Обнуляем до отправки: неудачный досыл лучше потерять, чем зачесть дважды.
-  pendingScore = { points: 0, moves: 0 };
-  try {
-    await postScore(batch.points, batch.moves);
-  } catch {
-    // Сеть подведёт — партия продолжается, накопим заново.
-  }
-}
-
-// Сворачивание — последний надёжный момент досчитать наработку: на
-// телефоне вкладку часто закрывают, не возвращаясь в неё.
+// Вернулись в игру — спрашиваем про приглашения сразу, не дожидаясь
+// очередного опроса: минуту назад позвать могли, а окно было свёрнуто.
 document.addEventListener('visibilitychange', () => {
-  // Вернулись в игру — спрашиваем про приглашения сразу, не дожидаясь
-  // очередного опроса: минуту назад позвать могли, а окно было свёрнуто.
-  if (document.visibilityState !== 'hidden') {
-    void pollInvites();
-    return;
-  }
-  void flushScore();
+  if (document.visibilityState !== 'hidden') void pollInvites();
 });
 
 // ---------- Заказы: журнал и рекорд ----------
@@ -1440,7 +1395,6 @@ const input = new ChainInput(
       sprintRun.moves.push({ path: path.map((cell) => ({ ...cell })), t: Number(elapsed.toFixed(3)) });
     }
     if (inDuel) duel.move(cfg.features.tap ? [path[0]!] : path);
-    countScore(result.points);
     renderer.animateMove(oldGrid, result);
     updateStreak(result.streak);
     // Снятое показываем строкой состояния — это и есть отчёт прибора. В
@@ -1545,7 +1499,6 @@ function closeMenu(): void {
 function setMode(next: Mode): void {
   if (inDuel) endDuel();
   stopReplay();
-  void flushScore();
   mode = next;
   startGame();
 }
@@ -1757,7 +1710,6 @@ kindKey.addEventListener('click', () => {
 resetKey.addEventListener('click', () => {
   if (resetKey.hasAttribute('disabled')) return;
   menuEl.hidden = true;
-  void flushScore();
   startGame();
 });
 
@@ -2039,7 +1991,6 @@ if (apiAvailable) {
 
 // Уход со страницы во время матча — техническое поражение, а не зависший матч.
 addEventListener('beforeunload', () => {
-  void flushScore();
   if (inDuel) duel.close();
 });
 

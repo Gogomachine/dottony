@@ -234,20 +234,6 @@ export function getOrderBoard(period: BoardPeriod = 'all'): Promise<OrderLeaderb
   return request<OrderLeaderboardResponse>(`/api/order/leaderboard?period=${period}`);
 }
 
-/**
- * Досылает набранное в режимах без конца партии. keepalive нужен, чтобы
- * запрос ушёл даже если вкладку закрывают прямо сейчас.
- */
-export async function postScore(points: number, moves: number): Promise<void> {
-  const auth = token();
-  if (!auth || BASE.length === 0) return;
-  await fetch(`${BASE}/api/me/score`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${auth}` },
-    body: JSON.stringify({ points, moves }),
-    keepalive: true,
-  });
-}
 
 export function getHistory(): Promise<DuelHistoryResponse> {
   return request<DuelHistoryResponse>('/api/me/history');

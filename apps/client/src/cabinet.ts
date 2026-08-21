@@ -65,13 +65,6 @@ const LOGIN_NAMES: Record<string, string> = {
   ton: 'кошелёк TON',
 };
 
-/**
- * Отметки наработки. Пока они только показывают, куда игрок движется;
- * награды за них появятся отдельной механикой, и тогда эти же числа
- * переедут в общий модуль вместе с достижениями.
- */
-const MILESTONES = [10_000, 100_000, 1_000_000, 10_000_000];
-
 /** «1 234 567» — крупные числа читаются только с разрядами. */
 function groupDigits(value: number): string {
   return value.toLocaleString('ru-RU');
@@ -612,7 +605,6 @@ export class Cabinet {
     linkBtn.hidden = hasTelegram || this.miniApp === null;
     if (!linkBtn.hidden) linkBtn.textContent = 'Привязать Telegram';
 
-    this.renderTotal(me.total);
     el<HTMLSpanElement>('cab-tokens').textContent = groupDigits(me.tokens);
     // Рейтингов два: дуэли на цепочках и дуэли в тапе — разные механики,
     // и общее число врало бы про обе. Рекордов заходов тоже два, по механике
@@ -684,26 +676,6 @@ export class Cabinet {
       (barEl!.firstElementChild as HTMLElement).style.width = '100%';
       noteEl!.textContent = 'высшая лига';
     }
-  }
-
-  /** Наработка и путь до следующей отметки. */
-  private renderTotal(total: number): void {
-    el<HTMLSpanElement>('cab-total').textContent = groupDigits(total);
-    const next = MILESTONES.find((mark) => mark > total);
-    const bar = el<HTMLElement>('cab-total-bar');
-    const note = el<HTMLSpanElement>('cab-total-next');
-
-    if (next === undefined) {
-      bar.style.width = '100%';
-      note.textContent = 'все отметки пройдены';
-      return;
-    }
-    // Полосу считаем от предыдущей отметки, иначе на подходе к миллиону
-    // она годами стояла бы у нуля.
-    const previous = [...MILESTONES].reverse().find((mark) => mark <= total) ?? 0;
-    const done = ((total - previous) / (next - previous)) * 100;
-    bar.style.width = `${Math.max(2, done)}%`;
-    note.textContent = `до ${groupDigits(next)} — ещё ${groupDigits(next - total)}`;
   }
 
   /**

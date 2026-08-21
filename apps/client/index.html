@@ -563,8 +563,8 @@
 
     .menu-extra { display: flex; gap: 8px; }
     .menu-extra button { flex: 1; }
-    /* В полосе меню стоит номер образца, а не итог работы: он справочный,
-       и кегль наработки был бы для него завышен. */
+    /* В полосе меню стоит номер образца: он справочный, и кегль счётчика
+       жетонов был бы для него завышен. */
     .menu-card .tot-value { font-size: 14px; letter-spacing: 0.04em; }
 
     /* Итог соло-партии — прямо в окуляре, как показание прибора. */
@@ -1257,7 +1257,7 @@
     }
 
 
-    /* Нижняя полоса пропуска: наработка прибора за всё время. */
+    /* Нижняя полоса пропуска: жетоны — то, что заработано и тратится. */
     .badge-foot {
       background: var(--acc);
       color: #fff;
@@ -1275,24 +1275,6 @@
       color: rgba(255, 255, 255, 0.75);
     }
     .tot-value { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
-    .tot-bar { height: 3px; background: rgba(0, 0, 0, 0.28); overflow: hidden; }
-    .tot-bar i { display: block; height: 100%; background: #fff; }
-    .tot-next {
-      font-family: var(--mono);
-      font-size: 8.5px;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: rgba(255, 255, 255, 0.75);
-    }
-    .tot-coins {
-      display: flex;
-      align-items: baseline;
-      justify-content: space-between;
-      margin-top: 4px;
-      padding-top: 6px;
-      border-top: 1px solid rgba(255, 255, 255, 0.28);
-    }
-    .tot-coins-value { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
 
     .history {
       list-style: none;
@@ -1735,19 +1717,15 @@
             </div>
           </div>
 
-          <!-- Нижняя полоса пропуска — наработка прибора за всё время. -->
+          <!--
+            Нижняя полоса пропуска — жетоны. Раньше её занимала наработка,
+            сумма потенциала за всё время: число росло, ни на что не влияло
+            и ни о чём не говорило. Жетоны на его месте хотя бы тратятся.
+          -->
           <div class="badge-foot">
             <div class="tot-head">
-              <span class="tot-label">Наработка</span>
-              <span id="cab-total" class="tot-value mono">0</span>
-            </div>
-            <div class="tot-bar"><i id="cab-total-bar"></i></div>
-            <span id="cab-total-next" class="tot-next"></span>
-            <!-- Жетоны копятся за доведённые до конца заходы: это не очки,
-                 а счёт смен, поэтому они стоят отдельной строкой. -->
-            <div class="tot-coins">
               <span class="tot-label">Жетоны</span>
-              <span id="cab-tokens" class="tot-coins-value mono">0</span>
+              <span id="cab-tokens" class="tot-value mono">0</span>
             </div>
           </div>
         </div>
