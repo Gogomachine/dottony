@@ -181,6 +181,27 @@
     /* Шильдики на корпусе: полоса под маркой прибора. */
     /* Переносим: три длинные отметки за игру в одну строку не влезут. */
     .marks { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 5px; }
+    /*
+      Оправа полосы — то, что покупают за жетоны. Материал задаётся двумя
+      переменными и применяется одинаково и к самой полосе на корпусе, и к
+      кнопке-образцу в кабинете: образец и вещь должны быть одним и тем же.
+      В матче полоса занята соперником — и оправа на ней тоже его.
+    */
+    .f-brass { --frame-line: #c9a227; --frame-fill: rgba(201, 162, 39, 0.13); }
+    .f-chrome { --frame-line: #9aa7b4; --frame-fill: rgba(154, 167, 180, 0.15); }
+    .f-jade { --frame-line: #3f9c79; --frame-fill: rgba(63, 156, 121, 0.15); }
+    .f-signal { --frame-line: #e84b23; --frame-fill: rgba(232, 75, 35, 0.15); }
+    .marks.framed {
+      border: 1px solid var(--frame-line);
+      background: var(--frame-fill);
+      border-radius: 5px;
+      padding: 3px 7px;
+      margin-top: 4px;
+      /* Оправа облегает набор, а не тянется во всю ширину корпуса: пустая
+         рамка вокруг одного шильдика читалась бы как незаполненное поле. */
+      width: max-content;
+      max-width: 100%;
+    }
     /* Чей корпус: имя соперника стоит перед его набором, а не над счётом. */
     .marks .who {
       font-family: var(--mono);
@@ -241,6 +262,16 @@
       --mark-size: 11px;
       letter-spacing: 0;
       box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
+    }
+    /* Своя картинка на наклейке. Квадрат и своя бумажка вокруг — рисунок
+       не должен решать, какого размера будет шильдик на корпусе. */
+    .mark .art {
+      width: calc(13px * var(--mark-scale));
+      height: calc(13px * var(--mark-scale));
+      object-fit: contain;
+      display: block;
+      user-select: none;
+      -webkit-user-drag: none;
     }
 
     .micro { display: flex; gap: 6px; }
@@ -1112,6 +1143,24 @@
       cursor: pointer;
     }
 
+    /* Ряд оправ: каждая кнопка сама и есть образец материала. */
+    .frames { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 8px; }
+    .frames .frame-pick {
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      padding: 5px 10px;
+      border-radius: 5px;
+      cursor: pointer;
+      border: 1px solid var(--frame-line, var(--edge));
+      background: var(--frame-fill, transparent);
+      color: var(--frame-line, var(--silk-2));
+    }
+    .frames .frame-pick.none { border-style: dashed; }
+    .frames .frame-pick.locked { opacity: 0.4; }
+    .frames .frame-pick.on { box-shadow: 0 0 0 2px var(--frame-line, var(--acc)) inset; }
+
     /* Разделы кабинета: столбик строк, открытая отмечена акцентом. */
     .cab-nav { display: flex; flex-direction: column; gap: 6px; }
     .cab-nav .nav {
@@ -1654,6 +1703,12 @@
               <div class="slots" id="cab-slots"></div>
               <span class="slot-hint" id="cab-slot-hint">Ячейка 1 · выберите шильдик</span>
               <div class="catalog" id="cab-catalog"></div>
+              <!--
+                Оправа полосы: единственное украшение, которое соперник
+                видит целиком — в матче полоса на его приборе занята тобой.
+              -->
+              <div class="frames" id="cab-frames"></div>
+              <span class="slot-hint" id="cab-frame-hint">Оправа полосы</span>
             </div>
 
             <div id="cab-friends" hidden>

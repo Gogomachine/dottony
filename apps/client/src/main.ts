@@ -50,7 +50,7 @@ import { Sound } from './game/sound';
 import { Tutorial } from './tutorial';
 import { brandLockup } from './brand';
 import { emblemSvg } from './emblem';
-import { markChip, loadPlate, savePlate, showPlate } from './plate';
+import { markChip, loadFrame, loadPlate, saveFrame, savePlate, showPlate } from './plate';
 import {
   applyTheme,
   loadKind,
@@ -772,6 +772,10 @@ function showVersus(name: string, opponentScore: number): void {
 let opponentName = 'Соперник';
 /** Шильдики соперника — единственное, чем он помечен на твоём приборе. */
 let opponentMarks: (string | null)[] = [];
+/** Оправа полосы соперника: полоса на время матча его, вместе с оправой. */
+let opponentFrame: string | null = null;
+/** Своя оправа — та, что вернётся на полосу, когда матч кончится. */
+let ownFrame: string | null = loadFrame();
 
 /**
  * Что написано на корпусе. Свои шильдики игрок и так знает наизусть,
@@ -783,8 +787,8 @@ let opponentMarks: (string | null)[] = [];
  */
 function updatePlate(): void {
   plateHasOpponent = inDuel && opponentMarks.some((id) => id !== null);
-  if (plateHasOpponent) showPlate(plateMarksEl, opponentMarks, opponentName);
-  else showPlate(plateMarksEl, loadPlate());
+  if (plateHasOpponent) showPlate(plateMarksEl, opponentMarks, opponentName, opponentFrame);
+  else showPlate(plateMarksEl, loadPlate(), null, ownFrame);
 }
 
 /** Занят ли корпус соперником — тогда его имя стоит на корпусе, а не над счётом. */
@@ -846,6 +850,7 @@ function handleDuelMessage(message: DuelServerMessage): void {
       opponentName = message.ghost ? `${message.opponent} · запись` : message.opponent;
       // Сервер мог быть старее клиента: поля может не быть вовсе.
       opponentMarks = cleanMarks(message.opponentMarks ?? []);
+      opponentFrame = message.opponentFrame ?? null;
       updatePlate();
       opponentScore = 0;
       opponentFails = null;
@@ -875,6 +880,7 @@ function handleDuelMessage(message: DuelServerMessage): void {
       opponentName = message.ghost ? `${message.opponent} · запись` : message.opponent;
       // Сервер мог быть старее клиента: поля может не быть вовсе.
       opponentMarks = cleanMarks(message.opponentMarks ?? []);
+      opponentFrame = message.opponentFrame ?? null;
       updatePlate();
       opponentScore = message.opponentScore;
       opponentCode = message.opponentCode ?? null;
@@ -968,8 +974,9 @@ function endDuel(options: { awaitRating?: boolean } = {}): void {
   inviteNote = null;
   inDuel = false;
   vsFieldEl.hidden = true;
-  // Соперник ушёл — корпус возвращается хозяину.
+  // Соперник ушёл — корпус возвращается хозяину вместе с его оправой.
   opponentMarks = [];
+  opponentFrame = null;
   updatePlate();
   // Матч кончился — корпус возвращается к своей механике вместе с цветом.
   applyKind();
@@ -1783,6 +1790,11 @@ const cabinet = new Cabinet({
   onInvite: (friendCode) => void inviteToRoom(friendCode),
   onMarks: (marks) => {
     savePlate(marks);
+    updatePlate();
+  },
+  onFrame: (frame) => {
+    ownFrame = frame;
+    saveFrame(frame);
     updatePlate();
   },
 });

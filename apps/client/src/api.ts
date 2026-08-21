@@ -1,7 +1,7 @@
 import type {
   AuthResponse,
   BoardPeriod,
-  BuyMarkResponse,
+  BuyResponse,
   OrderLeaderboardResponse,
   OrderMove,
   DuelHistoryResponse,
@@ -192,13 +192,21 @@ export function setMarks(marks: (string | null)[]): Promise<{ marks: (string | n
 }
 
 /**
- * Покупает наклейку за жетоны. Цену не шлём — её знает сервер; отсюда
- * уходит только номер из каталога.
+ * Покупает наклейку или оправу за жетоны. Цену не шлём — её знает сервер;
+ * отсюда уходит только номер из каталога.
  */
-export function buyMark(id: string): Promise<BuyMarkResponse> {
-  return request<BuyMarkResponse>('/api/me/marks/buy', {
+export function buy(id: string): Promise<BuyResponse> {
+  return request<BuyResponse>('/api/me/buy', {
     method: 'POST',
     body: JSON.stringify({ id }),
+  });
+}
+
+/** Надевает оправу полосы шильдиков; null — снимает. */
+export function setFrame(frame: string | null): Promise<{ frame: string | null }> {
+  return request<{ frame: string | null }>('/api/me/frame', {
+    method: 'PUT',
+    body: JSON.stringify({ frame }),
   });
 }
 

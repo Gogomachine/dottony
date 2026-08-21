@@ -767,11 +767,18 @@ describe('шильдики', () => {
   });
 
   it('находит по номеру и отвергает выдуманный', () => {
-    const free = MARKS.find((mark) => mark.needs === undefined)!;
-    expect(markById(free.id)).toEqual(free);
+    const any = MARKS[0]!;
+    expect(markById(any.id)).toEqual(any);
     expect(markById('нет-такого')).toBeUndefined();
-    expect(markAllowed(free.id)).toBe(true);
     expect(markAllowed('нет-такого')).toBe(false);
+    expect(markAllowed('нет-такого', ['нет-такого'])).toBe(false);
+  });
+
+  it('даром не носится ничего: пустой корпус — это начало пути', () => {
+    for (const mark of MARKS) {
+      expect(markAllowed(mark.id)).toBe(false);
+      expect(markAllowed(mark.id, [mark.id])).toBe(true);
+    }
   });
 
   it('отметку за игру носит только тот, кому её выдали', () => {

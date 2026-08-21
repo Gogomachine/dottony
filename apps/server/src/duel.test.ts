@@ -81,16 +81,31 @@ describe('Duel', () => {
   it('шлёт каждому корпус соперника целиком, а не свой', () => {
     const a = recorder('a', 'Ада');
     const b = recorder('b', 'Боб');
-    a.marks = ['p21', null, 's0'];
-    b.marks = ['e-lg2', 'p22', null];
+    a.marks = ['e-run', null, 's0'];
+    b.marks = ['e-lg2', 'e-big', null];
     const duel = new Duel(seed, a, b);
     duel.announce();
 
-    expect(a.last('matched')).toMatchObject({ opponentMarks: ['e-lg2', 'p22', null] });
-    expect(b.last('matched')).toMatchObject({ opponentMarks: ['p21', null, 's0'] });
+    expect(a.last('matched')).toMatchObject({ opponentMarks: ['e-lg2', 'e-big', null] });
+    expect(b.last('matched')).toMatchObject({ opponentMarks: ['e-run', null, 's0'] });
 
     // И после обрыва — тоже соперника: снимок восстанавливает весь экран.
-    expect(duel.snapshot('a')).toMatchObject({ opponentMarks: ['e-lg2', 'p22', null] });
+    expect(duel.snapshot('a')).toMatchObject({ opponentMarks: ['e-lg2', 'e-big', null] });
+  });
+
+  it('оправа полосы едет к сопернику вместе с шильдиками', () => {
+    const a = recorder('a', 'Ада');
+    const b = recorder('b', 'Боб');
+    a.frame = 'f-brass';
+    const duel = new Duel(seed, a, b);
+    duel.announce();
+
+    // Полосу на приборе занимает соперник — целиком, вместе с оправой.
+    expect(b.last('matched')).toMatchObject({ opponentFrame: 'f-brass' });
+    expect(duel.snapshot('b')).toMatchObject({ opponentFrame: 'f-brass' });
+    // У кого оправы нет — тому и поля не шлём: полоса рисуется обычной.
+    expect(a.last('matched')).not.toHaveProperty('opponentFrame');
+    expect(duel.snapshot('a')).not.toHaveProperty('opponentFrame');
   });
 
   it('корпус пустой, если соперник ничего не поставил', () => {
@@ -536,7 +551,7 @@ describe('признак рейтингового матча', () => {
       seed: 777,
       score: 300,
       log: [{ t: 1, points: 300 }],
-      marks: ['p21', null, null],
+      marks: ['e-run', null, null],
     };
     const { maker, fire, result } = make({ findGhost: async () => ghost });
     maker.join(recorder('p'));
@@ -672,7 +687,7 @@ describe('призраки', () => {
     name: 'Ада',
     seed: 777,
     score: 300,
-    marks: ['p21', null, null],
+    marks: ['e-run', null, null],
     log: [
       { t: 1, points: 100 },
       { t: 2, points: 200 },

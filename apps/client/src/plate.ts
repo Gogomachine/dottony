@@ -1,4 +1,4 @@
-import { cleanMarks, markById, MARK_SLOTS, type Mark } from '@doton/core';
+import { cleanMarks, isFrame, markById, MARK_SLOTS, type Mark } from '@doton/core';
 
 /**
  * Шильдики на корпусе: выбор игрока и его отрисовка.
@@ -9,6 +9,7 @@ import { cleanMarks, markById, MARK_SLOTS, type Mark } from '@doton/core';
  */
 
 const KEY = 'doton.marks.v1';
+const FRAME_KEY = 'doton.frame.v1';
 
 export function loadPlate(): (string | null)[] {
   try {
@@ -21,6 +22,29 @@ export function loadPlate(): (string | null)[] {
   }
 }
 
+/**
+ * Своя оправа. Держим её рядом с шильдиками и по той же причине: корпус
+ * рисуется до всякого входа, и полоса не должна на секунду терять оправу
+ * при каждом запуске.
+ */
+export function loadFrame(): string | null {
+  try {
+    const saved = localStorage.getItem(FRAME_KEY);
+    return saved !== null && isFrame(saved) ? saved : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveFrame(frame: string | null): void {
+  try {
+    if (frame === null) localStorage.removeItem(FRAME_KEY);
+    else localStorage.setItem(FRAME_KEY, frame);
+  } catch {
+    // Не сохранилось — на сервере всё равно останется.
+  }
+}
+
 export function savePlate(marks: (string | null)[]): void {
   try {
     localStorage.setItem(KEY, JSON.stringify(cleanMarks(marks)));
@@ -30,16 +54,25 @@ export function savePlate(marks: (string | null)[]): void {
 }
 
 /**
- * Один шильдик. Служебный — набитая на корпусе краска, наклейка — смайл на
- * белом квадратике: рамка и делает из чужого смайла часть предмета.
+ * Один шильдик. Отметка за игру — краска по корпусу, наклейка — картинка на
+ * белом квадратике: он и делает из неё часть предмета, а не значок поверх.
  */
 export function markChip(mark: Mark): HTMLElement {
   const chip = document.createElement('i');
-  // Класс не совпадает с названием вида нарочно: `plate` на корпусе уже
-  // занят самой полосой шильдика, и стиль полосы налез бы на значок.
-  const look = mark.kind === 'plate' ? 'tag' : mark.kind;
-  chip.className = `mark ${look}`;
-  chip.textContent = mark.glyph;
+  chip.className = `mark ${mark.kind}`;
+  if (mark.art === undefined) {
+    chip.textContent = mark.glyph;
+    return chip;
+  }
+  // Своя картинка вместо знака. Адрес собираем здесь, а не в каталоге:
+  // на GitHub Pages сайт живёт по подпути, и путь от корня туда не ведёт.
+  const art = document.createElement('img');
+  art.className = 'art';
+  art.src = `${import.meta.env.BASE_URL}marks/${mark.art}`;
+  // Наклейка — это украшение, а не сообщение: читалке про неё сказать нечего.
+  art.alt = '';
+  art.draggable = false;
+  chip.appendChild(art);
   return chip;
 }
 
@@ -53,8 +86,16 @@ export function showPlate(
   host: HTMLElement,
   marks: (string | null)[],
   who: string | null = null,
+  frame: string | null = null,
 ): void {
   host.innerHTML = '';
+  // Оправа — свойство полосы, а не шильдиков в ней: в матче полосу занимает
+  // соперник, и оправа на ней должна быть его.
+  for (const name of [...host.classList]) {
+    if (name.startsWith('f-')) host.classList.remove(name);
+  }
+  host.classList.toggle('framed', frame !== null && isFrame(frame));
+  if (frame !== null && isFrame(frame)) host.classList.add(frame);
   if (who !== null) {
     const label = document.createElement('b');
     label.className = 'who';

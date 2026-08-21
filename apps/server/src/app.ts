@@ -7,7 +7,8 @@ import {
   AddFriendRequestSchema,
   AddScoreRequestSchema,
   AvatarRequestSchema,
-  BuyMarkRequestSchema,
+  BuyRequestSchema,
+  FrameRequestSchema,
   MarksRequestSchema,
   DuelClientMessageSchema,
   FriendCodeSchema,
@@ -18,7 +19,7 @@ import {
   SubmitSprintRequestSchema,
   TelegramAuthRequestSchema,
   type AuthResponse,
-  type BuyMarkResponse,
+  type BuyResponse,
   type OrderLeaderboardResponse,
   type DuelServerMessage,
   type DuelHistoryEntry,
@@ -41,6 +42,9 @@ import {
   leagueMark,
   markAllowed,
   markPrice,
+  frameAllowed,
+  isFrame,
+  FRAME_PRICE,
   MARK_BIG,
   MARK_DUELS,
   MARK_STREAK,
@@ -518,20 +522,38 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
    * Отметки за игру и золото сюда не проходят: у них нет цены, и это не
    * упущение — купить их нельзя, в этом вся их ценность.
    */
-  app.post('/api/me/marks/buy', async (request, reply) => {
+  app.post('/api/me/buy', async (request, reply) => {
     const user = await requireUser(request);
-    const parsed = BuyMarkRequestSchema.safeParse(request.body);
+    const parsed = BuyRequestSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
-    const price = markPrice(parsed.data.id);
+    // Дверь одна на всё, что продаётся: цену называет тот каталог, в
+    // котором номер нашёлся.
+    const price = isFrame(parsed.data.id) ? FRAME_PRICE : markPrice(parsed.data.id);
     if (price === null) return reply.code(400).send({ error: 'not-for-sale' });
 
-    const outcome = await store.buyMark(user.sub, parsed.data.id, price);
+    const outcome = await store.buyItem(user.sub, parsed.data.id, price);
     if (outcome === 'poor') return reply.code(402).send({ error: 'not-enough' });
     if (outcome === 'owned') return reply.code(409).send({ error: 'owned' });
 
     const [tokens, earned] = await Promise.all([store.tokensOf(user.sub), ownedMarks(user.sub)]);
-    const response: BuyMarkResponse = { tokens, earned };
+    const response: BuyResponse = { tokens, earned };
     return response;
+  });
+
+  /**
+   * Оправа полосы шильдиков. Носят одну и снимают её тем же запросом с
+   * пустым значением: снять — это не отдельное действие, а тот же выбор.
+   */
+  app.put('/api/me/frame', async (request, reply) => {
+    const user = await requireUser(request);
+    const parsed = FrameRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
+    const frame = parsed.data.frame;
+    if (!frameAllowed(frame, await ownedMarks(user.sub))) {
+      return reply.code(400).send({ error: 'not-owned' });
+    }
+    await store.setFrame(user.sub, frame);
+    return { frame };
   });
 
   /**
@@ -734,6 +756,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       duelRank,
       renamed,
       tokens,
+      frame,
     ] = await Promise.all([
         store.ratingOf(user.sub),
         store.ratingRank(user.sub),
@@ -752,6 +775,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         store.ratingRank(user.sub, 'order'),
         store.renamed(user.sub),
         store.tokensOf(user.sub),
+        store.frameOf(user.sub),
       ]);
     const up = nextLeague(rating.rating);
     const league = leagueOf(rating.rating);
@@ -786,6 +810,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       earned,
       canRename: !renamed,
       tokens,
+      frame,
     };
   });
 
@@ -1145,10 +1170,15 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     // Код друга нужен сопернику на экране результата, шильдики — с первой
     // секунды матча: на время дуэли соперник занимает корпус целиком.
     // Читаем один раз при подключении: к моменту подбора оба уже на месте.
-    void Promise.all([store.friendCodeOf(user.sub), store.marksOf(user.sub)])
-      .then(([code, marks]) => {
+    void Promise.all([
+      store.friendCodeOf(user.sub),
+      store.marksOf(user.sub),
+      store.frameOf(user.sub),
+    ])
+      .then(([code, marks, frame]) => {
         if (code) player.code = code;
         player.marks = marks;
+        if (frame) player.frame = frame;
       })
       .catch((error: unknown) => app.log.error(error, 'duel player lookup failed'));
 

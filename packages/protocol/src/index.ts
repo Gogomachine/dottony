@@ -97,12 +97,17 @@ export const MarksRequestSchema = z.object({
 });
 
 /**
- * Покупка шильдика за жетоны: номер из каталога ядра. Цену клиент не
- * присылает — её знает сервер, и присланная цена была бы приглашением
- * назначить себе свою.
+ * Покупка за жетоны: номер наклейки или оправы из каталога ядра. Цену
+ * клиент не присылает — её знает сервер, и присланная цена была бы
+ * приглашением назначить себе свою.
  */
-export const BuyMarkRequestSchema = z.object({
+export const BuyRequestSchema = z.object({
   id: z.string().max(16),
+});
+
+/** Оправа полосы шильдиков; null — снять. Что она куплена, проверяет сервер. */
+export const FrameRequestSchema = z.object({
+  frame: z.string().max(16).nullable(),
 });
 
 export const InviteRequestSchema = z.object({
@@ -328,14 +333,17 @@ export interface MeResponse {
   /** Шильдики корпуса: три ячейки, пустая — null. */
   marks: (string | null)[];
   /**
-   * Всё, что игроку положено носить сверх бесплатного: выданное за игру,
-   * купленное за жетоны и золото, пока он держит таблицу.
+   * Всё, что игроку положено носить: выданное за игру, купленное за жетоны
+   * (наклейки и оправы) и золото, пока он держит таблицу. Даром не носится
+   * ничего — пустой корпус в начале это не поломка, а начало пути.
    */
   earned: string[];
+  /** Надетая оправа полосы шильдиков; null — полоса без оправы. */
+  frame: string | null;
 }
 
 /** Что стало после покупки: остаток жетонов и обновлённый список своего. */
-export interface BuyMarkResponse {
+export interface BuyResponse {
   tokens: number;
   earned: string[];
 }
@@ -437,6 +445,8 @@ export interface DuelSnapshot {
   opponent: string;
   /** Корпус соперника: номера из каталога ядра, null — пустая ячейка. */
   opponentMarks: (string | null)[];
+  /** Оправа полосы соперника; её нет — полоса рисуется обычной. */
+  opponentFrame?: string;
   ghost: boolean;
   /** Код соперника — по нему его можно добавить в друзья. */
   opponentCode?: string;
@@ -463,6 +473,8 @@ export type DuelServerMessage =
       opponent: string;
       /** Корпус соперника: номера из каталога ядра, null — пустая ячейка. */
       opponentMarks: (string | null)[];
+      /** Оправа полосы соперника; её нет — полоса рисуется обычной. */
+      opponentFrame?: string;
       /** Матч против записанной попытки: соперник офлайн. */
       ghost: boolean;
       /** Код соперника — по нему его можно добавить в друзья. */

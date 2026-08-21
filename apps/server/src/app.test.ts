@@ -13,9 +13,8 @@ import {
   seedRng,
   startOrder,
   tapOrder,
-  MARKS,
-  markAllowed,
   STICKER_PRICE,
+  FRAME_PRICE,
   FACES,
   MARK_BIG,
   MARK_STREAK,
@@ -1429,27 +1428,42 @@ describe('API', () => {
     expect(await tokensOf()).toBe(1);
   });
 
+  /**
+   * Даром на корпусе не носят ничего, поэтому шильдик для опытов надо
+   * сперва заслужить: один заход тапа в пустой базе — это первое место дня.
+   */
+  async function earnMark(token: string): Promise<string> {
+    const run = seedWithOrders(1);
+    const sent = await app.inject({
+      method: 'POST',
+      url: '/api/order',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { seed: run.seed, moves: run.moves },
+    });
+    expect(sent.statusCode).toBe(200);
+    return 'e-order';
+  }
+
   it('шильдики: выбор сохраняется и приходит в карточку', async () => {
     const token = await guestToken('Ада');
-    // Даром носятся клички: их и ставим — покупка проверяется отдельно.
-    const free = MARKS.filter((mark) => markAllowed(mark.id));
-    const mine = [free[0]!.id, free[free.length - 1]!.id] as const;
+    const mine = await earnMark(token);
 
     const saved = await app.inject({
       method: 'PUT',
       url: '/api/me/marks',
       headers: { authorization: `Bearer ${token}` },
-      payload: { marks: mine },
+      // Вторым номером — некупленная наклейка: своё встаёт, чужое гаснет.
+      payload: { marks: [mine, 's0'] },
     });
     expect(saved.statusCode).toBe(200);
-    expect(saved.json()).toEqual({ marks: [mine[0], mine[1], null] });
+    expect(saved.json()).toEqual({ marks: [mine, null, null] });
 
     const me = await app.inject({
       method: 'GET',
       url: '/api/me',
       headers: { authorization: `Bearer ${token}` },
     });
-    expect((me.json() as { marks: unknown }).marks).toEqual([mine[0], mine[1], null]);
+    expect((me.json() as { marks: unknown }).marks).toEqual([mine, null, null]);
   });
 
   it('шильдики: выдуманный номер и повтор не проходят', async () => {
@@ -1464,7 +1478,7 @@ describe('API', () => {
       return response.json();
     };
 
-    const id = MARKS.find((mark) => markAllowed(mark.id))!.id;
+    const id = await earnMark(token);
     // Номера не из каталога гасят ячейку, а не занимают её.
     expect(await put([id, 'p999', id])).toEqual({ marks: [id, null, null] });
     // Больше трёх корпус не примет вовсе.
@@ -1482,7 +1496,7 @@ describe('API', () => {
     const buy = async (id: string): Promise<number> => {
       const response = await app.inject({
         method: 'POST',
-        url: '/api/me/marks/buy',
+        url: '/api/me/buy',
         headers: { authorization: `Bearer ${token}` },
         payload: { id },
       });
@@ -1491,11 +1505,9 @@ describe('API', () => {
 
     // Наклейка есть в продаже, но платить нечем.
     expect(await buy('s0')).toBe(402);
-    // Отметка за игру, золото и кличка цены не имеют: первую и второе
-    // заслуживают, третья и так у всех.
+    // Отметка за игру и золото цены не имеют вовсе: их заслуживают.
     expect(await buy('e-order')).toBe(400);
     expect(await buy('g-sprint')).toBe(400);
-    expect(await buy('p21')).toBe(400);
     expect(await buy('s999')).toBe(400);
 
     const me = await app.inject({
@@ -1504,6 +1516,60 @@ describe('API', () => {
       headers: { authorization: `Bearer ${token}` },
     });
     expect((me.json() as { earned: string[] }).earned).toEqual([]);
+  });
+
+  it('оправа: чужую не надеть, купленную носят и снимают', async () => {
+    const file = join(tmpdir(), `doton-frame-${randomUUID()}.db`);
+    const shop = await buildApp({ databaseUrl: `file:${file}`, jwtSecret: 'test-jwt' });
+    const db = createClient({ url: `file:${file}` });
+    try {
+      const auth = await shop.inject({
+        method: 'POST',
+        url: '/api/auth/guest',
+        payload: { name: 'Модник' },
+      });
+      const token = (auth.json() as { token: string }).token;
+      const wear = async (frame: string | null): Promise<{ statusCode: number }> =>
+        shop.inject({
+          method: 'PUT',
+          url: '/api/me/frame',
+          headers: { authorization: `Bearer ${token}` },
+          payload: { frame },
+        });
+      const card = async (): Promise<{ frame: string | null; tokens: number }> => {
+        const me = await shop.inject({
+          method: 'GET',
+          url: '/api/me',
+          headers: { authorization: `Bearer ${token}` },
+        });
+        return me.json() as { frame: string | null; tokens: number };
+      };
+
+      // Некупленную оправу не надеть, выдуманную — тем более.
+      expect((await wear('f-brass')).statusCode).toBe(400);
+      expect((await wear('f-нет-такой')).statusCode).toBe(400);
+      expect((await card()).frame).toBeNull();
+
+      await db.execute(`UPDATE users SET tokens = ${FRAME_PRICE}`);
+      const bought = await shop.inject({
+        method: 'POST',
+        url: '/api/me/buy',
+        headers: { authorization: `Bearer ${token}` },
+        payload: { id: 'f-brass' },
+      });
+      expect(bought.statusCode).toBe(200);
+      expect(bought.json()).toEqual({ tokens: 0, earned: ['f-brass'] });
+
+      expect((await wear('f-brass')).statusCode).toBe(200);
+      expect((await card()).frame).toBe('f-brass');
+      // Снять оправу — тот же запрос с пустым значением, а не отдельный.
+      expect((await wear(null)).statusCode).toBe(200);
+      expect((await card()).frame).toBeNull();
+    } finally {
+      db.close();
+      await shop.close();
+      await rm(file, { force: true });
+    }
   });
 
   it('наклейки: покупка снимает цену, выдаёт наклейку и второй раз не берёт', async () => {
@@ -1524,7 +1590,7 @@ describe('API', () => {
       const buy = async (): Promise<{ statusCode: number; json: () => unknown }> =>
         shop.inject({
           method: 'POST',
-          url: '/api/me/marks/buy',
+          url: '/api/me/buy',
           headers: { authorization: `Bearer ${token}` },
           payload: { id: 's0' },
         });
@@ -1690,7 +1756,7 @@ describe('API', () => {
     const response = await app.inject({
       method: 'PUT',
       url: '/api/me/marks',
-      payload: { marks: [MARKS.find((mark) => markAllowed(mark.id))!.id] },
+      payload: { marks: ['e-order'] },
     });
     expect(response.statusCode).toBe(401);
   });

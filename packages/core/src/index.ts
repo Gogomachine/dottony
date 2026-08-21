@@ -29,6 +29,8 @@ export {
   cleanMarks,
 } from './marks.js';
 export type { Mark, MarkKind } from './marks.js';
+export { FRAMES, FRAME_PRICE, frameById, isFrame, frameAllowed } from './frames.js';
+export type { Frame } from './frames.js';
 export { FACES, isFace } from './faces.js';
 export {
   newRating,

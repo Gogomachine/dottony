@@ -1,10 +1,21 @@
-import { cleanMarks, FACES, markAllowed, markById, MARKS, type Mark } from '@doton/core';
+import {
+  cleanMarks,
+  FACES,
+  FRAMES,
+  FRAME_PRICE,
+  markAllowed,
+  markById,
+  MARKS,
+  type Frame,
+  type Mark,
+} from '@doton/core';
 import type { DuelHistoryEntry, FriendsResponse, MeResponse } from '@doton/protocol';
 import {
   addFriend,
   ApiError,
-  buyMark,
+  buy,
   setAvatar,
+  setFrame,
   setMarks,
   getFriends,
   getHistory,
@@ -87,6 +98,8 @@ export interface CabinetHandlers {
   onInvite(friendCode: string): void;
   /** Игрок сменил шильдики: корпус на игровом экране рисует не кабинет. */
   onMarks(marks: (string | null)[]): void;
+  /** Игрок сменил оправу полосы; null — снял. */
+  onFrame(frame: string | null): void;
 }
 
 export class Cabinet {
@@ -112,6 +125,8 @@ export class Cabinet {
   private readonly slotsEl = el<HTMLDivElement>('cab-slots');
   private readonly slotHintEl = el<HTMLSpanElement>('cab-slot-hint');
   private readonly catalogEl = el<HTMLDivElement>('cab-catalog');
+  private readonly framesEl = el<HTMLDivElement>('cab-frames');
+  private readonly frameHintEl = el<HTMLSpanElement>('cab-frame-hint');
   private readonly facesEl = el<HTMLDivElement>('cab-faces');
   /** Выбранные шильдики, выданные отметки и ячейка, которую заполняют. */
   private marks: (string | null)[] = cleanMarks([]);
@@ -126,6 +141,8 @@ export class Cabinet {
    * самое, только окном поверх каталога.
    */
   private buying: string | null = null;
+  /** Надетая оправа полосы; null — полоса без оправы. */
+  private frame: string | null = null;
 
   constructor(private readonly handlers: CabinetHandlers) {
     el<HTMLSpanElement>('cab-brand').innerHTML = brandLockup(116);
@@ -134,6 +151,7 @@ export class Cabinet {
     }
     this.backEl.addEventListener('click', () => this.openTab(null));
     this.buildCatalog();
+    this.buildFrames();
     el<HTMLButtonElement>('cab-add-friend').addEventListener('click', () => void this.addByCode());
     el<HTMLButtonElement>('cab-link-tg').addEventListener('click', () => void this.linkTelegram());
     this.renameEl.addEventListener('click', () => this.startRename());
@@ -259,6 +277,83 @@ export class Cabinet {
   }
 
   /**
+   * Оправы полосы. Их немного и они не меняются, поэтому строятся разом:
+   * это не каталог с прокруткой, а короткий ряд материалов.
+   */
+  private buildFrames(): void {
+    const bare = document.createElement('button');
+    bare.className = 'frame-pick none';
+    bare.textContent = 'Без оправы';
+    bare.dataset.frame = '';
+    bare.addEventListener('click', () => void this.wearFrame(null));
+    this.framesEl.appendChild(bare);
+    for (const frame of FRAMES) {
+      const pick = document.createElement('button');
+      pick.className = `frame-pick ${frame.id}`;
+      pick.dataset.frame = frame.id;
+      pick.textContent = frame.name;
+      pick.addEventListener('click', () => void this.takeFrame(frame));
+      this.framesEl.appendChild(pick);
+    }
+  }
+
+  /** Нажатие по оправе: своя надевается, чужая называет цену и покупается. */
+  private async takeFrame(frame: Frame): Promise<void> {
+    if (this.earned.includes(frame.id)) {
+      this.buying = null;
+      await this.wearFrame(frame.id);
+      return;
+    }
+    if (this.tokens < FRAME_PRICE) {
+      this.buying = null;
+      this.frameHintEl.textContent = `${FRAME_PRICE} жетонов · у вас ${this.tokens}`;
+      return;
+    }
+    if (this.buying !== frame.id) {
+      this.buying = frame.id;
+      this.frameHintEl.textContent = `${FRAME_PRICE} жетонов · нажмите ещё раз`;
+      return;
+    }
+    this.buying = null;
+    try {
+      const bought = await buy(frame.id);
+      this.tokens = bought.tokens;
+      this.earned = bought.earned;
+      el<HTMLSpanElement>('cab-tokens').textContent = groupDigits(bought.tokens);
+      await this.wearFrame(frame.id);
+      this.frameHintEl.textContent = `осталось ${bought.tokens} жетонов`;
+    } catch {
+      this.frameHintEl.textContent = 'не купилось — попробуйте ещё раз';
+    }
+  }
+
+  /** Надевает оправу и сразу шлёт её на сервер: её видит соперник. */
+  private async wearFrame(id: string | null): Promise<void> {
+    this.frame = id;
+    this.showFrame();
+    this.handlers.onFrame(id);
+    try {
+      await setFrame(id);
+    } catch {
+      // Не дошло — свою полосу мы уже перерисовали, соперник увидит позже.
+    }
+  }
+
+  /** Подсветка выбранной оправы и подпись под рядом. */
+  private showFrame(): void {
+    for (const pick of this.framesEl.querySelectorAll<HTMLElement>('.frame-pick')) {
+      const id = pick.dataset.frame ?? '';
+      pick.classList.toggle('on', id === (this.frame ?? ''));
+      pick.classList.toggle('locked', id !== '' && !this.earned.includes(id));
+    }
+    const worn = this.frame === null ? null : FRAMES.find((frame) => frame.id === this.frame);
+    this.frameHintEl.textContent =
+      worn === undefined || worn === null
+        ? `Оправа полосы · ${FRAME_PRICE} жетонов`
+        : `Оправа «${worn.name.toLowerCase()}» · её видит соперник`;
+  }
+
+  /**
    * Нажатие по каталогу. Своё — ставим в ячейку; чужое — объясняем, откуда
    * его берут: отметку заслуживают, наклейку покупают. Второе нажатие по
    * названной цене её и платит.
@@ -287,12 +382,13 @@ export class Cabinet {
     }
     this.buying = null;
     try {
-      const bought = await buyMark(mark.id);
+      const bought = await buy(mark.id);
       this.tokens = bought.tokens;
       this.earned = bought.earned;
       el<HTMLSpanElement>('cab-tokens').textContent = groupDigits(bought.tokens);
       // Купленное сразу надевается: за ним и шли.
       await this.put(mark.id);
+      this.showFrame();
       this.slotHintEl.textContent = `осталось ${bought.tokens} жетонов`;
     } catch {
       this.slotHintEl.textContent = 'не купилось — попробуйте ещё раз';
@@ -498,6 +594,9 @@ export class Cabinet {
     // приводим к серверному, а не к тому, что помнит устройство.
     this.earned = me.earned;
     this.tokens = me.tokens;
+    this.frame = me.frame;
+    this.showFrame();
+    this.handlers.onFrame(me.frame);
     const marks = cleanMarks(me.marks);
     this.showMarks(marks);
     this.handlers.onMarks(marks);

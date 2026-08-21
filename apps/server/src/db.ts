@@ -276,6 +276,9 @@ export class Store {
     // выдачи — по нему держится темп начисления.
     await this.addColumnIfMissing('users', 'tokens', 'INTEGER NOT NULL DEFAULT 0');
     await this.addColumnIfMissing('users', 'tokens_at', 'TEXT');
+    // Оправа полосы шильдиков — купленная, надетая. Пусто у всех, кто её не
+    // покупал или снял: полоса без оправы — это обычная полоса.
+    await this.addColumnIfMissing('users', 'frame', 'TEXT');
     // Заявки на цвет резонанса: общие для матча, поэтому лежат на дуэли,
     // а не на игроке. Без них реплей взял бы цвет фазы из сида и разошёлся
     // бы со счётом. У матчей, сыгранных до заявок, колонка пуста.
@@ -1391,7 +1394,9 @@ export class Store {
   }
 
   /**
-   * Покупка шильдика: выдаёт его и списывает жетоны — или не делает ничего.
+   * Покупка за жетоны — наклейки или оправы: выдаёт её и списывает цену,
+   * или не делает ничего. Купленное лежит там же, где выданное за игру:
+   * прибор помнит одним списком всё, что игроку положено носить.
    *
    * Возвращает, чем кончилось: `owned` — эта наклейка у игрока уже есть,
    * `poor` — не хватило жетонов. Снаружи и то и другое — отказ, а не ошибка.
@@ -1415,12 +1420,12 @@ export class Store {
    * наклейку, а не забирает жетоны: ошибаться прибор должен в пользу того,
    * кто за ним сидит.
    */
-  async buyMark(userId: string, markId: string, price: number): Promise<'ok' | 'poor' | 'owned'> {
+  async buyItem(userId: string, itemId: string, price: number): Promise<'ok' | 'poor' | 'owned'> {
     const state = await this.client.execute({
       sql: `SELECT tokens,
                    EXISTS (SELECT 1 FROM user_marks WHERE user_id = u.id AND mark_id = ?) AS owned
               FROM users u WHERE u.id = ?`,
-      args: [markId, userId],
+      args: [itemId, userId],
     });
     const row = state.rows[0];
     if (!row) return 'poor';
@@ -1430,7 +1435,7 @@ export class Store {
     const given = await this.client.execute({
       sql: `INSERT INTO user_marks (user_id, mark_id) VALUES (?, ?)
             ON CONFLICT (user_id, mark_id) DO NOTHING`,
-      args: [userId, markId],
+      args: [userId, itemId],
     });
     if (given.rowsAffected === 0) return 'owned';
     const paid = await this.client.execute({
@@ -1440,11 +1445,39 @@ export class Store {
     if (paid.rowsAffected === 0) {
       await this.client.execute({
         sql: 'DELETE FROM user_marks WHERE user_id = ? AND mark_id = ?',
-        args: [userId, markId],
+        args: [userId, itemId],
       });
       return 'poor';
     }
     return 'ok';
+  }
+
+  /** Надетая оправа полосы; null — снята или не куплена. */
+  async frameOf(id: string): Promise<string | null> {
+    const rows = await this.client.execute({
+      sql: 'SELECT frame FROM users WHERE id = ?',
+      args: [id],
+    });
+    const frame = rows.rows[0]?.frame;
+    return frame === null || frame === undefined ? null : String(frame);
+  }
+
+  async setFrame(id: string, frame: string | null): Promise<void> {
+    await this.client.execute({
+      sql: 'UPDATE users SET frame = ? WHERE id = ?',
+      args: [frame, id],
+    });
+  }
+
+  /** Надетые оправы сразу нескольких игроков — для полосы соперника. */
+  async framesOf(ids: readonly string[]): Promise<Map<string, string>> {
+    if (ids.length === 0) return new Map();
+    const marks = ids.map(() => '?').join(', ');
+    const rows = await this.client.execute({
+      sql: `SELECT id, frame FROM users WHERE id IN (${marks}) AND frame IS NOT NULL`,
+      args: [...ids],
+    });
+    return new Map(rows.rows.map((row) => [String(row.id), String(row.frame)]));
   }
 
   /** Сколько жетонов у игрока сейчас. */
