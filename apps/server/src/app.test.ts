@@ -14,6 +14,8 @@ import {
   startOrder,
   tapOrder,
   STICKER_PRICE,
+  SLOT_PRICES,
+  slotItem,
   FRAME_PRICE,
   FACES,
   MARK_BIG,
@@ -1558,13 +1560,81 @@ describe('API', () => {
         payload: { id: 'f-brass' },
       });
       expect(bought.statusCode).toBe(200);
-      expect(bought.json()).toEqual({ tokens: 0, earned: ['f-brass'] });
+      expect(bought.json()).toEqual({ tokens: 0, earned: ['f-brass'], slots: 1 });
 
       expect((await wear('f-brass')).statusCode).toBe(200);
       expect((await card()).frame).toBe('f-brass');
       // Снять оправу — тот же запрос с пустым значением, а не отдельный.
       expect((await wear(null)).statusCode).toBe(200);
       expect((await card()).frame).toBeNull();
+    } finally {
+      db.close();
+      await shop.close();
+      await rm(file, { force: true });
+    }
+  });
+
+  it('ячейки: вторая покупается, третья только после неё, закрытая не носит', async () => {
+    const file = join(tmpdir(), `doton-slots-${randomUUID()}.db`);
+    const shop = await buildApp({ databaseUrl: `file:${file}`, jwtSecret: 'test-jwt' });
+    const db = createClient({ url: `file:${file}` });
+    try {
+      const auth = await shop.inject({
+        method: 'POST',
+        url: '/api/auth/guest',
+        payload: { name: 'Хозяин корпуса' },
+      });
+      const token = (auth.json() as { token: string }).token;
+      const buy = async (id: string): Promise<{ statusCode: number; json: () => unknown }> =>
+        shop.inject({
+          method: 'POST',
+          url: '/api/me/buy',
+          headers: { authorization: `Bearer ${token}` },
+          payload: { id },
+        });
+      const wear = async (marks: unknown): Promise<unknown> => {
+        const response = await shop.inject({
+          method: 'PUT',
+          url: '/api/me/marks',
+          headers: { authorization: `Bearer ${token}` },
+          payload: { marks },
+        });
+        return response.json();
+      };
+      const card = async (): Promise<{ slots: number; tokens: number }> => {
+        const me = await shop.inject({
+          method: 'GET',
+          url: '/api/me',
+          headers: { authorization: `Bearer ${token}` },
+        });
+        return me.json() as { slots: number; tokens: number };
+      };
+
+      // Даром открыта одна ячейка.
+      expect((await card()).slots).toBe(1);
+
+      await db.execute(`UPDATE users SET tokens = ${SLOT_PRICES[1]! + SLOT_PRICES[2]! + 2 * STICKER_PRICE + 2}`);
+      expect((await buy('s0')).statusCode).toBe(200);
+      expect((await buy('s1')).statusCode).toBe(200);
+      // Две наклейки есть, а ячейка одна: вторая гаснет, а не занимает место.
+      expect(await wear(['s0', 's1'])).toEqual({ marks: ['s0', null, null] });
+
+      // Третью ячейку в обход второй не продают.
+      expect((await buy(slotItem(2)!)).statusCode).toBe(400);
+      expect((await card()).slots).toBe(1);
+
+      const second = await buy(slotItem(1)!);
+      expect(second.statusCode).toBe(200);
+      expect(second.json()).toMatchObject({ slots: 2 });
+      expect(await wear(['s0', 's1'])).toEqual({ marks: ['s0', 's1', null] });
+
+      const third = await buy(slotItem(2)!);
+      expect(third.statusCode).toBe(200);
+      expect(third.json()).toMatchObject({ slots: 3 });
+      // Купленную ячейку второй раз не продают.
+      expect((await buy(slotItem(2)!)).statusCode).toBe(400);
+      // Жетоны сняты ровно по каталогу.
+      expect((await card()).tokens).toBe(2);
     } finally {
       db.close();
       await shop.close();
@@ -1597,7 +1667,7 @@ describe('API', () => {
 
       const bought = await buy();
       expect(bought.statusCode).toBe(200);
-      expect(bought.json()).toEqual({ tokens: 3, earned: ['s0'] });
+      expect(bought.json()).toEqual({ tokens: 3, earned: ['s0'], slots: 1 });
 
       // Купленную наклейку теперь пускают на корпус — до покупки не пускали.
       const worn = await shop.inject({

@@ -1067,6 +1067,24 @@
       cursor: pointer;
     }
     .slots .slot.on { border-style: solid; border-color: var(--acc); }
+    /* Закрытая ячейка — не пустая: в ней стоит своя цена в жетонах, и по
+       ряду сразу видно, что корпус можно расширить, а не что он сломан. */
+    .slots .slot.shut { border-style: dotted; opacity: 0.7; }
+    .slots .slot .slot-price {
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      color: var(--silk-2);
+    }
+    .slots .slot.shut::after {
+      content: 'жетонов';
+      font-family: var(--mono);
+      font-size: 7.5px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--silk-2);
+      margin-left: 4px;
+    }
         /* В ячейке шильдик крупнее, но ровно настолько, чтобы самая длинная
        надпись набора помещалась в неё целиком на узком телефоне. */
     .slots .slot .mark { --mark-scale: 1.25; }

@@ -41,6 +41,9 @@ import {
   leagueMark,
   markAllowed,
   markPrice,
+  openSlots,
+  nextSlot,
+  slotItemPrice,
   frameAllowed,
   isFrame,
   FRAME_PRICE,
@@ -503,10 +506,12 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     const parsed = MarksRequestSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
     const earned = await ownedMarks(user.sub);
+    const open = openSlots(earned);
     // Отметку за игру носит только тот, кому её выдали: чужую гасим, а не
     // отказываем всему корпусу — остальные ячейки игрок выбрал честно.
-    const marks = cleanMarks(parsed.data.marks).map((id) =>
-      id !== null && markAllowed(id, earned) ? id : null,
+    // Закрытая ячейка гасится так же: купить её можно, обойти — нет.
+    const marks = cleanMarks(parsed.data.marks).map((id, index) =>
+      id !== null && index < open && markAllowed(id, earned) ? id : null,
     );
     await store.setMarks(user.sub, marks);
     return { marks };
@@ -526,15 +531,22 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
     // Дверь одна на всё, что продаётся: цену называет тот каталог, в
     // котором номер нашёлся.
-    const price = isFrame(parsed.data.id) ? FRAME_PRICE : markPrice(parsed.data.id);
+    const id = parsed.data.id;
+    const price = isFrame(id) ? FRAME_PRICE : (slotItemPrice(id) ?? markPrice(id));
     if (price === null) return reply.code(400).send({ error: 'not-for-sale' });
 
-    const outcome = await store.buyItem(user.sub, parsed.data.id, price);
+    // Ячейки продаются по порядку: третья без второй не открылась бы, и
+    // тысяча жетонов ушла бы впустую.
+    if (slotItemPrice(id) !== null && id !== nextSlot(await ownedMarks(user.sub))) {
+      return reply.code(400).send({ error: 'slot-order' });
+    }
+
+    const outcome = await store.buyItem(user.sub, id, price);
     if (outcome === 'poor') return reply.code(402).send({ error: 'not-enough' });
     if (outcome === 'owned') return reply.code(409).send({ error: 'owned' });
 
     const [tokens, earned] = await Promise.all([store.tokensOf(user.sub), ownedMarks(user.sub)]);
-    const response: BuyResponse = { tokens, earned };
+    const response: BuyResponse = { tokens, earned, slots: openSlots(earned) };
     return response;
   });
 
@@ -778,6 +790,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       sprint: { best: sprint, rank: sprintRank },
       order: { best: order, orders, rank: orderRank },
       marks,
+      slots: openSlots(earned),
       earned,
       canRename: !renamed,
       tokens,

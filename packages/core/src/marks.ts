@@ -43,6 +43,61 @@ export interface Mark {
 export const MARK_SLOTS = 3;
 
 /**
+ * Цена ячейки корпуса в жетонах, по её номеру. Первая бесплатна: корпус без
+ * единой ячейки нечем пометить вовсе, и продавать право показать себя было
+ * бы продажей входа. Вторая стоит две наклейки, третья — вдесятеро дороже
+ * второй: полный корпус из трёх шильдиков должен остаться редкостью, иначе
+ * он ничего не будет значить при встрече.
+ */
+export const SLOT_PRICES: readonly number[] = [0, 100, 1000];
+
+/**
+ * Номер ячейки в списке купленного. Ячейки лежат там же, где наклейки и
+ * оправы: прибор помнит одним списком всё, что игроку положено.
+ */
+export function slotItem(index: number): string | null {
+  return index >= 1 && index < MARK_SLOTS ? `slot-${index + 1}` : null;
+}
+
+/** Цена ячейки; null — эта ячейка не продаётся (первая или её нет вовсе). */
+export function slotPrice(index: number): number | null {
+  const price = SLOT_PRICES[index];
+  return price === undefined || price === 0 ? null : price;
+}
+
+/**
+ * Цена ячейки по её номеру в списке купленного; null — это вообще не
+ * ячейка. Разбирать номер из строки снаружи нельзя: как он устроен, знает
+ * только этот файл.
+ */
+export function slotItemPrice(id: string): number | null {
+  for (let index = 1; index < MARK_SLOTS; index++) {
+    if (slotItem(index) === id) return slotPrice(index);
+  }
+  return null;
+}
+
+/**
+ * Какую ячейку можно купить следующей; null — все уже открыты. Ячейки
+ * открываются подряд: третья без второй ничего не даёт, и продать её в
+ * обход второй значило бы взять тысячу жетонов ни за что.
+ */
+export function nextSlot(owned: readonly string[] = []): string | null {
+  return slotItem(openSlots(owned));
+}
+
+/**
+ * Сколько ячеек открыто. Первая есть у всех, остальные — по купленному.
+ * Считаем подряд: третья без второй ничего не даёт, и покупать её в обход
+ * второй незачем.
+ */
+export function openSlots(owned: readonly string[] = []): number {
+  let open = 1;
+  while (open < MARK_SLOTS && owned.includes(slotItem(open) ?? '')) open += 1;
+  return open;
+}
+
+/**
  * Цена наклейки в жетонах. Одна на все: ни одна наклейка не лучше другой,
  * и разная цена означала бы, что лучше, — а выбирают их по вкусу, а не по
  * весу. Полсотни жетонов — это примерно час за прибором: наклейка должна

@@ -6,6 +6,9 @@ import {
   markAllowed,
   markById,
   MARKS,
+  MARK_SLOTS,
+  slotItem,
+  slotPrice,
   type Frame,
   type Mark,
 } from '@doton/core';
@@ -136,6 +139,8 @@ export class Cabinet {
   private buying: string | null = null;
   /** Надетая оправа полосы; null — полоса без оправы. */
   private frame: string | null = null;
+  /** Сколько ячеек корпуса открыто: первая даром, вторая и третья за жетоны. */
+  private slots = 1;
 
   constructor(private readonly handlers: CabinetHandlers) {
     el<HTMLSpanElement>('cab-brand').innerHTML = brandLockup(116);
@@ -312,6 +317,7 @@ export class Cabinet {
       const bought = await buy(frame.id);
       this.tokens = bought.tokens;
       this.earned = bought.earned;
+      this.slots = bought.slots;
       el<HTMLSpanElement>('cab-tokens').textContent = groupDigits(bought.tokens);
       await this.wearFrame(frame.id);
       this.frameHintEl.textContent = `осталось ${bought.tokens} жетонов`;
@@ -378,11 +384,58 @@ export class Cabinet {
       const bought = await buy(mark.id);
       this.tokens = bought.tokens;
       this.earned = bought.earned;
+      this.slots = bought.slots;
       el<HTMLSpanElement>('cab-tokens').textContent = groupDigits(bought.tokens);
       // Купленное сразу надевается: за ним и шли.
       await this.put(mark.id);
       this.showFrame();
       this.slotHintEl.textContent = `осталось ${bought.tokens} жетонов`;
+    } catch {
+      this.slotHintEl.textContent = 'не купилось — попробуйте ещё раз';
+    }
+  }
+
+  /**
+   * Нажатие по ячейке. Открытая просто выбирается; закрытая называет цену,
+   * а второе нажатие её покупает — тем же движением, что наклейка и оправа.
+   */
+  private async pickSlot(index: number): Promise<void> {
+    if (index < this.slots) {
+      this.buying = null;
+      this.slot = index;
+      this.showMarks(this.marks);
+      return;
+    }
+    // Ячейки открываются подряд: третья без второй ничего не даёт.
+    if (index > this.slots) {
+      this.buying = null;
+      this.slotHintEl.textContent = `Сначала ячейка ${this.slots + 1}`;
+      return;
+    }
+    const id = slotItem(index);
+    const price = slotPrice(index);
+    if (id === null || price === null) return;
+    if (this.tokens < price) {
+      this.buying = null;
+      this.slotHintEl.textContent = `Ячейка ${index + 1} · ${price} жетонов · у вас ${this.tokens}`;
+      return;
+    }
+    if (this.buying !== id) {
+      this.buying = id;
+      this.slotHintEl.textContent = `Ячейка ${index + 1} · ${price} жетонов · нажмите ещё раз`;
+      return;
+    }
+    this.buying = null;
+    try {
+      const bought = await buy(id);
+      this.tokens = bought.tokens;
+      this.earned = bought.earned;
+      this.slots = bought.slots;
+      el<HTMLSpanElement>('cab-tokens').textContent = groupDigits(bought.tokens);
+      // Открытая ячейка сразу становится выбранной: за ней и шли.
+      this.slot = index;
+      this.showMarks(this.marks);
+      this.slotHintEl.textContent = `Ячейка ${index + 1} открыта · осталось ${bought.tokens} жетонов`;
     } catch {
       this.slotHintEl.textContent = 'не купилось — попробуйте ещё раз';
     }
@@ -404,18 +457,27 @@ export class Cabinet {
   /** Перерисовывает ячейки и подсветку каталога. */
   private showMarks(marks: (string | null)[]): void {
     this.marks = marks;
+    // Выбранной может остаться ячейка, которой уже нет: сервер мог сказать,
+    // что открыта одна, пока выбрана была третья.
+    if (this.slot >= this.slots) this.slot = this.slots - 1;
     this.slotsEl.innerHTML = '';
-    marks.forEach((id, index) => {
+    for (let index = 0; index < MARK_SLOTS; index++) {
+      const open = index < this.slots;
       const slot = document.createElement('button');
-      slot.className = `slot${index === this.slot ? ' on' : ''}`;
-      const mark = id === null ? undefined : markById(id);
-      if (mark) slot.appendChild(markChip(mark));
-      slot.addEventListener('click', () => {
-        this.slot = index;
-        this.showMarks(this.marks);
-      });
+      slot.className = `slot${index === this.slot && open ? ' on' : ''}${open ? '' : ' shut'}`;
+      if (open) {
+        const mark = marks[index] === null ? undefined : markById(marks[index] ?? '');
+        if (mark) slot.appendChild(markChip(mark));
+      } else {
+        // Закрытая ячейка показывает цену: это и есть весь её вид.
+        const price = document.createElement('span');
+        price.className = 'slot-price';
+        price.textContent = `${slotPrice(index) ?? 0}`;
+        slot.appendChild(price);
+      }
+      slot.addEventListener('click', () => void this.pickSlot(index));
       this.slotsEl.appendChild(slot);
-    });
+    }
     this.slotHintEl.textContent = `Ячейка ${this.slot + 1} · выберите шильдик`;
     for (const pick of this.catalogEl.querySelectorAll<HTMLElement>('.pick')) {
       pick.classList.toggle('on', pick.dataset.mark === marks[this.slot]);
@@ -587,6 +649,7 @@ export class Cabinet {
     // приводим к серверному, а не к тому, что помнит устройство.
     this.earned = me.earned;
     this.tokens = me.tokens;
+    this.slots = me.slots;
     this.frame = me.frame;
     this.showFrame();
     this.handlers.onFrame(me.frame);

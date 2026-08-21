@@ -28,6 +28,12 @@ import {
   MARK_BIG,
   MARK_SLOTS,
   MARK_STREAK,
+  nextSlot,
+  openSlots,
+  slotItem,
+  slotItemPrice,
+  slotPrice,
+  SLOT_PRICES,
 } from './marks.js';
 import { nextInt, seedRng } from './rng.js';
 import {
@@ -772,6 +778,26 @@ describe('шильдики', () => {
     expect(markById('нет-такого')).toBeUndefined();
     expect(markAllowed('нет-такого')).toBe(false);
     expect(markAllowed('нет-такого', ['нет-такого'])).toBe(false);
+  });
+
+  it('ячейки открываются по порядку и стоят по каталогу', () => {
+    // Первая есть у всех и не продаётся; купить можно только следующую.
+    expect(openSlots([])).toBe(1);
+    expect(slotPrice(0)).toBeNull();
+    expect(nextSlot([])).toBe(slotItem(1));
+    expect(slotItemPrice(slotItem(1)!)).toBe(SLOT_PRICES[1]);
+
+    const second = [slotItem(1)!];
+    expect(openSlots(second)).toBe(2);
+    expect(nextSlot(second)).toBe(slotItem(2));
+
+    // Третья без второй не открывает ничего: счёт идёт подряд.
+    expect(openSlots([slotItem(2)!])).toBe(1);
+    expect(openSlots([slotItem(1)!, slotItem(2)!])).toBe(MARK_SLOTS);
+    expect(nextSlot([slotItem(1)!, slotItem(2)!])).toBeNull();
+    // За пределами корпуса ячеек нет — ни номера, ни цены.
+    expect(slotItem(MARK_SLOTS)).toBeNull();
+    expect(slotItemPrice('нет-такой')).toBeNull();
   });
 
   it('даром не носится ничего: пустой корпус — это начало пути', () => {
