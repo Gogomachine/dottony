@@ -383,6 +383,33 @@
       text-overflow: ellipsis;
     }
     .mini .txt b { color: var(--scope-ink); font-weight: 500; }
+    /* Палитра листа: те же четыре цвета, что и у точек на поле. */
+    .palette { display: flex; align-items: center; gap: 10px; flex: 1; justify-content: center; }
+    .palette .hue {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      border: 1px solid rgba(0, 0, 0, 0.45);
+      cursor: pointer;
+      padding: 0;
+      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.25) inset;
+      transition: transform 0.09s;
+    }
+    .palette .hue:active { transform: translateY(1px) scale(0.94); }
+    .palette .hue[data-hue="0"] { background: #e3ae45; }
+    .palette .hue[data-hue="1"] { background: #3f9c79; }
+    .palette .hue[data-hue="2"] { background: #d9584a; }
+    .palette .hue[data-hue="3"] { background: #4589c4; }
+    /* Резинка — не цвет, поэтому и выглядит не краской: пустой кружок. */
+    .palette .hue.erase {
+      background: transparent;
+      border-style: dashed;
+      border-color: rgba(237, 234, 227, 0.4);
+      color: rgba(237, 234, 227, 0.6);
+      font-family: var(--mono);
+      font-size: 12px;
+      line-height: 1;
+    }
     .mini .cd {
       font-family: var(--mono);
       font-size: 11px;
@@ -1440,7 +1467,7 @@
 
     <div class="strip">
       <span class="field">
-        <span class="lbl">Потенциал</span>
+        <span class="lbl" id="score-label">Потенциал</span>
         <span class="val"><span id="score">0</span><span id="gain" hidden></span></span>
       </span>
       <span class="field" id="vs-field" hidden>
@@ -1458,6 +1485,17 @@
       <span class="txt" id="mini-text">Резонанс · ожидание</span>
       <span class="cd" id="mini-cd">--</span>
       <span class="bar"><i id="mini-bar"></i></span>
+      <!--
+        Рисование занимает экранчик целиком: там, где в игре показания
+        резонанса, здесь стоят четыре цвета прибора и стирательная резинка.
+      -->
+      <div class="palette" id="palette" hidden>
+        <button class="hue" data-hue="0" title="Янтарь"></button>
+        <button class="hue" data-hue="1" title="Нефрит"></button>
+        <button class="hue" data-hue="2" title="Коралл"></button>
+        <button class="hue" data-hue="3" title="Лазурь"></button>
+        <button class="hue erase" data-hue="" title="Стереть">×</button>
+      </div>
     </div>
 
     <div class="scope" id="scope">
@@ -1496,6 +1534,11 @@
                 <b>Тап</b>
                 <span class="when mono">0:18</span>
                 <span class="hint">Снять 25 точек нужного цвета одним касанием. Три пустых окна — заход окончен.</span>
+              </li>
+              <li class="mode" data-go="draw">
+                <b>Рисование</b>
+                <span class="when mono">6 × 6</span>
+                <span class="hint">Белый лист. Ведите цепочку от двух точек и красьте её цветом с экранчика.</span>
               </li>
               <li class="mode" data-go="duel">
                 <b>Дуэль</b>

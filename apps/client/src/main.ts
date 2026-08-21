@@ -45,6 +45,7 @@ import { ChainInput } from './game/input';
 import { Renderer } from './game/renderer';
 import { miniState, orderMini, type MiniState } from './game/mini';
 import { Session, DUEL_FALLBACK, SPRINT_SECONDS, type Mode } from './game/session';
+import { Paper, PAPER_MIN, PAPER_SIZE, type PaperCell } from './game/paper';
 import { Sound } from './game/sound';
 import { Tutorial } from './tutorial';
 import { brandLockup } from './brand';
@@ -74,6 +75,15 @@ const gainEl = el<HTMLSpanElement>('gain');
 const timeEl = el<HTMLSpanElement>('time');
 const timeFieldEl = el<HTMLSpanElement>('time-field');
 const timeLabelEl = el<HTMLSpanElement>('time-label');
+const scoreLabelEl = el<HTMLSpanElement>('score-label');
+const paletteEl = el<HTMLDivElement>('palette');
+/** Показания резонанса: в рисовании их место занимает палитра. */
+const miniPartEls = [
+  el<HTMLElement>('mini-led'),
+  el<HTMLElement>('mini-text'),
+  el<HTMLElement>('mini-cd'),
+  el<HTMLElement>('mini-bar').parentElement as HTMLElement,
+];
 const ticksEl = el<HTMLDivElement>('ticks');
 const statEl = el<HTMLDivElement>('stat');
 const chainCountEl = el<HTMLDivElement>('chain-count');
@@ -212,6 +222,14 @@ let duelKind: DuelKind = 'chain';
 let session = newSession();
 const renderer = new Renderer(canvas, cfg, SCOPE);
 
+/**
+ * Лист. Живёт на том же стекле, что и поле, но своей жизнью: у рисования
+ * нет ни часов, ни счёта, ни сервера, — поэтому и партии под ним нет.
+ */
+const paper = new Paper(canvas, SCOPE, (index) => sound.step(index));
+/** Открыт ли лист. Пока открыт, кадр целиком принадлежит ему. */
+let drawing = false;
+
 function newSession(seed?: number): Session {
   const id = seed ?? Math.floor(Math.random() * 0xffffffff);
   // Часы ставит только матч: соло-заказы идут, пока есть запас сбоев.
@@ -219,6 +237,9 @@ function newSession(seed?: number): Session {
 }
 
 function startGame(seed?: number): void {
+  // Партия и лист не уживаются на одном стекле: начатая партия закрывает
+  // лист, откуда бы её ни начали.
+  stopDrawing();
   // Способ хода ставим до партии: сессия, ввод и рендер читают один конфиг,
   // и режим заказов меняет его для себя.
   syncTap();
@@ -485,6 +506,9 @@ const tutorial = new Tutorial(renderer, {
 });
 
 function startTutorial(): void {
+  // Показ ведёт своё поле — лист под ним закрываем: иначе экранчик остался
+  // бы палитрой, пока показ рассказывает про резонанс.
+  stopDrawing();
   // Дуэль и реплей идут по чужим часам — их обучение прерывает целиком,
   // иначе показ вернулся бы в матч, который за это время кончился.
   if (inDuel) endDuel();
@@ -1496,7 +1520,68 @@ function closeMenu(): void {
   if (!session.over) setStat(session.started ? 'Наблюдение идёт' : 'Готов к наблюдению', session.started ? 'live' : '');
 }
 
+/**
+ * Открывает лист. Партии под ним нет вовсе: часы и счёт рисованию не
+ * нужны, а ввод поля выключен — палец на стекле теперь ведёт цепочку по
+ * бумаге, а не по точкам.
+ */
+function startDrawing(): void {
+  if (inDuel) endDuel();
+  stopReplay();
+  drawing = true;
+  input.enabled = false;
+  paper.resize();
+  paper.bind();
+  menuEl.hidden = true;
+  overlay.hidden = true;
+  resultEl.hidden = true;
+  vsFieldEl.hidden = true;
+  // Экранчик занят палитрой: показаний резонанса в рисовании нет.
+  showPalette(true);
+  // Шкала делений — часы, а часов у листа нет.
+  for (const tick of tickEls) tick.className = 'tick';
+  scoreLabelEl.textContent = 'Нарисовано';
+  timeLabelEl.textContent = 'Лист';
+  timeFieldEl.className = 'field right';
+  timeEl.textContent = `${PAPER_SIZE} × ${PAPER_SIZE}`;
+  setStat('Ведите цепочку и выберите цвет');
+  updatePaperHud();
+  updateKeys();
+}
+
+/** Закрывает лист. Зовётся из всего, что начинает партию или матч. */
+function stopDrawing(): void {
+  if (!drawing) return;
+  drawing = false;
+  paper.unbind();
+  paper.drop();
+  showPalette(false);
+  scoreLabelEl.textContent = 'Потенциал';
+  miniCache = '';
+  shownChain = '';
+}
+
+/** Показания резонанса и палитра занимают экранчик по очереди. */
+function showPalette(on: boolean): void {
+  paletteEl.hidden = !on;
+  for (const part of miniPartEls) part.hidden = on;
+}
+
+/** Приборная строка листа: сколько закрашено и сколько набрано пальцем. */
+function updatePaperHud(): void {
+  scoreEl.textContent = String(paper.painted);
+  const corner =
+    paper.chain.length >= PAPER_MIN
+      ? `Цепь ${paper.chain.length}`
+      : `Нужно ${PAPER_MIN}+`;
+  if (corner !== shownChain) {
+    shownChain = corner;
+    chainCountEl.textContent = corner;
+  }
+}
+
 function setMode(next: Mode): void {
+  stopDrawing();
   if (inDuel) endDuel();
   stopReplay();
   mode = next;
@@ -1572,6 +1657,9 @@ const MENU_ACTIONS: Record<string, () => void> = {
   duel: () => {
     duelSheet.hidden = false;
   },
+  draw: () => {
+    startDrawing();
+  },
   rules: () => {
     rulesSheet.hidden = false;
   },
@@ -1584,6 +1672,27 @@ menuEl.addEventListener('click', (event) => {
   const item = (event.target as HTMLElement).closest<HTMLElement>('[data-go]');
   const action = item ? MENU_ACTIONS[item.dataset.go ?? ''] : undefined;
   if (action) action();
+});
+
+/**
+ * Цвет красит набранную цепочку. Ничего «выбранного» палитра не помнит
+ * нарочно: кнопка — это действие, а не состояние, и по листу всегда видно,
+ * что покрашено, без второго индикатора.
+ */
+paletteEl.addEventListener('click', (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLElement>('.hue');
+  if (!button || !drawing) return;
+  const raw = button.dataset.hue ?? '';
+  const color: PaperCell = raw === '' ? null : (Number(raw) as 0 | 1 | 2 | 3);
+  const painted = paper.paint(color);
+  if (painted === 0) {
+    setStat(`Сначала цепочка от ${PAPER_MIN} точек`, 'warn');
+    return;
+  }
+  // Отвечаем тем же голосом, что и снятая цепочка: прибор один.
+  sound.chain(painted, 1);
+  setStat(color === null ? `Стёрто ${painted}` : `Закрашено ${painted}`, 'live');
+  updatePaperHud();
 });
 
 el<HTMLButtonElement>('tut-skip').addEventListener('click', () => stopTutorial());
@@ -1710,6 +1819,14 @@ kindKey.addEventListener('click', () => {
 resetKey.addEventListener('click', () => {
   if (resetKey.hasAttribute('disabled')) return;
   menuEl.hidden = true;
+  // На листе та же клавиша означает то же самое, что и в партии, — начать
+  // заново: новый образец там, чистый лист здесь.
+  if (drawing) {
+    paper.clear();
+    setStat('Чистый лист');
+    updatePaperHud();
+    return;
+  }
   startGame();
 });
 
@@ -1846,6 +1963,7 @@ function fitBoard(): void {
     boardWrap.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
   canvas.style.maxWidth = `${Math.max(0, Math.round(room))}px`;
   renderer.resize();
+  paper.resize();
 }
 
 new ResizeObserver(fitBoard).observe(boardWrap);
@@ -1883,6 +2001,14 @@ function frame(now: number): void {
   if (tutorial.active) {
     tutorial.update(dt);
     renderer.draw(dt, tutorial.board.grid, tutorial.chain, tutorial.pointer, tutorial.phaseColor);
+    requestAnimationFrame(frame);
+    return;
+  }
+
+  // Лист забирает кадр целиком: партии под ним нет — ни часов, ни счёта.
+  if (drawing) {
+    updatePaperHud();
+    paper.render();
     requestAnimationFrame(frame);
     return;
   }
