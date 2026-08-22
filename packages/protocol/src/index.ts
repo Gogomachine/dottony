@@ -100,6 +100,15 @@ export const FrameRequestSchema = z.object({
   frame: z.string().max(16).nullable(),
 });
 
+/**
+ * Свой рисунок на пропуск: запись листа из `art.ts` ядра. Длину сторожим
+ * здесь, а сами знаки — там же, в ядре: схема ловит форму, каталог красок
+ * знает, какие номера в ней бывают.
+ */
+export const ArtRequestSchema = z.object({
+  art: z.string().length(100),
+});
+
 export const InviteRequestSchema = z.object({
   room: z.string().trim().min(4).max(16),
 });
@@ -141,12 +150,20 @@ export interface SubmitSprintResponse {
  */
 export type BoardPeriod = 'day' | 'all';
 
-/** Шильдик рядом с именем: номер из каталога ядра; null — корпус чист. */
+/**
+ * Шильдик рядом с именем: номер из каталога ядра; null — корпус чист.
+ *
+ * У своего шильдика рядом с номером едет и картинка: номер у него общий на
+ * всех, а нарисован он у каждого свой. Приходит она только с тем, кто его и
+ * правда носит, — таблица на полсотни строк не должна возить сотню лишних
+ * знаков на каждого.
+ */
 export interface SprintEntry {
   rank: number;
   name: string;
   score: number;
   mark: string | null;
+  art?: string;
 }
 
 export interface SprintLeaderboardResponse {
@@ -174,6 +191,8 @@ export interface OrderEntry {
   /** Сколько заказов закрыто в рекордном заходе. */
   orders: number;
   mark: string | null;
+  /** Рисунок — только у того, кто носит свой шильдик. */
+  art?: string;
 }
 
 export interface OrderLeaderboardResponse {
@@ -186,6 +205,8 @@ export interface InviteInfo {
   /** Имя позвавшего и его шильдик — тот же, что видно в таблицах. */
   from: string;
   mark: string | null;
+  /** Рисунок — только у того, кто носит свой шильдик. */
+  art?: string;
   /** Комната, в которую он зовёт. */
   room: string;
 }
@@ -196,6 +217,8 @@ export interface RatingEntry {
   rating: number;
   league: string;
   mark: string | null;
+  /** Рисунок — только у того, кто носит свой шильдик. */
+  art?: string;
 }
 
 /** Способ входа в аккаунт: с чего начали и что привязали потом. */
@@ -333,6 +356,13 @@ export interface MeResponse {
   earned: string[];
   /** Надетая оправа полосы шильдиков; null — полоса без оправы. */
   frame: string | null;
+  /**
+   * Свой рисунок на пропуске: запись листа из `art.ts` ядра; null — игрок
+   * своего шильдика ещё не покупал. Хранится на сервере, а не только в
+   * устройстве: его видит соперник, и с нового телефона он должен приехать
+   * вместе с остальным пропуском.
+   */
+  art: string | null;
 }
 
 /** Что стало после покупки: остаток жетонов и обновлённый список своего. */
@@ -442,6 +472,8 @@ export interface DuelSnapshot {
   opponentMarks: (string | null)[];
   /** Оправа полосы соперника; её нет — полоса рисуется обычной. */
   opponentFrame?: string;
+  /** Рисунок соперника — если он носит свой шильдик. Запись из `art.ts` ядра. */
+  opponentArt?: string;
   ghost: boolean;
   /** Код соперника — по нему его можно добавить в друзья. */
   opponentCode?: string;
@@ -470,6 +502,8 @@ export type DuelServerMessage =
       opponentMarks: (string | null)[];
       /** Оправа полосы соперника; её нет — полоса рисуется обычной. */
       opponentFrame?: string;
+      /** Рисунок соперника — если он носит свой шильдик. */
+      opponentArt?: string;
       /** Матч против записанной попытки: соперник офлайн. */
       ghost: boolean;
       /** Код соперника — по нему его можно добавить в друзья. */

@@ -20,6 +20,9 @@ export {
   MARK_BIG,
   MARK_DUELS,
   STICKER_PRICE,
+  OWN_PRICE,
+  OWN_MARK,
+  isOwnMark,
   SLOT_PRICES,
   slotItem,
   slotPrice,
@@ -35,6 +38,17 @@ export {
   cleanMarks,
 } from './marks.js';
 export type { Mark, MarkKind } from './marks.js';
+export {
+  ART_SIZE,
+  ART_LEN,
+  ART_PAINTS,
+  artEmptyCells,
+  encodeArt,
+  decodeArt,
+  isArt,
+  artPainted,
+} from './art.js';
+export type { ArtCell } from './art.js';
 export { FRAMES, FRAME_PRICE, frameById, isFrame, frameAllowed } from './frames.js';
 export type { Frame } from './frames.js';
 export { FACES, isFace } from './faces.js';

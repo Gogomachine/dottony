@@ -44,6 +44,8 @@ export interface DuelPlayer {
   marks?: readonly (string | null)[];
   /** Оправа полосы шильдиков, если куплена и надета. */
   frame?: string;
+  /** Рисунок своего шильдика: номер у него общий, картинка у каждого своя. */
+  art?: string;
   /** Код друга: сопернику его показывают после матча. */
   code?: string;
   send(message: DuelServerMessage): void;
@@ -165,6 +167,7 @@ export class Duel {
         opponent: opponent.player.name,
         opponentMarks: cleanMarks(opponent.player.marks ?? []),
         ...(opponent.player.frame ? { opponentFrame: opponent.player.frame } : {}),
+        ...(opponent.player.art ? { opponentArt: opponent.player.art } : {}),
         ghost: opponent.ghost,
         ...(opponent.ghost || !opponent.player.code
           ? {}
@@ -330,6 +333,7 @@ export class Duel {
       opponent: opponent.player.name,
       opponentMarks: cleanMarks(opponent.player.marks ?? []),
       ...(opponent.player.frame ? { opponentFrame: opponent.player.frame } : {}),
+      ...(opponent.player.art ? { opponentArt: opponent.player.art } : {}),
       ghost: opponent.ghost,
       ...(opponent.ghost || !opponent.player.code ? {} : { opponentCode: opponent.player.code }),
       remaining: Math.max(0, this.duration - this.elapsed(now)),

@@ -269,6 +269,19 @@
       letter-spacing: 0;
       box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 1px 0 rgba(255, 255, 255, 0.28);
     }
+    /*
+      Свой рисунок — то же стекло, что у наклейки: он и есть лист прибора,
+      только величиной с ноготь. Рамки вокруг нет намеренно — она сделала бы
+      из рисунка значок, а он должен читаться как кусок своего поля.
+    */
+    .mark.own {
+      background: var(--scope);
+      border-radius: 4px;
+      --mark-size: 8.5px;
+      font-family: var(--mono);
+      color: var(--silk-2);
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 1px 0 rgba(255, 255, 255, 0.28);
+    }
     /* Своя картинка на наклейке. Квадрат и своё стекло вокруг — рисунок
        не должен решать, какого размера будет шильдик на корпусе. */
     .mark .art {
@@ -512,9 +525,37 @@
     }
     .scope.claimed::after { opacity: 0.85; }
     .ticks { position: absolute; top: 9px; left: 14px; right: 14px; height: 8px; display: flex; gap: 2px; }
+    /* Класс задаёт display, поэтому прятать шкалу приходится явно. */
+    .ticks[hidden] { display: none; }
     .tick { flex: 1; background: #242422; transition: background 0.12s; }
     .tick.on { background: var(--scope-dim); }
     .tick.warn { background: var(--acc); }
+    /*
+     * Клавиша листа: единственное действие, которое лист умеет, кроме
+     * рисования. Стоит внутри стекла, потому что относится к листу, а не к
+     * прибору: на корпусе у прибора свои три клавиши, и они одни и те же во
+     * всех режимах.
+     */
+    .stamp {
+      position: absolute;
+      top: 7px;
+      right: 12px;
+      font-family: var(--mono);
+      font-size: 9.5px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--scope-live);
+      background: #17181a;
+      border: 1px solid rgba(237, 234, 227, 0.16);
+      border-radius: 7px;
+      padding: 5px 9px;
+      cursor: pointer;
+    }
+    .stamp[hidden] { display: none; }
+    .stamp:active { transform: translateY(1px); }
+    /* Занесённая рука: второе нажатие платит, и клавиша об этом говорит. */
+    .stamp.arm { color: var(--acc); border-color: var(--acc); }
+
     .stat {
       position: absolute;
       left: 16px;
@@ -1162,6 +1203,9 @@
         /* В ячейке шильдик крупнее, но ровно настолько, чтобы самая длинная
        надпись набора помещалась в неё целиком на узком телефоне. */
     .slots .slot .mark { --mark-scale: 1.25; }
+    /* Свой рисунок в ячейке крупнее остальных: на корпусе его узнают, а
+       здесь разглядывают — это единственное место, где видно, что вышло. */
+    .slots .slot .mark.own { --mark-scale: 2.4; }
     /* На узком экране на ячейку остаётся меньше места, чем занимает самая
        длинная надпись, — там шильдик показываем в натуральную величину. */
     @media (max-width: 360px) {
@@ -1598,6 +1642,11 @@
 
     <div class="scope" id="scope">
       <div class="ticks" id="ticks"></div>
+      <!--
+        Ставит нарисованное на пропуск. Стоит на месте шкалы делений: шкала
+        — часы, а часов у листа нет, и её место в этом режиме свободно.
+      -->
+      <button class="stamp" id="paper-stamp" hidden>На пропуск</button>
       <canvas id="game"></canvas>
       <div class="stat" id="stat">Сигнал ровный</div>
       <i class="finger" id="finger" hidden></i>

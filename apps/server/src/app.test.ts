@@ -15,6 +15,9 @@ import {
   tapOrder,
   STICKER_PRICE,
   SLOT_PRICES,
+  ART_LEN,
+  OWN_MARK,
+  OWN_PRICE,
   slotItem,
   FRAME_PRICE,
   FACES,
@@ -27,7 +30,13 @@ import {
   type Color,
   type OrderRun,
 } from '@doton/core';
-import type { DuelServerMessage, MoveLog, OrderMove } from '@doton/protocol';
+import type {
+  DuelServerMessage,
+  MeResponse,
+  MoveLog,
+  OrderLeaderboardResponse,
+  OrderMove,
+} from '@doton/protocol';
 import { buildApp, loggedUrl } from './app.js';
 import { INVITE_LIMIT } from './limits.js';
 import { parseStart } from './bot.js';
@@ -1635,6 +1644,95 @@ describe('API', () => {
       expect((await buy(slotItem(2)!)).statusCode).toBe(400);
       // Жетоны сняты ровно по каталогу.
       expect((await card()).tokens).toBe(2);
+    } finally {
+      db.close();
+      await shop.close();
+      await rm(file, { force: true });
+    }
+  });
+
+  it('свой шильдик: покупается за жетоны, а рисунок ставится отдельно', async () => {
+    // База в файле: жетоны надо доначислить со стороны — заработать три
+    // сотни заходов в тесте нельзя, их разделяет минута.
+    const file = join(tmpdir(), `doton-own-${randomUUID()}.db`);
+    const shop = await buildApp({ databaseUrl: `file:${file}`, jwtSecret: 'test-jwt' });
+    const db = createClient({ url: `file:${file}` });
+    try {
+      const auth = await shop.inject({
+        method: 'POST',
+        url: '/api/auth/guest',
+        payload: { name: 'Художник' },
+      });
+      const token = (auth.json() as { token: string }).token;
+      const headers = { authorization: `Bearer ${token}` };
+      const art = `${'0'.repeat(4)}${'.'.repeat(ART_LEN - 4)}`;
+      const put = async (drawn: string): Promise<{ statusCode: number }> =>
+        shop.inject({ method: 'PUT', url: '/api/me/art', headers, payload: { art: drawn } });
+      const card = async (): Promise<MeResponse> => {
+        const me = await shop.inject({ method: 'GET', url: '/api/me', headers });
+        return me.json() as MeResponse;
+      };
+
+      // Места ещё нет — рисунок не принимают: прибор не хранит картинки тех,
+      // кто ничего не покупал.
+      expect((await put(art)).statusCode).toBe(403);
+      expect((await card()).art).toBeNull();
+
+      await db.execute(`UPDATE users SET tokens = ${OWN_PRICE + 2}`);
+      const bought = await shop.inject({
+        method: 'POST',
+        url: '/api/me/buy',
+        headers,
+        payload: { id: OWN_MARK },
+      });
+      expect(bought.statusCode).toBe(200);
+      expect(bought.json()).toEqual({ tokens: 2, earned: [OWN_MARK], slots: 1 });
+
+      // Форму держим жёстко: чужая длина, незнакомая краска и пустой лист
+      // отклоняются одинаково — и до того, как что-то сохранится.
+      expect((await put('0'.repeat(ART_LEN - 1))).statusCode).toBe(400);
+      expect((await put(`${'.'.repeat(ART_LEN - 1)}z`)).statusCode).toBe(400);
+      expect((await put('.'.repeat(ART_LEN))).statusCode).toBe(400);
+      expect((await card()).art).toBeNull();
+
+      expect((await put(art)).statusCode).toBe(200);
+      const me = await card();
+      expect(me.art).toBe(art);
+      // Купленный шильдик пускают на корпус, как любой другой.
+      const worn = await shop.inject({
+        method: 'PUT',
+        url: '/api/me/marks',
+        headers,
+        payload: { marks: [OWN_MARK] },
+      });
+      expect(worn.json()).toEqual({ marks: [OWN_MARK, null, null] });
+
+      // В таблице рядом с номером едет и картинка — иначе шильдик приехал бы
+      // сопернику пустым.
+      const run = seedWithOrders(1);
+      await shop.inject({
+        method: 'POST',
+        url: '/api/order',
+        headers,
+        payload: { seed: run.seed, moves: run.moves },
+      });
+      const board = await shop.inject({ method: 'GET', url: '/api/order/leaderboard' });
+      expect((board.json() as OrderLeaderboardResponse).entries[0]).toMatchObject({
+        mark: OWN_MARK,
+        art,
+      });
+
+      // Второй раз место не продают, и жетоны за него не берут. Считаем от
+      // того, что есть сейчас: заход за таблицу успел доплатить жетон.
+      const before = (await card()).tokens;
+      const again = await shop.inject({
+        method: 'POST',
+        url: '/api/me/buy',
+        headers,
+        payload: { id: OWN_MARK },
+      });
+      expect(again.statusCode).toBe(409);
+      expect((await card()).tokens).toBe(before);
     } finally {
       db.close();
       await shop.close();

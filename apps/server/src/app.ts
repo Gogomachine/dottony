@@ -5,6 +5,7 @@ import websocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import {
   AddFriendRequestSchema,
+  ArtRequestSchema,
   AvatarRequestSchema,
   BuyRequestSchema,
   FrameRequestSchema,
@@ -36,8 +37,12 @@ import {
   type SubmitSprintResponse,
 } from '@doton/protocol';
 import {
+  artPainted,
   cleanMarks,
+  isArt,
   isFace,
+  isOwnMark,
+  OWN_MARK,
   leagueMark,
   markAllowed,
   markPrice,
@@ -148,6 +153,15 @@ function idleDays(ratedAt: string | null): number {
  * навсегда токен, лежащий в открытом виде у всех, кто до логов дотянется.
  * Путь для отладки и так достаточен, а параметры не нужны.
  */
+/**
+ * Картинка своего шильдика в строке списка. Поле необязательное: у чужих
+ * шильдиков картинки нет вовсе, и слать `art: undefined` в каждой строке
+ * таблицы значило бы возить пустоту полсотни раз.
+ */
+function artField(art: string | null | undefined): { art?: string } {
+  return art === null || art === undefined ? {} : { art };
+}
+
 export function loggedUrl(url: string | undefined): string {
   if (!url) return '';
   const cut = url.indexOf('?');
@@ -298,6 +312,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         score: log.reduce((sum, step) => sum + step.points, 0),
         log,
         marks: recorded.marks,
+        ...(recorded.art === null ? {} : { art: recorded.art }),
       };
     } catch {
       // Битая запись — соперника просто не будет; ждать живого честнее,
@@ -364,6 +379,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
             score: recorded.score,
             log: JSON.parse(recorded.log) as { t: number; points: number }[],
             marks: recorded.marks,
+            ...(recorded.art === null ? {} : { art: recorded.art }),
           };
         } catch {
           // Битая запись — лучше синтетический соперник, чем пустое ожидание.
@@ -567,7 +583,33 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
 
   /**
-   * Смайлик на пропуске: единственное, что игрок рисует о себе сам. Набор
+   * Свой рисунок на пропуск. Единственное место в приборе, куда игрок
+   * присылает своё, а не выбирает из готового, — и потому единственное, за
+   * чем в принципе может понадобиться присмотр: шильдик видит соперник.
+   *
+   * Форму держим жёстко (ровно сто знаков, только известные краски), а
+   * дальше полагаемся на тесноту сетки: в десяти клетках текста не набрать.
+   * Ставить рисунок можно только тому, кто своё место уже купил, — иначе
+   * прибор хранил бы картинки тех, кто ничего не покупал.
+   */
+  app.put('/api/me/art', async (request, reply) => {
+    const user = await requireUser(request);
+    const parsed = ArtRequestSchema.safeParse(request.body);
+    if (!parsed.success || !isArt(parsed.data.art)) {
+      return reply.code(400).send({ error: 'bad-art' });
+    }
+    // Пустой лист на пропуск не ставится: это не рисунок, а стёртый рисунок,
+    // и на корпусе он выглядел бы поломкой шильдика.
+    if (artPainted(parsed.data.art) === 0) return reply.code(400).send({ error: 'empty-art' });
+    if (!(await ownedMarks(user.sub)).includes(OWN_MARK)) {
+      return reply.code(403).send({ error: 'not-owned' });
+    }
+    await store.setArt(user.sub, parsed.data.art);
+    return { art: parsed.data.art };
+  });
+
+  /**
+   * Смайлик на пропуске: единственное, что игрок выбирает о себе сам. Набор
    * закрытый и лежит в ядре — оттуда его берёт и сетка выбора в кабинете, и
    * эта проверка. Своего смайлика игрок не присылает: аватар видит соперник,
    * и принимать сюда что попало значит заводить себе модерацию.
@@ -625,6 +667,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       name: row.name,
       score: row.score,
       mark: row.mark,
+      ...artField(row.art),
     }));
 
     // Авторизация не обязательна: без токена просто не будет строки «я».
@@ -637,7 +680,8 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         store.marksOf(user.sub),
       ]);
       const mark = marks.find((id) => id !== null) ?? null;
-      if (best > 0 && rank !== null) me = { rank, name: user.name, score: best, mark };
+      const art = isOwnMark(mark) ? artField(await store.artOf(user.sub)) : {};
+      if (best > 0 && rank !== null) me = { rank, name: user.name, score: best, mark, ...art };
     } catch {
       // нет или битый токен — гость смотрит таблицу анонимно
     }
@@ -693,6 +737,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       score: row.score,
       orders: row.orders,
       mark: row.mark,
+      ...artField(row.art),
     }));
 
     // Авторизация не обязательна: без токена просто не будет строки «я».
@@ -706,7 +751,8 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         store.marksOf(user.sub),
       ]);
       const mark = marks.find((id) => id !== null) ?? null;
-      if (best > 0 && rank !== null) me = { rank, name: user.name, score: best, orders, mark };
+      const art = isOwnMark(mark) ? artField(await store.artOf(user.sub)) : {};
+      if (best > 0 && rank !== null) me = { rank, name: user.name, score: best, orders, mark, ...art };
     } catch {
       // нет или битый токен — гость смотрит таблицу анонимно
     }
@@ -742,6 +788,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       renamed,
       tokens,
       frame,
+      art,
     ] = await Promise.all([
         store.ratingOf(user.sub),
         store.ratingRank(user.sub),
@@ -760,6 +807,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         store.renamed(user.sub),
         store.tokensOf(user.sub),
         store.frameOf(user.sub),
+        store.artOf(user.sub),
       ]);
     const up = nextLeague(rating.rating);
     const league = leagueOf(rating.rating);
@@ -795,6 +843,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       canRename: !renamed,
       tokens,
       frame,
+      art,
     };
   });
 
@@ -1102,6 +1151,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       rating: row.rating,
       league: leagueOf(row.rating).name,
       mark: row.mark,
+      ...artField(row.art),
     }));
 
     // Токен не обязателен: гость просто увидит таблицу без своей строки.
@@ -1114,12 +1164,14 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
           store.ratingOf(user.sub, kind),
           store.marksOf(user.sub),
         ]);
+        const mark = marks.find((id) => id !== null) ?? null;
         me = {
           rank,
           name: user.name,
           rating: rating.rating,
           league: leagueOf(rating.rating).name,
-          mark: marks.find((id) => id !== null) ?? null,
+          mark,
+          ...(isOwnMark(mark) ? artField(await store.artOf(user.sub)) : {}),
         };
       }
     } catch {
@@ -1158,11 +1210,13 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       store.friendCodeOf(user.sub),
       store.marksOf(user.sub),
       store.frameOf(user.sub),
+      store.artOf(user.sub),
     ])
-      .then(([code, marks, frame]) => {
+      .then(([code, marks, frame, art]) => {
         if (code) player.code = code;
         player.marks = marks;
         if (frame) player.frame = frame;
+        if (art) player.art = art;
       })
       .catch((error: unknown) => app.log.error(error, 'duel player lookup failed'));
 

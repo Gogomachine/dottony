@@ -2,6 +2,8 @@ import {
   cleanMarks,
   markById,
   DEFAULT_CONFIG,
+  OWN_MARK,
+  OWN_PRICE,
   type Cell,
   type Color,
   type GameConfig,
@@ -9,6 +11,7 @@ import {
 import type {
   BoardPeriod,
   InviteInfo,
+  MeResponse,
   MoveLog,
   OrderLeaderboardResponse,
   OrderMove,
@@ -19,7 +22,11 @@ import type { DuelKind, DuelServerMessage } from '@doton/protocol';
 import {
   addFriend,
   apiAvailable,
+  buy,
   ensureAuth,
+  getMe,
+  setArt,
+  setMarks,
   getConfig,
   getOrderBoard,
   getInvites,
@@ -50,7 +57,16 @@ import { Sound } from './game/sound';
 import { Tutorial } from './tutorial';
 import { brandLockup } from './brand';
 import { emblemSvg } from './emblem';
-import { markChip, loadFrame, loadPlate, saveFrame, savePlate, showPlate } from './plate';
+import {
+  markChip,
+  loadArt,
+  loadFrame,
+  loadPlate,
+  saveArt,
+  saveFrame,
+  savePlate,
+  showPlate,
+} from './plate';
 import {
   applyTheme,
   loadKind,
@@ -85,6 +101,7 @@ const miniPartEls = [
   el<HTMLElement>('mini-bar').parentElement as HTMLElement,
 ];
 const ticksEl = el<HTMLDivElement>('ticks');
+const stampEl = el<HTMLButtonElement>('paper-stamp');
 const statEl = el<HTMLDivElement>('stat');
 const chainCountEl = el<HTMLDivElement>('chain-count');
 const seedEl = el<HTMLSpanElement>('seed');
@@ -283,10 +300,17 @@ function updateStreak(streak: number): void {
  * Имя игрока в чужой таблице: перед ним — его шильдик, если корпус помечен.
  * Строку собираем из узлов, а не из разметки: имя пришло с сервера.
  */
-function nameWithMark(host: HTMLElement, name: string, mark: string | null): void {
+function nameWithMark(
+  host: HTMLElement,
+  name: string,
+  mark: string | null,
+  // У своего шильдика картинка едет отдельно от номера: номер общий, а
+  // нарисован он у каждого свой.
+  art: string | null = null,
+): void {
   host.textContent = '';
   const badge = mark === null ? undefined : markById(mark);
-  if (badge) host.appendChild(markChip(badge));
+  if (badge) host.appendChild(markChip(badge, art));
   host.appendChild(document.createTextNode(name));
 }
 
@@ -644,7 +668,7 @@ function renderSprintBoard(board: SprintLeaderboardResponse): void {
     if (board.me && entry.rank === board.me.rank) item.className = 'me';
     item.innerHTML =
       `<span class="rank">${entry.rank}</span><span class="who-line"></span><span class="pts"></span>`;
-    nameWithMark(item.children[1] as HTMLElement, entry.name, entry.mark);
+    nameWithMark(item.children[1] as HTMLElement, entry.name, entry.mark, entry.art ?? null);
     (item.children[2] as HTMLElement).textContent = groupDigits(entry.score);
     boardListEl.appendChild(item);
   }
@@ -799,6 +823,10 @@ let opponentMarks: (string | null)[] = [];
 let opponentFrame: string | null = null;
 /** Своя оправа — та, что вернётся на полосу, когда матч кончится. */
 let ownFrame: string | null = loadFrame();
+/** Рисунок соперника: свой шильдик у каждого нарисован свой. */
+let opponentArt: string | null = null;
+/** Свой рисунок, поставленный на пропуск. Лист живёт отдельно от него. */
+let ownArt: string | null = loadArt();
 
 /**
  * Что написано на корпусе. Свои шильдики игрок и так знает наизусть,
@@ -810,8 +838,11 @@ let ownFrame: string | null = loadFrame();
  */
 function updatePlate(): void {
   plateHasOpponent = inDuel && opponentMarks.some((id) => id !== null);
-  if (plateHasOpponent) showPlate(plateMarksEl, opponentMarks, opponentName, opponentFrame);
-  else showPlate(plateMarksEl, loadPlate(), null, ownFrame);
+  if (plateHasOpponent) {
+    showPlate(plateMarksEl, opponentMarks, opponentName, opponentFrame, opponentArt);
+  } else {
+    showPlate(plateMarksEl, loadPlate(), null, ownFrame, ownArt);
+  }
 }
 
 /** Занят ли корпус соперником — тогда его имя стоит на корпусе, а не над счётом. */
@@ -874,6 +905,7 @@ function handleDuelMessage(message: DuelServerMessage): void {
       // Сервер мог быть старее клиента: поля может не быть вовсе.
       opponentMarks = cleanMarks(message.opponentMarks ?? []);
       opponentFrame = message.opponentFrame ?? null;
+      opponentArt = message.opponentArt ?? null;
       updatePlate();
       opponentScore = 0;
       opponentFails = null;
@@ -904,6 +936,7 @@ function handleDuelMessage(message: DuelServerMessage): void {
       // Сервер мог быть старее клиента: поля может не быть вовсе.
       opponentMarks = cleanMarks(message.opponentMarks ?? []);
       opponentFrame = message.opponentFrame ?? null;
+      opponentArt = message.opponentArt ?? null;
       updatePlate();
       opponentScore = message.opponentScore;
       opponentCode = message.opponentCode ?? null;
@@ -1000,6 +1033,7 @@ function endDuel(options: { awaitRating?: boolean } = {}): void {
   // Соперник ушёл — корпус возвращается хозяину вместе с его оправой.
   opponentMarks = [];
   opponentFrame = null;
+  opponentArt = null;
   updatePlate();
   // Матч кончился — корпус возвращается к своей механике вместе с цветом.
   applyKind();
@@ -1067,7 +1101,7 @@ function renderRatingBoard(board: RatingLeaderboardResponse): void {
       `<span class="who"><span class="who-name"></span><span class="who-league"></span></span>` +
       `<span class="pts"></span>`;
     const who = item.children[1] as HTMLElement;
-    nameWithMark(who.children[0] as HTMLElement, entry.name, entry.mark);
+    nameWithMark(who.children[0] as HTMLElement, entry.name, entry.mark, entry.art ?? null);
     // Лига подписью под именем: на телефоне подсказки по наведению не работают.
     (who.children[1] as HTMLElement).textContent = entry.league;
     (item.children[2] as HTMLElement).textContent = String(entry.rating);
@@ -1173,7 +1207,7 @@ function renderOrderBoard(board: OrderLeaderboardResponse): void {
       `<span class="who"><span class="who-name"></span><span class="who-league"></span></span>` +
       `<span class="pts"></span>`;
     const who = item.children[1] as HTMLElement;
-    nameWithMark(who.children[0] as HTMLElement, entry.name, entry.mark);
+    nameWithMark(who.children[0] as HTMLElement, entry.name, entry.mark, entry.art ?? null);
     // Заказы подписью под именем: по ним видно, из чего сложился счёт.
     (who.children[1] as HTMLElement).textContent = doneWord(entry.orders);
     (item.children[2] as HTMLElement).textContent = groupDigits(entry.score);
@@ -1202,7 +1236,7 @@ function showInvite(invite: InviteInfo | null): void {
   inviteRoom = invite?.room ?? null;
   inviteBarEl.hidden = invite === null;
   if (!invite) return;
-  nameWithMark(inviteTextEl, `${invite.from} зовёт в дуэль`, invite.mark);
+  nameWithMark(inviteTextEl, `${invite.from} зовёт в дуэль`, invite.mark, invite.art ?? null);
 }
 
 async function pollInvites(): Promise<void> {
@@ -1538,8 +1572,13 @@ function startDrawing(): void {
   vsFieldEl.hidden = true;
   // Экранчик занят палитрой: показаний резонанса в рисовании нет.
   showPalette(true);
-  // Шкала делений — часы, а часов у листа нет.
+  // Шкала делений — часы, а часов у листа нет: её место занимает клавиша.
   for (const tick of tickEls) tick.className = 'tick';
+  ticksEl.hidden = true;
+  stampEl.hidden = false;
+  armStamp(false);
+  // Пропуск читаем заранее: к первому нажатию цена и остаток уже известны.
+  void readPass();
   scoreLabelEl.textContent = 'Нарисовано';
   timeLabelEl.textContent = 'Лист';
   timeFieldEl.className = 'field right';
@@ -1558,9 +1597,126 @@ function stopDrawing(): void {
   paper.unbind();
   paper.drop();
   showPalette(false);
+  ticksEl.hidden = false;
+  stampEl.hidden = true;
+  armStamp(false);
   scoreLabelEl.textContent = 'Потенциал';
   miniCache = '';
   shownChain = '';
+}
+
+/**
+ * Свой шильдик: лист, поставленный на пропуск.
+ *
+ * Всё остальное на приборе выбирают из готового, и покупка там — это выбор.
+ * Здесь покупают место под своё, а рисуют сами, поэтому и клавиша стоит на
+ * листе, а не в каталоге кабинета: платят за то, что видно на стекле прямо
+ * сейчас.
+ *
+ * Пропуск игрока читаем перед покупкой и держим до конца сеанса: по нему
+ * видно, куплено ли место, хватает ли жетонов и есть ли свободная ячейка.
+ */
+let pass: MeResponse | null = null;
+/** Занесённая над покупкой рука: второе нажатие платит. Как в кабинете. */
+let stampArmed = false;
+
+function armStamp(on: boolean): void {
+  stampArmed = on;
+  stampEl.classList.toggle('arm', on);
+  stampEl.textContent = on ? 'Ещё раз' : 'На пропуск';
+}
+
+/** Перечитывает пропуск. Молча: без сервера лист рисуется и так. */
+async function readPass(): Promise<MeResponse | null> {
+  try {
+    pass = await getMe();
+  } catch {
+    pass = null;
+  }
+  return pass;
+}
+
+/**
+ * Ставит рисунок в свободную ячейку корпуса. Занятую не трогаем: игрок мог
+ * поставить туда отметку, за которой ходил неделю, — менять её молча нельзя.
+ * Вернёт false, если места нет: тогда шильдик просто лежит купленным.
+ */
+async function wearOwn(state: MeResponse): Promise<boolean> {
+  const marks = cleanMarks(state.marks);
+  if (marks.includes(OWN_MARK)) return true;
+  const free = marks.findIndex((id, index) => id === null && index < state.slots);
+  if (free < 0) return false;
+  marks[free] = OWN_MARK;
+  pass = { ...state, marks };
+  savePlate(marks);
+  updatePlate();
+  try {
+    await setMarks(marks);
+  } catch {
+    // Не дошло — свой корпус мы уже перерисовали, соперник увидит позже.
+  }
+  return true;
+}
+
+/**
+ * Нажатие по клавише листа. Первое нажатие называет цену, второе платит —
+ * тем же движением, что наклейка и оправа в кабинете; отдельного окна с
+ * вопросом нет, оно спрашивало бы ровно то же самое.
+ */
+async function stampPass(): Promise<void> {
+  if (paper.painted === 0) {
+    armStamp(false);
+    setStat('Сначала нарисуйте', 'warn');
+    return;
+  }
+  const art = paper.art();
+  const state = pass ?? (await readPass());
+  if (!state) {
+    armStamp(false);
+    setStat('Прибор не отвечает', 'warn');
+    return;
+  }
+  let bought = false;
+  if (!state.earned.includes(OWN_MARK)) {
+    if (state.tokens < OWN_PRICE) {
+      armStamp(false);
+      setStat(`Нужно ${OWN_PRICE} · у вас ${state.tokens}`, 'warn');
+      return;
+    }
+    if (!stampArmed) {
+      armStamp(true);
+      setStat(`Шильдик · ${OWN_PRICE} жетонов`);
+      return;
+    }
+    armStamp(false);
+    try {
+      const paid = await buy(OWN_MARK);
+      pass = { ...state, tokens: paid.tokens, earned: paid.earned, slots: paid.slots };
+      bought = true;
+    } catch {
+      setStat('Не купилось · ещё раз', 'warn');
+      return;
+    }
+  }
+  const mine = pass;
+  if (!mine) return;
+  try {
+    await setArt(art);
+  } catch {
+    setStat('Рисунок не дошёл', 'warn');
+    return;
+  }
+  ownArt = art;
+  saveArt(art);
+  const worn = await wearOwn(mine);
+  updatePlate();
+  cabinet.setArt(art);
+  // Строки здесь короткие не от лени: в углу окуляра на узком телефоне
+  // помещается около двадцати пяти знаков, дальше край режет по живому.
+  // Подтверждение поэтому написано на самой клавише, а не в строке.
+  if (!worn) setStat('Корпус занят · в кабинет', 'warn');
+  else if (bought) setStat(`Шильдик ваш · жетонов ${mine.tokens}`, 'live');
+  else setStat('Рисунок на пропуске', 'live');
 }
 
 /** Показания резонанса и палитра занимают экранчик по очереди. */
@@ -1707,6 +1863,8 @@ paletteEl.addEventListener('click', (event) => {
   setStat(color === null ? `Стёрто ${painted}` : `Закрашено ${painted}`, 'live');
   updatePaperHud();
 });
+
+stampEl.addEventListener('click', () => void stampPass());
 
 el<HTMLButtonElement>('tut-skip').addEventListener('click', () => stopTutorial());
 // Показ листают руками: «Дальше» на последнем шаге его и закрывает.
@@ -1877,6 +2035,11 @@ const cabinet = new Cabinet({
   onFrame: (frame) => {
     ownFrame = frame;
     saveFrame(frame);
+    updatePlate();
+  },
+  onArt: (art) => {
+    ownArt = art;
+    saveArt(art);
     updatePlate();
   },
 });

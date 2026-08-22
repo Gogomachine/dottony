@@ -3,7 +3,9 @@ import { createClient, type Client } from '@libsql/client';
 import {
   cleanMarks,
   goldMark,
+  isArt,
   isGoldMark,
+  isOwnMark,
   newRating,
   PLACEMENT_GAMES,
   type Rating,
@@ -236,6 +238,9 @@ export class Store {
     // Шильдики корпуса: три номера из каталога ядра, одной строкой. Своей
     // таблицы они не стоят — это три коротких значения, живущих с игроком.
     await this.addColumnIfMissing('users', 'marks', 'TEXT');
+    // Свой шильдик: сто знаков листа. Лежит у игрока, а не в отдельной
+    // таблице, — рисунок у него один, и живёт он ровно столько же.
+    await this.addColumnIfMissing('users', 'art', 'TEXT');
     // Когда игрока последний раз видели в приборе. По этому и решаем, куда
     // слать приглашение: в игру или, если его там нет, в Telegram.
     await this.addColumnIfMissing('users', 'seen_at', 'TEXT');
@@ -465,10 +470,11 @@ export class Store {
     excludeUserId: string,
     targetScore: number,
   ): Promise<
-    { name: string; seed: number; score: number; log: string; marks: (string | null)[] } | undefined
+    | { name: string; seed: number; score: number; log: string; marks: (string | null)[]; art: string | null }
+    | undefined
   > {
     const result = await this.client.execute({
-      sql: `SELECT u.name, u.marks, d.seed, p.score, p.log
+      sql: `SELECT u.name, u.marks, u.art, d.seed, p.score, p.log
             FROM duel_players p
             JOIN duels d ON d.id = p.duel_id
             JOIN users u ON u.id = p.user_id
@@ -487,6 +493,7 @@ export class Store {
       log: String(row.log),
       // Запись живого игрока носит его же корпус: она и есть он.
       marks: this.parseMarks(row.marks),
+      art: isArt(row.art) ? row.art : null,
     };
   }
 
@@ -517,9 +524,12 @@ export class Store {
    */
   async pickOrderRun(
     excludeUserId: string,
-  ): Promise<{ name: string; seed: number; score: number; moves: string; marks: (string | null)[] } | undefined> {
+  ): Promise<
+    | { name: string; seed: number; score: number; moves: string; marks: (string | null)[]; art: string | null }
+    | undefined
+  > {
     const result = await this.client.execute({
-      sql: `SELECT u.name, u.marks, r.seed, r.score, r.moves
+      sql: `SELECT u.name, u.marks, u.art, r.seed, r.score, r.moves
             FROM order_runs r JOIN users u ON u.id = r.user_id
             WHERE r.user_id <> ? AND r.score > 0
             ORDER BY RANDOM()
@@ -534,6 +544,7 @@ export class Store {
       score: Number(row.score),
       moves: String(row.moves),
       marks: this.parseMarks(row.marks),
+      art: isArt(row.art) ? row.art : null,
     };
   }
 
@@ -587,11 +598,11 @@ export class Store {
   async ratingLeaderboard(
     limit: number,
     kind: DuelKind = 'chain',
-  ): Promise<{ name: string; rating: number; mark: string | null }[]> {
+  ): Promise<{ name: string; rating: number; mark: string | null; art?: string }[]> {
     const col = this.ratingColumns(kind);
     const [result, holders] = await Promise.all([
       this.client.execute({
-        sql: `SELECT id, name, ${col.rating} AS rating, marks FROM users
+        sql: `SELECT id, name, ${col.rating} AS rating, marks, art FROM users
             WHERE ${col.games} >= ?
             ORDER BY ${col.rating} DESC, name ASC
             LIMIT ?`,
@@ -599,11 +610,10 @@ export class Store {
       }),
       this.champions(),
     ]);
-    return result.rows.map((row) => ({
-      name: String(row.name),
-      rating: Number(row.rating),
-      mark: this.firstMark(row.marks, holders.get(String(row.id)) ?? []),
-    }));
+    return result.rows.map((row) => {
+      const mark = this.firstMark(row.marks, holders.get(String(row.id)) ?? []);
+      return { name: String(row.name), rating: Number(row.rating), mark, ...this.ownArt(mark, row.art) };
+    });
   }
 
   /** Место игрока в рейтинге: 1 + число тех, кто выше. До калибровки — null. */
@@ -836,13 +846,13 @@ export class Store {
     board: Board,
     limit: number,
     period: BoardPeriod,
-  ): Promise<{ name: string; value: number; orders: number; mark: string | null }[]> {
+  ): Promise<{ name: string; value: number; orders: number; mark: string | null; art?: string }[]> {
     const { table, where } = this.source(board, period);
     // Заказы в спринтовых таблицах не хранятся — там их и не спрашивают.
     const extra = board === 'order' ? 'r.orders' : '0 AS orders';
     const [result, holders] = await Promise.all([
       this.client.execute({
-        sql: `SELECT u.id, u.name, u.marks, r.score AS value, ${extra}
+        sql: `SELECT u.id, u.name, u.marks, u.art, r.score AS value, ${extra}
             FROM ${table} r JOIN users u ON u.id = r.user_id
             WHERE ${where}
             ORDER BY r.score DESC, r.created_at ASC
@@ -851,12 +861,16 @@ export class Store {
       }),
       this.champions(),
     ]);
-    return result.rows.map((row) => ({
-      name: String(row.name),
-      value: Number(row.value),
-      orders: Number(row.orders),
-      mark: this.firstMark(row.marks, holders.get(String(row.id)) ?? []),
-    }));
+    return result.rows.map((row) => {
+      const mark = this.firstMark(row.marks, holders.get(String(row.id)) ?? []);
+      return {
+        name: String(row.name),
+        value: Number(row.value),
+        orders: Number(row.orders),
+        mark,
+        ...this.ownArt(mark, row.art),
+      };
+    });
   }
 
   /**
@@ -937,13 +951,14 @@ export class Store {
   async orderTop(
     limit: number,
     period: BoardPeriod = 'all',
-  ): Promise<{ name: string; score: number; orders: number; mark: string | null }[]> {
+  ): Promise<{ name: string; score: number; orders: number; mark: string | null; art?: string }[]> {
     const rows = await this.top('order', limit, period);
     return rows.map((row) => ({
       name: row.name,
       score: row.value,
       orders: row.orders,
       mark: row.mark,
+      ...this.ownArt(row.mark, row.art),
     }));
   }
 
@@ -983,9 +998,14 @@ export class Store {
   async sprintTop(
     limit: number,
     period: BoardPeriod = 'all',
-  ): Promise<{ name: string; score: number; mark: string | null }[]> {
+  ): Promise<{ name: string; score: number; mark: string | null; art?: string }[]> {
     const rows = await this.top('sprint', limit, period);
-    return rows.map((row) => ({ name: row.name, score: row.value, mark: row.mark }));
+    return rows.map((row) => ({
+      name: row.name,
+      score: row.value,
+      mark: row.mark,
+      ...this.ownArt(row.mark, row.art),
+    }));
   }
 
   async createUser(id: string, name: string, identity: Identity): Promise<UserRow> {
@@ -1119,6 +1139,18 @@ export class Store {
    * Первый занятый шильдик игрока — тот, что едет рядом с именем в чужие
    * таблицы. Хранится строкой, поэтому разбор в одном месте.
    */
+  /**
+   * Картинка к шильдику в строке списка. Едет только со своим рисунком и
+   * только у того, кто его и правда носит: у остальных её нет вовсе — не
+   * пустая строка, а нет. Таблица на полсотни строк не должна возить сотню
+   * лишних знаков ни за кого.
+   */
+  private ownArt(mark: string | null, raw: unknown): { art?: string } {
+    if (!isOwnMark(mark)) return {};
+    const art = raw === null || raw === undefined ? '' : String(raw);
+    return isArt(art) ? { art } : {};
+  }
+
   private firstMark(raw: unknown, gold: readonly string[] = []): string | null {
     return this.keepGold(this.parseMarks(raw), gold).find((id) => id !== null) ?? null;
   }
@@ -1217,14 +1249,14 @@ export class Store {
   async invitesFor(
     userId: string,
     liveSeconds = 90,
-  ): Promise<{ from: string; mark: string | null; room: string }[]> {
+  ): Promise<{ from: string; mark: string | null; art?: string; room: string }[]> {
     await this.client.execute({
       sql: `DELETE FROM invites WHERE created_at <= datetime('now', ?)`,
       args: [`-${liveSeconds} seconds`],
     });
     const [result, holders] = await Promise.all([
       this.client.execute({
-        sql: `SELECT u.id, u.name, u.marks, i.room
+        sql: `SELECT u.id, u.name, u.marks, u.art, i.room
             FROM invites i JOIN users u ON u.id = i.from_user
             WHERE i.to_user = ?
             ORDER BY i.created_at DESC`,
@@ -1232,11 +1264,10 @@ export class Store {
       }),
       this.champions(),
     ]);
-    return result.rows.map((row) => ({
-      from: String(row.name),
-      mark: this.firstMark(row.marks, holders.get(String(row.id)) ?? []),
-      room: String(row.room),
-    }));
+    return result.rows.map((row) => {
+      const mark = this.firstMark(row.marks, holders.get(String(row.id)) ?? []);
+      return { from: String(row.name), mark, ...this.ownArt(mark, row.art), room: String(row.room) };
+    });
   }
 
   /** Снимает приглашение: его приняли, отклонили или комната закрылась. */
@@ -1389,6 +1420,27 @@ export class Store {
       return 'poor';
     }
     return 'ok';
+  }
+
+  /**
+   * Свой рисунок игрока; null — не рисовал или запись испорчена. Битую
+   * запись читаем как пустую: шильдик без картинки лучше, чем упавший
+   * ответ на весь пропуск.
+   */
+  async artOf(id: string): Promise<string | null> {
+    const rows = await this.client.execute({
+      sql: 'SELECT art FROM users WHERE id = ?',
+      args: [id],
+    });
+    const art = rows.rows[0]?.art;
+    return isArt(art) ? art : null;
+  }
+
+  async setArt(id: string, art: string): Promise<void> {
+    await this.client.execute({
+      sql: 'UPDATE users SET art = ? WHERE id = ?',
+      args: [art, id],
+    });
   }
 
   /** Надетая оправа полосы; null — снята или не куплена. */

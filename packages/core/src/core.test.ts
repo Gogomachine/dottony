@@ -25,6 +25,11 @@ import {
   markAllowed,
   markById,
   MARKS,
+  OWN_MARK,
+  OWN_PRICE,
+  STICKER_PRICE,
+  isOwnMark,
+  markPrice,
   MARK_BIG,
   MARK_SLOTS,
   MARK_STREAK,
@@ -35,6 +40,16 @@ import {
   slotPrice,
   SLOT_PRICES,
 } from './marks.js';
+import {
+  ART_LEN,
+  ART_PAINTS,
+  ART_SIZE,
+  artEmptyCells,
+  artPainted,
+  decodeArt,
+  encodeArt,
+  isArt,
+} from './art.js';
 import { nextInt, seedRng } from './rng.js';
 import {
   DEFAULT_CONFIG,
@@ -853,6 +868,22 @@ describe('шильдики', () => {
     expect(isGoldMark('e-order')).toBe(false);
   });
 
+  it('свой шильдик продаётся, но не выдаётся за игру', () => {
+    const own = markById(OWN_MARK)!;
+    expect(own.kind).toBe('own');
+    expect(own.price).toBe(OWN_PRICE);
+    expect(own.needs).toBeUndefined();
+    expect(markPrice(OWN_MARK)).toBe(OWN_PRICE);
+    // Дороже всего, что выбирают из готового: остальное продаётся готовым.
+    expect(OWN_PRICE).toBeGreaterThan(STICKER_PRICE);
+    expect(isOwnMark(OWN_MARK)).toBe(true);
+    expect(isOwnMark('s0')).toBe(false);
+    expect(isOwnMark(null)).toBe(false);
+    // Купить — купить, а даром он не носится, как и всё остальное.
+    expect(markAllowed(OWN_MARK)).toBe(false);
+    expect(markAllowed(OWN_MARK, [OWN_MARK])).toBe(true);
+  });
+
   it('выбор приводится к корпусу: три ячейки, без повторов и выдумок', () => {
     const free = MARKS.filter((mark) => mark.needs === undefined);
     const [a, b] = [free[0]!.id, free[1]!.id];
@@ -862,5 +893,53 @@ describe('шильдики', () => {
     // Лишнее за край корпуса просто не помещается.
     expect(cleanMarks(free.slice(0, 5).map((mark) => mark.id))).toHaveLength(MARK_SLOTS);
     expect(cleanMarks([])).toEqual([null, null, null]);
+  });
+});
+
+describe('рисунок листа', () => {
+  it('запись переживает круг: клетки — строка — клетки', () => {
+    const cells = artEmptyCells();
+    cells[0]![0] = 0;
+    cells[4]![5] = ART_PAINTS.length - 1;
+    cells[ART_SIZE - 1]![ART_SIZE - 1] = 3;
+    const art = encodeArt(cells);
+    expect(art).toHaveLength(ART_LEN);
+    expect(isArt(art)).toBe(true);
+    expect(artPainted(art)).toBe(3);
+    expect(decodeArt(art)).toEqual(cells);
+  });
+
+  it('чистый лист — сто пустых клеток, и он ничем не закрашен', () => {
+    const art = encodeArt(artEmptyCells());
+    expect(art).toBe('.'.repeat(ART_LEN));
+    expect(isArt(art)).toBe(true);
+    expect(artPainted(art)).toBe(0);
+  });
+
+  it('битую запись не принимаем и читаем как чистый лист', () => {
+    expect(isArt('')).toBe(false);
+    expect(isArt('0'.repeat(ART_LEN - 1))).toBe(false);
+    expect(isArt('0'.repeat(ART_LEN + 1))).toBe(false);
+    expect(isArt(null)).toBe(false);
+    expect(isArt(0)).toBe(false);
+    // Знак не из набора и краска с номером из будущего — одинаково мимо.
+    expect(isArt(`${'.'.repeat(ART_LEN - 1)}!`)).toBe(false);
+    expect(isArt(`${'.'.repeat(ART_LEN - 1)}z`)).toBe(false);
+    expect(decodeArt('мусор')).toEqual(artEmptyCells());
+    expect(artPainted('мусор')).toBe(0);
+  });
+
+  it('клетки не по размеру и мусор в них становятся чистым местом', () => {
+    // Рисунок с меньшего листа записывается целиком, остальное — пусто.
+    const small = [[1, 2], [3]];
+    const art = encodeArt(small as (number | null)[][]);
+    expect(isArt(art)).toBe(true);
+    expect(artPainted(art)).toBe(3);
+    const back = decodeArt(art);
+    expect(back[0]!.slice(0, 2)).toEqual([1, 2]);
+    expect(back[1]![0]).toBe(3);
+    expect(back[1]![1]).toBeNull();
+    // Краски с несуществующим номером на листе не бывает.
+    expect(artPainted(encodeArt([[99, -1, 1.5]] as (number | null)[][]))).toBe(0);
   });
 });

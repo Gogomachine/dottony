@@ -1,6 +1,9 @@
 import {
   cleanMarks,
   FACES,
+  isOwnMark,
+  OWN_MARK,
+  OWN_PRICE,
   FRAMES,
   FRAME_PRICE,
   markAllowed,
@@ -96,6 +99,8 @@ export interface CabinetHandlers {
   onMarks(marks: (string | null)[]): void;
   /** Игрок сменил оправу полосы; null — снял. */
   onFrame(frame: string | null): void;
+  /** Свой рисунок с сервера: на корпусе его рисует не кабинет. */
+  onArt(art: string | null): void;
 }
 
 export class Cabinet {
@@ -139,6 +144,12 @@ export class Cabinet {
   private buying: string | null = null;
   /** Надетая оправа полосы; null — полоса без оправы. */
   private frame: string | null = null;
+  /**
+   * Свой рисунок. Кабинет его не рисует и не продаёт — это дело листа; здесь
+   * он нужен, чтобы шильдик в каталоге и в ячейке выглядел собой, а не
+   * надписью «свой».
+   */
+  private art: string | null = null;
   /** Сколько ячеек корпуса открыто: первая даром, вторая и третья за жетоны. */
   private slots = 1;
 
@@ -268,10 +279,28 @@ export class Cabinet {
       pick.className = 'pick';
       pick.dataset.mark = mark.id;
       if (mark.needs !== undefined) pick.dataset.needs = mark.needs;
-      pick.appendChild(markChip(mark));
+      pick.appendChild(markChip(mark, isOwnMark(mark.id) ? this.art : null));
       pick.addEventListener('click', () => void this.take(mark));
       this.catalogEl.appendChild(pick);
     }
+  }
+
+  /**
+   * Свой рисунок сменился — на листе его только что поставили на пропуск.
+   * Перерисовываем то, где он виден: ячейку корпуса и место в каталоге.
+   */
+  setArt(art: string | null): void {
+    if (art === this.art) return;
+    this.art = art;
+    const pick = this.catalogEl.querySelector<HTMLElement>(`.pick[data-mark="${OWN_MARK}"]`);
+    if (pick) {
+      const own = markById(OWN_MARK);
+      if (own) {
+        pick.innerHTML = '';
+        pick.appendChild(markChip(own, art));
+      }
+    }
+    if (this.visible) this.showMarks(this.marks);
   }
 
   /**
@@ -358,6 +387,13 @@ export class Cabinet {
    * названной цене её и платит.
    */
   private async take(mark: Mark): Promise<void> {
+    // Свой шильдик здесь не продаётся: платят за то, что видно на листе, и
+    // клавиша стоит там же. Купленный ставится в ячейку как любой другой.
+    if (isOwnMark(mark.id) && !markAllowed(mark.id, this.earned)) {
+      this.buying = null;
+      this.slotHintEl.textContent = `Свой рисунок · ${OWN_PRICE} жетонов · с листа`;
+      return;
+    }
     if (markAllowed(mark.id, this.earned)) {
       this.buying = null;
       await this.put(mark.id);
@@ -467,7 +503,7 @@ export class Cabinet {
       slot.className = `slot${index === this.slot && open ? ' on' : ''}${open ? '' : ' shut'}`;
       if (open) {
         const mark = marks[index] === null ? undefined : markById(marks[index] ?? '');
-        if (mark) slot.appendChild(markChip(mark));
+        if (mark) slot.appendChild(markChip(mark, isOwnMark(mark.id) ? this.art : null));
       } else {
         // Закрытая ячейка показывает цену: это и есть весь её вид.
         const price = document.createElement('span');
@@ -653,6 +689,10 @@ export class Cabinet {
     this.frame = me.frame;
     this.showFrame();
     this.handlers.onFrame(me.frame);
+    // Рисунок приезжает с сервера: на новом телефоне лист чистый, а шильдик
+    // на пропуске тот же, что был поставлен со старого.
+    this.setArt(me.art);
+    this.handlers.onArt(me.art);
     const marks = cleanMarks(me.marks);
     this.showMarks(marks);
     this.handlers.onMarks(marks);

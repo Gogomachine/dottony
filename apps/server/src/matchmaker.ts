@@ -182,6 +182,7 @@ export class Matchmaker {
       id: `ghost:${ghost.name}:${Date.now()}`,
       name: ghost.name,
       marks: ghost.marks,
+      ...(ghost.art === undefined ? {} : { art: ghost.art }),
       send: () => {},
     };
     const duel = new Duel(ghost.seed, player, ghostPlayer, { ghostB: true, kind });

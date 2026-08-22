@@ -10,7 +10,9 @@ import {
   phaseColorAt,
   seedRng,
   DEFAULT_CONFIG,
+  ART_LEN,
   MARK_SLOTS,
+  OWN_MARK,
   type Board,
   type Cell,
 } from '@doton/core';
@@ -106,6 +108,24 @@ describe('Duel', () => {
     // У кого оправы нет — тому и поля не шлём: полоса рисуется обычной.
     expect(a.last('matched')).not.toHaveProperty('opponentFrame');
     expect(duel.snapshot('a')).not.toHaveProperty('opponentFrame');
+  });
+
+  it('свой рисунок едет к сопернику вместе с номером шильдика', () => {
+    const a = recorder('a', 'Ада');
+    const b = recorder('b', 'Боб');
+    const art = `${'12'.repeat(3)}${'.'.repeat(ART_LEN - 6)}`;
+    a.marks = [OWN_MARK, null, null];
+    a.art = art;
+    const duel = new Duel(seed, a, b);
+    duel.announce();
+
+    // Номер своего шильдика у всех один — без картинки соперник увидел бы
+    // пустое стекло вместо рисунка.
+    expect(b.last('matched')).toMatchObject({ opponentMarks: [OWN_MARK, null, null], opponentArt: art });
+    expect(duel.snapshot('b')).toMatchObject({ opponentArt: art });
+    // Кто своего шильдика не носит — тому и поля не шлём.
+    expect(a.last('matched')).not.toHaveProperty('opponentArt');
+    expect(duel.snapshot('a')).not.toHaveProperty('opponentArt');
   });
 
   it('корпус пустой, если соперник ничего не поставил', () => {

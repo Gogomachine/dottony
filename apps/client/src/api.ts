@@ -202,6 +202,18 @@ export function buy(id: string): Promise<BuyResponse> {
   });
 }
 
+/**
+ * Ставит нарисованное на пропуск. Сервер держит рисунок у себя не ради
+ * сохранности: его видит соперник, и с нового телефона он должен приехать
+ * вместе с остальным пропуском.
+ */
+export function setArt(art: string): Promise<{ art: string }> {
+  return request<{ art: string }>('/api/me/art', {
+    method: 'PUT',
+    body: JSON.stringify({ art }),
+  });
+}
+
 /** Надевает оправу полосы шильдиков; null — снимает. */
 export function setFrame(frame: string | null): Promise<{ frame: string | null }> {
   return request<{ frame: string | null }>('/api/me/frame', {
