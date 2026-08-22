@@ -55,7 +55,8 @@ export function savePlate(marks: (string | null)[]): void {
 
 /**
  * Один шильдик. Отметка за игру — краска по корпусу, наклейка — картинка на
- * белом квадратике: он и делает из неё часть предмета, а не значок поверх.
+ * кусочке тёмного стекла: он и делает из неё часть прибора, а не значок
+ * поверх него.
  */
 export function markChip(mark: Mark): HTMLElement {
   const chip = document.createElement('i');
