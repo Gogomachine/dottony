@@ -384,10 +384,12 @@
     }
     .mini .txt b { color: var(--scope-ink); font-weight: 500; }
     /* Палитра листа: те же четыре цвета, что и у точек на поле. */
-    .palette { display: flex; align-items: center; gap: 10px; flex: 1; justify-content: center; }
+    /* Красок больше, чем помещается в ряд на узком экране, поэтому ряд
+       переносится: экранчик под палитрой растёт, а не режет её по краю. */
+    .palette { display: flex; align-items: center; gap: 8px; flex: 1; justify-content: center; flex-wrap: wrap; }
     .palette .hue {
-      width: 20px;
-      height: 20px;
+      width: 19px;
+      height: 19px;
       border-radius: 50%;
       border: 1px solid rgba(0, 0, 0, 0.45);
       cursor: pointer;
@@ -396,10 +398,12 @@
       transition: transform 0.09s;
     }
     .palette .hue:active { transform: translateY(1px) scale(0.94); }
-    .palette .hue[data-hue="0"] { background: #e3ae45; }
-    .palette .hue[data-hue="1"] { background: #3f9c79; }
-    .palette .hue[data-hue="2"] { background: #d9584a; }
-    .palette .hue[data-hue="3"] { background: #4589c4; }
+    /* На узком телефоне краски ужимаются, но остаются одним рядом: резинка,
+       уехавшая на вторую строку в одиночестве, читалась как поломка. */
+    @media (max-width: 380px) {
+      .palette { gap: 6px; }
+      .palette .hue { width: 17px; height: 17px; }
+    }
     /* Резинка — не цвет, поэтому и выглядит не краской: пустой кружок. */
     .palette .hue.erase {
       background: transparent;
@@ -1490,10 +1494,8 @@
         резонанса, здесь стоят четыре цвета прибора и стирательная резинка.
       -->
       <div class="palette" id="palette" hidden>
-        <button class="hue" data-hue="0" title="Янтарь"></button>
-        <button class="hue" data-hue="1" title="Нефрит"></button>
-        <button class="hue" data-hue="2" title="Коралл"></button>
-        <button class="hue" data-hue="3" title="Лазурь"></button>
+        <!-- Краски расставляет main.ts по каталогу листа: два списка цветов
+             разъехались бы при первой же новой краске. -->
         <button class="hue erase" data-hue="" title="Стереть">×</button>
       </div>
     </div>

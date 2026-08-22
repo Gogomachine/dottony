@@ -1,4 +1,4 @@
-import type { Cell, Color } from '@doton/core';
+import type { Cell } from '@doton/core';
 import type { Theme } from '../theme';
 
 /**
@@ -22,8 +22,30 @@ export const PAPER_SIZE = 6;
 /** Красит цепочка от двух клеток: одна клетка — это ещё не движение. */
 export const PAPER_MIN = 2;
 
-/** Клетка листа: цвет из палитры прибора либо чистая бумага. */
-export type PaperCell = Color | null;
+/**
+ * Краски листа. Первые четыре — цвета точек прибора, дальше идут те,
+ * которых на поле не бывает: в игре четыре цвета — правило, а на листе
+ * рисуют, и лишний оттенок там ничего не ломает.
+ *
+ * Порядок не переставляем: рисунок хранится номерами красок, и перестановка
+ * молча перекрасила бы уже нарисованное. Новые краски дописываются в конец.
+ * Белого среди них нет намеренно — белая точка означает «не закрашена».
+ */
+export const PAPER_PAINTS: readonly { name: string; css: string }[] = [
+  { name: 'Янтарь', css: '#E3AE45' },
+  { name: 'Нефрит', css: '#3F9C79' },
+  { name: 'Коралл', css: '#D9584A' },
+  { name: 'Лазурь', css: '#4589C4' },
+  { name: 'Сигнал', css: '#E84B23' },
+  { name: 'Слива', css: '#7C5C9E' },
+  { name: 'Бирюза', css: '#2F8E8E' },
+  { name: 'Умбра', css: '#9C6B3F' },
+  { name: 'Роза', css: '#E08FA8' },
+  { name: 'Графит', css: '#4A4A46' },
+];
+
+/** Клетка листа: номер краски либо чистое место. */
+export type PaperCell = number | null;
 
 const KEY = 'doton.paper.v1';
 
@@ -224,7 +246,7 @@ export class Paper {
         const color = this.cells[r]![c] ?? null;
         ctx.beginPath();
         ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
-        ctx.fillStyle = color === null ? EMPTY_DOT : this.theme.dots[color];
+        ctx.fillStyle = color === null ? EMPTY_DOT : (PAPER_PAINTS[color]?.css ?? EMPTY_DOT);
         ctx.fill();
         // Взятая точка обведена — по обводке видно, что покрасится.
         if (taken.has(`${r},${c}`)) {
@@ -262,8 +284,8 @@ function load(): PaperCell[][] {
       if (!Array.isArray(row)) return;
       row.forEach((value, c) => {
         if (r >= PAPER_SIZE || c >= PAPER_SIZE) return;
-        if (typeof value === 'number' && value >= 0 && value < 4) {
-          cells[r]![c] = value as Color;
+        if (typeof value === 'number' && value >= 0 && value < PAPER_PAINTS.length) {
+          cells[r]![c] = value;
         }
       });
     });

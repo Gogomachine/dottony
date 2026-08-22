@@ -45,7 +45,7 @@ import { ChainInput } from './game/input';
 import { Renderer } from './game/renderer';
 import { miniState, orderMini, type MiniState } from './game/mini';
 import { Session, DUEL_FALLBACK, SPRINT_SECONDS, type Mode } from './game/session';
-import { Paper, PAPER_MIN, PAPER_SIZE, type PaperCell } from './game/paper';
+import { Paper, PAPER_MIN, PAPER_PAINTS, PAPER_SIZE, type PaperCell } from './game/paper';
 import { Sound } from './game/sound';
 import { Tutorial } from './tutorial';
 import { brandLockup } from './brand';
@@ -1674,6 +1674,17 @@ menuEl.addEventListener('click', (event) => {
   if (action) action();
 });
 
+// Краски на экранчике — из каталога листа: там же, где их знает рендер.
+// Резинка стоит в разметке и остаётся последней — она не краска.
+PAPER_PAINTS.forEach((paint, index) => {
+  const button = document.createElement('button');
+  button.className = 'hue';
+  button.dataset.hue = String(index);
+  button.title = paint.name;
+  button.style.background = paint.css;
+  paletteEl.insertBefore(button, paletteEl.lastElementChild);
+});
+
 /**
  * Цвет красит набранную цепочку. Ничего «выбранного» палитра не помнит
  * нарочно: кнопка — это действие, а не состояние, и по листу всегда видно,
@@ -1683,7 +1694,7 @@ paletteEl.addEventListener('click', (event) => {
   const button = (event.target as HTMLElement).closest<HTMLElement>('.hue');
   if (!button || !drawing) return;
   const raw = button.dataset.hue ?? '';
-  const color: PaperCell = raw === '' ? null : (Number(raw) as 0 | 1 | 2 | 3);
+  const color: PaperCell = raw === '' ? null : Number(raw);
   const painted = paper.paint(color);
   if (painted === 0) {
     setStat(`Сначала цепочка от ${PAPER_MIN} точек`, 'warn');
