@@ -27,10 +27,16 @@ export type PaperCell = Color | null;
 
 const KEY = 'doton.paper.v1';
 
-/** Бумага и её тень — единственное светлое место в окуляре. */
-const SHEET = '#EDEAE3';
-const SHEET_EDGE = 'rgba(12, 13, 14, 0.16)';
-const EMPTY_DOT = 'rgba(12, 13, 14, 0.07)';
+/**
+ * Незакрашенная точка. Лист — то же стекло с той же сеткой, что и поле в
+ * игре: белым здесь бывает не бумага, а сама точка, пока её не покрасили.
+ * Иначе рисование выглядело бы приложением поверх прибора, а не режимом
+ * прибора.
+ */
+const EMPTY_DOT = '#EDEAE3';
+
+/** Радиус точки — тот же, что у поля: клетки одинаковые, точки тоже. */
+const DOT = 0.41;
 
 function empty(): PaperCell[][] {
   return Array.from({ length: PAPER_SIZE }, () => Array.from({ length: PAPER_SIZE }, () => null));
@@ -180,48 +186,55 @@ export class Paper {
     if (size === 0 || this.cell === 0) return;
     ctx.clearRect(0, 0, size, size);
 
-    // Сам лист: белая бумага в чёрном окуляре. Тень по краю не даёт ей
-    // слиться со стеклом на светлой теме корпуса.
-    const sheet = size - this.pad * 2;
-    ctx.fillStyle = SHEET;
-    roundRect(ctx, this.pad, this.pad, sheet, sheet, this.cell * 0.16);
-    ctx.fill();
-    ctx.strokeStyle = SHEET_EDGE;
+    // Волосяная сетка платы — та же, что под точками в игре.
+    ctx.strokeStyle = this.theme.gridLine;
     ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = 1; i < PAPER_SIZE; i++) {
+      const x = this.pad + i * this.cell;
+      ctx.moveTo(x, this.pad);
+      ctx.lineTo(x, size - this.pad);
+      const y = this.pad + i * this.cell;
+      ctx.moveTo(this.pad, y);
+      ctx.lineTo(size - this.pad, y);
+    }
     ctx.stroke();
 
-    const radius = this.cell * 0.34;
+    const radius = this.cell * DOT;
+
+    // Нить набранной цепочки — под точками, как и в игре.
+    if (this.chain.length > 1) {
+      ctx.strokeStyle = this.theme.chainOutline;
+      ctx.lineWidth = this.cell * 0.22;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      this.chain.forEach((cell, index) => {
+        const center = this.center(cell);
+        if (index === 0) ctx.moveTo(center.x, center.y);
+        else ctx.lineTo(center.x, center.y);
+      });
+      ctx.stroke();
+    }
+
+    const taken = new Set(this.chain.map((cell) => `${cell.r},${cell.c}`));
     for (let r = 0; r < PAPER_SIZE; r++) {
       for (let c = 0; c < PAPER_SIZE; c++) {
         const center = this.center({ r, c });
         const color = this.cells[r]![c] ?? null;
         ctx.beginPath();
-        ctx.arc(center.x, center.y, color === null ? radius * 0.5 : radius, 0, Math.PI * 2);
+        ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
         ctx.fillStyle = color === null ? EMPTY_DOT : this.theme.dots[color];
         ctx.fill();
+        // Взятая точка обведена — по обводке видно, что покрасится.
+        if (taken.has(`${r},${c}`)) {
+          ctx.strokeStyle = this.theme.chainOutline;
+          ctx.lineWidth = Math.max(2, this.cell * 0.07);
+          ctx.beginPath();
+          ctx.arc(center.x, center.y, radius + ctx.lineWidth, 0, Math.PI * 2);
+          ctx.stroke();
+        }
       }
-    }
-
-    if (this.chain.length === 0) return;
-    // Набранная цепочка: та же нить, что в игре, но по бумаге — тёмная.
-    ctx.strokeStyle = 'rgba(12, 13, 14, 0.5)';
-    ctx.lineWidth = Math.max(2, this.cell * 0.09);
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    this.chain.forEach((cell, index) => {
-      const center = this.center(cell);
-      if (index === 0) ctx.moveTo(center.x, center.y);
-      else ctx.lineTo(center.x, center.y);
-    });
-    ctx.stroke();
-    for (const cell of this.chain) {
-      const center = this.center(cell);
-      ctx.beginPath();
-      ctx.arc(center.x, center.y, radius * 0.95, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(12, 13, 14, 0.5)';
-      ctx.lineWidth = Math.max(1.5, this.cell * 0.05);
-      ctx.stroke();
     }
   }
 
@@ -231,23 +244,6 @@ export class Paper {
       y: this.pad + cell.r * this.cell + this.cell / 2,
     };
   }
-}
-
-function roundRect(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  r: number,
-): void {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
 }
 
 /**
