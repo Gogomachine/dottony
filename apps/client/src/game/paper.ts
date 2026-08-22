@@ -40,7 +40,10 @@ export const PAPER_MIN = 2;
  *
  * Порядок не переставляем: рисунок хранится номерами красок, и перестановка
  * молча перекрасила бы уже нарисованное. Новые краски дописываются в конец.
- * Белого среди них нет намеренно — белая точка означает «не закрашена».
+ *
+ * Белой краски среди них нет: белым на листе светится набранная цепочка —
+ * нить и обводки, — и краска того же цвета спорила бы с ней. Чистое место
+ * тоже белым не бывает: оно просто чёрное стекло.
  */
 export const PAPER_PAINTS: readonly { name: string; css: string }[] = [
   { name: 'Янтарь', css: '#E3AE45' },
@@ -59,14 +62,6 @@ export const PAPER_PAINTS: readonly { name: string; css: string }[] = [
 export type PaperCell = number | null;
 
 const KEY = 'doton.paper.v1';
-
-/**
- * Незакрашенная точка. Лист — то же стекло и та же волосяная сетка, что у
- * поля, только клеток на нём больше: белым здесь бывает не бумага, а сама
- * точка, пока её не покрасили. Иначе рисование выглядело бы приложением
- * поверх прибора, а не режимом прибора.
- */
-const EMPTY_DOT = '#EDEAE3';
 
 /**
  * Радиус точки в долях клетки — та же пропорция, что у поля: точка узнаётся
@@ -253,15 +248,23 @@ export class Paper {
       ctx.stroke();
     }
 
+    // Незакрашенной клетки не видно вовсе: чистый лист — это чёрное стекло
+    // с волосяной сеткой, и всё. Так лист показывает ровно то, чем станет
+    // шильдик: там пустая клетка — тоже просто стекло. Точка на её месте
+    // обещала бы то, чего в шильдике нет, и рисовать пришлось бы, держа
+    // поправку в голове.
     const taken = new Set(this.chain.map((cell) => `${cell.r},${cell.c}`));
     for (let r = 0; r < PAPER_SIZE; r++) {
       for (let c = 0; c < PAPER_SIZE; c++) {
         const center = this.center({ r, c });
         const color = this.cells[r]![c] ?? null;
-        ctx.beginPath();
-        ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
-        ctx.fillStyle = color === null ? EMPTY_DOT : (PAPER_PAINTS[color]?.css ?? EMPTY_DOT);
-        ctx.fill();
+        const paint = color === null ? null : (PAPER_PAINTS[color]?.css ?? null);
+        if (paint !== null) {
+          ctx.beginPath();
+          ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+          ctx.fillStyle = paint;
+          ctx.fill();
+        }
         // Взятая точка обведена — по обводке видно, что покрасится.
         if (taken.has(`${r},${c}`)) {
           ctx.strokeStyle = this.theme.chainOutline;
