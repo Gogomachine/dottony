@@ -411,11 +411,26 @@
       transition: transform 0.09s;
     }
     .palette .hue:active { transform: translateY(1px) scale(0.94); }
+    /*
+     * Краска нарисована мелко — по размеру экранчика, — но палец толще
+     * кружка. Место нажатия шире самого кружка: вверх и вниз с запасом,
+     * вбок — ровно до половины промежутка, чтобы соседние краски не
+     * перехватывали друг у друга касание.
+     */
+    .palette .hue { position: relative; }
+    .palette .hue::before {
+      content: '';
+      position: absolute;
+      /* Отсчёт идёт от края под рамкой, поэтому в сторону нажатие
+         вырастает на пиксель меньше, чем стоит в числе. */
+      inset: -9px -5px;
+    }
     /* На узком телефоне краски ужимаются, но остаются одним рядом: резинка,
        уехавшая на вторую строку в одиночестве, читалась как поломка. */
     @media (max-width: 380px) {
       .palette { gap: 6px; }
       .palette .hue { width: 17px; height: 17px; }
+      .palette .hue::before { inset: -9px -4px; }
     }
     /* Резинка — не цвет, поэтому и выглядит не краской: пустой кружок. */
     .palette .hue.erase {
@@ -939,6 +954,21 @@
     /* ---------- Правила ---------- */
 
     .rules { font-size: 13px; line-height: 1.55; }
+    /*
+     * «Понятно» стоит под правилами, а правила на телефоне длиннее стекла:
+     * чтобы закрыть окно, приходилось пролистать всё до конца. Кнопка
+     * прилипает к нижнему краю и уезжает вместе с текстом только тогда,
+     * когда он и так кончился.
+     */
+    #rules-close {
+      position: sticky;
+      bottom: -14px;
+      margin: 0 -14px -14px;
+      border-radius: 0 0 13px 13px;
+      border-width: 1px 0 0;
+      background: var(--case);
+      flex: 0 0 auto;
+    }
     .rules h3 {
       font-family: var(--mono);
       font-size: 9px;
@@ -1338,6 +1368,32 @@
     }
     .tot-value { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
 
+    /*
+     * Низкий экран. Корпус прибора цел на любом телефоне, поэтому весь
+     * недостаток высоты достаётся окуляру: на iPhone 12 в нём остаётся
+     * 341 точка, и пропуск с меню в них не помещались — было видно две с
+     * половиной строки из шести. Прокрутка у карточки есть, но открывать
+     * окно, где сразу ничего не видно, нельзя. Здесь пропуск ужимается:
+     * планка тоньше, фото меньше, поля теснее. Ничего не прячем — прячется
+     * только воздух.
+     */
+    @media (max-height: 720px) {
+      .overlay { padding: 6px; }
+      .badge-top { padding: 5px 0; }
+      .badge-body { gap: 7px; padding: 11px; }
+      .badge-head { gap: 10px; }
+      .photo { width: 54px; height: 68px; }
+      .badge-name { font-size: 18px; }
+      .badge-foot { padding: 8px 12px 9px; }
+      .tot-value { font-size: 17px; }
+      .menu-title { font-size: 17px; white-space: nowrap; }
+      .menu-list { gap: 5px; }
+      .menu-list li.mode { padding: 8px 11px; }
+      .menu-list li.mode b { font-size: 15px; }
+      .menu-list li.mode .hint { font-size: 11px; line-height: 1.25; }
+      .menu-extra button { padding: 9px 10px; }
+    }
+
     .history {
       list-style: none;
       display: flex;
@@ -1570,23 +1626,23 @@
               <li class="mode" data-go="sprint">
                 <b>Цепочки</b>
                 <span class="when mono">3:00</span>
-                <span class="hint">Три минуты на максимум потенциала. В таблицу идёт лучший заход.</span>
+                <span class="hint">Три минуты на максимум потенциала.</span>
               </li>
               <li class="mode" data-go="order">
                 <b>Тап</b>
                 <span class="when mono">0:18</span>
-                <span class="hint">Снять 25 точек нужного цвета одним касанием. Три пустых окна — заход окончен.</span>
+                <span class="hint">25 точек нужного цвета одним касанием.</span>
               </li>
               <li class="mode" data-go="draw">
                 <b>Рисование</b>
                 <span class="when mono">10 × 10</span>
-                <span class="hint">Чистое стекло прибора. Ведите цепочку от двух точек и красьте её цветом с экранчика.</span>
+                <span class="hint">Чистое стекло: ведите цепочку и красьте.</span>
               </li>
               <li class="mode" data-go="duel">
                 <b>Дуэль</b>
                 <!-- Время зависит от механики: его ставит переключатель на корпусе. -->
                 <span class="when mono" id="duel-when">1:30</span>
-                <span class="hint">Общий образец с живым соперником, на той же механике. У каждой свой рейтинг.</span>
+                <span class="hint">Живой соперник на общем образце.</span>
               </li>
             </ul>
 

@@ -1544,7 +1544,9 @@ function startDrawing(): void {
   timeLabelEl.textContent = 'Лист';
   timeFieldEl.className = 'field right';
   timeEl.textContent = `${PAPER_SIZE} × ${PAPER_SIZE}`;
-  setStat('Ведите цепочку и выберите цвет');
+  // Коротко: в углу окуляра на узком телефоне длинная строка обрезалась
+  // многоточием, и подсказка кончалась на полуслове.
+  setStat('Цепочка, потом цвет');
   updatePaperHud();
   updateKeys();
 }
