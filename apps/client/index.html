@@ -292,18 +292,25 @@
       align-items: center;
       justify-content: center;
       box-shadow: 0 1px 0 rgba(255, 255, 255, 0.55) inset, 0 2px 3px rgba(0, 0, 0, 0.1);
-      font-family: var(--mono);
       /* Знак крупный и в цвет текста: это единственное, что на клавише есть,
          и подписи под ней нет — с приглушённым мелким знаком клавиша
          превращалась в пустой кружок, по которому не угадать, что она
          делает. */
-      font-size: 16px;
       color: var(--silk);
       transition: transform 0.09s;
     }
-    /* Нота оптически легче и мельче соседей — ей добавлено кегля, чтобы в
-       ряду все четыре знака читались одинаково крупными. */
-    #sound-toggle { font-size: 18px; }
+    .mbtn svg {
+      /* Квадрат картинки центрируется флексом точно, в отличие от строки
+         текста: у знака из чужого шрифта своя высота, и он уезжал. */
+      display: block;
+      width: 16px;
+      height: 16px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
     .mbtn:active { transform: translateY(1px); }
     .mbtn.on { color: var(--acc); border-color: var(--acc); }
     /* В матче образец общий с соперником — своего не выдаём. */
@@ -1468,10 +1475,37 @@
           и стоит с краю: сбросить заход и повторить его после конца это
           одно и то же движение, и место ему рядом с прибором, а не в меню.
         -->
-        <button class="mbtn" id="reset-key" title="Новый образец">⟳</button>
-        <button class="mbtn" id="sound-toggle" title="Звук">♪</button>
-        <button class="mbtn" id="mark-toggle" title="Метки цвета">◍</button>
-        <button class="mbtn" id="theme-toggle" title="Свет">◐</button>
+        <!--
+          Знаки на клавишах нарисованы, а не набраны: ⟳ ♪ ◍ ◐ в наших
+          шрифтах отсутствуют, их подставлял системный, и на телефоне ink
+          уезжал из круга — у чужого шрифта своя высота строки. Контур
+          центрируется сам и выглядит одинаково везде.
+        -->
+        <button class="mbtn" id="reset-key" title="Новый образец">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+            <path d="M21 3.5V9h-5.5" />
+          </svg>
+        </button>
+        <button class="mbtn" id="sound-toggle" title="Звук">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M10 17.5V4.5l9-1.6v13" />
+            <circle cx="6.5" cy="17.5" r="3.2" />
+            <circle cx="15.5" cy="15.9" r="3.2" />
+          </svg>
+        </button>
+        <button class="mbtn" id="mark-toggle" title="Метки цвета">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" />
+            <circle cx="12" cy="12" r="3.1" fill="currentColor" stroke="none" />
+          </svg>
+        </button>
+        <button class="mbtn" id="theme-toggle" title="Свет">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 3a9 9 0 0 0 0 18Z" fill="currentColor" stroke="none" />
+          </svg>
+        </button>
       </span>
     </div>
 
@@ -1635,7 +1669,7 @@
               каждой механики своё меню, своя дуэль и свой рейтинг. Щелчок
               открывает панель новой механики, а начатый заход обрывает: две
               механики сразу прибор не держит.</p>
-            <p>Маленькая клавиша <b>⟳</b> наверху даёт новый образец: до хода это
+            <p>Маленькая клавиша с <b>круговой стрелкой</b> наверху даёт новый образец: до хода это
               просто другой расклад, посреди захода — сброс, после конца —
               повтор. В дуэли она заперта: образец там общий с соперником.</p>
 
