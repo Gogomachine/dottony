@@ -3,6 +3,7 @@ import {
   FACES,
   isOwnMark,
   OWN_MARK,
+  PLACEMENT_GAMES,
   OWN_PRICE,
   FRAMES,
   FRAME_PRICE,
@@ -20,6 +21,10 @@ import {
   addFriend,
   ApiError,
   buy,
+  serviceAll,
+  serviceKey,
+  serviceNone,
+  serviceSet,
   setAvatar,
   setFrame,
   setMarks,
@@ -41,6 +46,16 @@ import { markChip } from './plate';
  * ним не трогается. Наружу отдаёт только действия, которые меняют игру:
  * прокрутить матч и открыть таблицу рейтинга.
  */
+
+/** Чем кончилась наладка — коротко, той же строкой, что и звала. */
+const DONE: Record<string, string> = {
+  all: 'весь прилавок и жетоны',
+  none: 'корпус пуст',
+  poor: 'жетонов нет',
+  rich: 'жетонов с запасом',
+  league: 'учёный, калибровка пройдена',
+  raw: 'рейтинг новичка',
+};
 
 /** Что открыто в кабинете под шапкой профиля. */
 type CabTab = 'rating' | 'history' | 'friends' | 'marks';
@@ -129,6 +144,10 @@ export class Cabinet {
   private readonly framesEl = el<HTMLDivElement>('cab-frames');
   private readonly frameHintEl = el<HTMLSpanElement>('cab-frame-hint');
   private readonly facesEl = el<HTMLDivElement>('cab-faces');
+  /** Какой раздел сейчас открыт; null — виден сам столбик разделов. */
+  private tab: CabTab | null = null;
+  private readonly serviceEl = el<HTMLDivElement>('cab-service');
+  private readonly serviceNoteEl = el<HTMLSpanElement>('cab-service-note');
   /** Выбранные шильдики, выданные отметки и ячейка, которую заполняют. */
   private marks: (string | null)[] = cleanMarks([]);
   private earned: string[] = [];
@@ -155,6 +174,7 @@ export class Cabinet {
 
   constructor(private readonly handlers: CabinetHandlers) {
     el<HTMLSpanElement>('cab-brand').innerHTML = brandLockup(116);
+    this.buildService();
     for (const button of this.navEl.querySelectorAll<HTMLButtonElement>('.nav')) {
       button.addEventListener('click', () => this.openTab(button.dataset.tab as CabTab));
     }
@@ -217,6 +237,7 @@ export class Cabinet {
    * не помещается ни один.
    */
   private openTab(tab: CabTab | null): void {
+    this.tab = tab;
     // Сетка смайликов и ввод имени закрываются вместе со сменой раздела:
     // оба открыты в шапке и в разделе только мешались бы, отодвигая его вниз.
     this.facesEl.hidden = true;
@@ -232,6 +253,50 @@ export class Cabinet {
     if (tab !== null) {
       const opened = this.navEl.querySelector<HTMLButtonElement>(`.nav[data-tab="${tab}"] b`);
       el<HTMLElement>('cab-back-name').textContent = opened?.textContent ?? '';
+    }
+  }
+
+  /**
+   * Наладка: прибор со снятой задней крышкой.
+   *
+   * Нужна ровно затем, чтобы посмотреть состояния, до которых игрой идти
+   * часами: полный корпус, все оправы, свой шильдик, лига, пустой аккаунт
+   * новичка. Полоса появляется, только если игру открыли со служебным
+   * ключом (`?service=…`), и трогает она один-единственный аккаунт — тот,
+   * которым в неё зашли: кого налаживать, говорит токен, а не кнопка.
+   */
+  private buildService(): void {
+    if (serviceKey() === null) return;
+    this.serviceEl.hidden = false;
+    for (const button of this.serviceEl.querySelectorAll<HTMLButtonElement>('[data-service]')) {
+      button.addEventListener('click', () => void this.service(button.dataset.service ?? ''));
+    }
+  }
+
+  private async service(what: string): Promise<void> {
+    const say = (text: string): void => {
+      this.serviceNoteEl.textContent = text;
+    };
+    say('Налаживаю…');
+    try {
+      // Рейтинг «учёного» ставим вместе с пройденной калибровкой: без неё
+      // лига на пропуске не показывается вовсе, и проверять было бы нечего.
+      if (what === 'all') await serviceAll();
+      else if (what === 'none') await serviceNone();
+      else if (what === 'poor') await serviceSet({ tokens: 0 });
+      else if (what === 'rich') await serviceSet({ tokens: 9999 });
+      else if (what === 'league') await serviceSet({ rating: 1950, games: PLACEMENT_GAMES });
+      else if (what === 'raw') await serviceSet({ rating: 1500, games: 0 });
+      else return;
+      // Перечитываем пропуск целиком: наладка меняет и жетоны, и корпус, и
+      // лигу разом, а собирать это по кусочкам — плодить рассинхроны.
+      // Открытый раздел оставляем тот же: наладчик смотрит именно в него.
+      await this.show(this.tab);
+      say(`Готово · ${DONE[what] ?? ''}`);
+    } catch (error) {
+      // Дверей наладки без ключа на сервере нет вовсе — оттуда приходит
+      // «нет такой страницы», и это самый частый ответ при опечатке в ключе.
+      say(error instanceof ApiError && error.status === 404 ? 'Ключ не подошёл.' : 'Не вышло.');
     }
   }
 

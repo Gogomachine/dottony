@@ -18,6 +18,9 @@ import {
   ART_LEN,
   OWN_MARK,
   OWN_PRICE,
+  MARKS,
+  MARK_SLOTS,
+  FRAMES,
   slotItem,
   FRAME_PRICE,
   FACES,
@@ -1648,6 +1651,106 @@ describe('API', () => {
       db.close();
       await shop.close();
       await rm(file, { force: true });
+    }
+  });
+
+  it('наладка: без ключа дверей нет вовсе', async () => {
+    // Сервер без SERVICE_KEY отвечает так же, как на выдуманный адрес: по
+    // ответу не видно, что служебный режим вообще бывает.
+    const token = await guestToken('Гость');
+    for (const url of ['/api/service/all', '/api/service/none', '/api/service/set']) {
+      const closed = await app.inject({
+        method: 'POST',
+        url,
+        headers: { authorization: `Bearer ${token}`, 'x-service-key': 'какой-нибудь' },
+        payload: {},
+      });
+      expect(closed.statusCode).toBe(404);
+    }
+  });
+
+  it('наладка: с ключом выдаёт всё, снимает всё и ставит числа — только себе', async () => {
+    const shop = await buildApp({
+      databaseUrl: ':memory:',
+      jwtSecret: 'test-jwt',
+      serviceKey: 'ключ-наладчика',
+    });
+    try {
+      const guest = async (name: string): Promise<string> => {
+        const auth = await shop.inject({
+          method: 'POST',
+          url: '/api/auth/guest',
+          payload: { name },
+        });
+        return (auth.json() as { token: string }).token;
+      };
+      const mine = await guest('Наладчик');
+      const other = await guest('Посторонний');
+      const headers = { authorization: `Bearer ${mine}`, 'x-service-key': 'ключ-наладчика' };
+      const call = async (
+        what: string,
+        payload: Record<string, number> = {},
+        who: Record<string, string> = headers,
+      ): Promise<{ statusCode: number }> =>
+        shop.inject({ method: 'POST', url: `/api/service/${what}`, headers: who, payload });
+      const card = async (token: string): Promise<MeResponse> => {
+        const me = await shop.inject({
+          method: 'GET',
+          url: '/api/me',
+          headers: { authorization: `Bearer ${token}` },
+        });
+        return me.json() as MeResponse;
+      };
+
+      // Чужой ключ — тот же ответ, что и без ключа: дверь не отвечает.
+      expect(
+        (await call('all', {}, { authorization: `Bearer ${mine}`, 'x-service-key': 'не тот' }))
+          .statusCode,
+      ).toBe(404);
+
+      const all = await call('all');
+      expect(all.statusCode).toBe(200);
+      const opened = await card(mine);
+      // На прилавке не остаётся ничего некупленного: наклейки, оправы,
+      // ячейки и место под свой рисунок.
+      for (const mark of MARKS) {
+        if (mark.price !== undefined) expect(opened.earned).toContain(mark.id);
+      }
+      for (const frame of FRAMES) expect(opened.earned).toContain(frame.id);
+      expect(opened.slots).toBe(MARK_SLOTS);
+      expect(opened.tokens).toBeGreaterThan(1000);
+      // Отметки за игру наладка не выдаёт: их не присваивают даже себе.
+      expect(opened.earned).not.toContain('e-order');
+
+      // Числа ставятся точно — по ним проверяют «не хватает» и лиги.
+      expect((await call('set', { tokens: 7 })).statusCode).toBe(200);
+      expect((await card(mine)).tokens).toBe(7);
+      expect((await call('set', { rating: 1950, games: 5 })).statusCode).toBe(200);
+      const rated = await card(mine);
+      expect(rated.rating).toBe(1950);
+      expect(rated.placement).toBeNull();
+      expect(rated.league).toBe('Учёный');
+      // Вне шкалы рейтинг не ставится: лиги для него нет.
+      expect((await call('set', { rating: 99999 })).statusCode).toBe(400);
+
+      // Снять всё — прибор глазами новичка.
+      expect((await call('none')).statusCode).toBe(200);
+      const bare = await card(mine);
+      expect(bare.earned).toEqual([]);
+      expect(bare.tokens).toBe(0);
+      expect(bare.slots).toBe(1);
+      expect(bare.marks).toEqual([null, null, null]);
+      expect(bare.frame).toBeNull();
+      expect(bare.art).toBeNull();
+
+      // И всё это время сосед по базе не тронут: кого налаживать, говорит
+      // токен, а не тело запроса, — чужой аккаунт этой дверью не достать.
+      const stranger = await card(other);
+      expect(stranger.earned).toEqual([]);
+      expect(stranger.tokens).toBe(0);
+      expect(stranger.rating).not.toBe(1950);
+    } finally {
+      await shop.close();
     }
   });
 

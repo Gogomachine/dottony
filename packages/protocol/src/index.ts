@@ -109,6 +109,18 @@ export const ArtRequestSchema = z.object({
   art: z.string().length(100),
 });
 
+/**
+ * Служебная наладка: точные числа вместо игрового пути. Границы здесь не
+ * про честность (за этой дверью честности нет и не должно быть), а про то,
+ * чтобы прибор не показывал ерунду: рейтинг вне шкалы нарисовал бы лигу,
+ * которой не бывает.
+ */
+export const ServiceRequestSchema = z.object({
+  tokens: z.number().int().min(0).max(1_000_000).optional(),
+  rating: z.number().int().min(0).max(4000).optional(),
+  games: z.number().int().min(0).max(1000).optional(),
+});
+
 export const InviteRequestSchema = z.object({
   room: z.string().trim().min(4).max(16),
 });

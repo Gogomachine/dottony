@@ -30,6 +30,16 @@ const publicUrl = process.env.PUBLIC_URL ?? process.env.RENDER_EXTERNAL_URL;
  */
 const trustProxy = Number(process.env.TRUST_PROXY ?? 0);
 
+/**
+ * Служебный ключ наладки. Не задан — дверей `/api/service/*` не существует
+ * вовсе. Задавать его стоит только на приборе для проверки: за этой дверью
+ * жетоны и шильдики выдаются числом, а не игрой.
+ */
+const serviceKey = process.env.SERVICE_KEY;
+if (serviceKey) {
+  console.warn('SERVICE_KEY задан — включена наладка. На боевом сервере её быть не должно.');
+}
+
 /** Кому из браузеров разрешено ходить в API. Пусто — любому. */
 const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? '')
   .split(',')
@@ -53,6 +63,7 @@ const app = await buildApp({
   ...(publicUrl ? { publicUrl } : {}),
   ...(trustProxy > 0 ? { trustProxy } : {}),
   ...(allowedOrigins.length > 0 ? { allowedOrigins } : {}),
+  ...(serviceKey ? { serviceKey } : {}),
 });
 
 try {

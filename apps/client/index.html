@@ -1125,6 +1125,51 @@
     .name-edit .note.warn { color: var(--acc); }
     .name-edit .row { display: flex; gap: 8px; }
     .name-edit .row button { flex: 1; }
+    /*
+     * Полоса наладки. Нарочно не похожа на прибор: жёлтая рамка и
+     * машинописные клавиши — это заводская наклейка на корпусе, а не часть
+     * его лицевой стороны. Увидев её у себя, сразу понимаешь, что прибор
+     * открыт.
+     */
+    .service {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 8px 9px 9px;
+      border: 1px dashed var(--gold);
+      border-radius: 8px;
+      background: var(--gold-bg);
+    }
+    .service[hidden] { display: none; }
+    .service-head {
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--gold);
+    }
+    .service .note {
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--silk-2);
+    }
+    .service-keys { display: flex; flex-wrap: wrap; gap: 5px; }
+    .service-keys button {
+      font-family: var(--mono);
+      font-size: 9.5px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--silk);
+      background: var(--case-2);
+      border: 1px solid var(--edge);
+      border-radius: 6px;
+      padding: 6px 8px;
+      cursor: pointer;
+    }
+    .service-keys button:active { transform: translateY(1px); }
+
     .cab-login {
       font-family: var(--mono);
       font-size: 9px;
@@ -1849,6 +1894,24 @@
             <div id="cab-league" class="cab-league"></div>
             <span id="cab-login" class="cab-login"></span>
             <button id="cab-link-tg" hidden>Привязать Telegram</button>
+
+            <!--
+              Наладка: прибор со снятой задней крышкой. Полосы этой нет ни у
+              кого, кроме того, кто открыл игру со служебным ключом, — и
+              трогает она только его собственный аккаунт.
+            -->
+            <div id="cab-service" class="service" hidden>
+              <span class="service-head">Наладка · служебный режим</span>
+              <div class="service-keys">
+                <button data-service="all">Выдать всё</button>
+                <button data-service="none">Снять всё</button>
+                <button data-service="poor">0 жетонов</button>
+                <button data-service="rich">9999 жетонов</button>
+                <button data-service="league">Лига</button>
+                <button data-service="raw">Калибровка</button>
+              </div>
+              <span class="note" id="cab-service-note">Меняет только этот аккаунт.</span>
+            </div>
 
             <!--
               Смайлик на пропуск. Раньше его спрашивало системное окно: на

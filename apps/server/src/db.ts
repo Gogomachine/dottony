@@ -1364,6 +1364,42 @@ export class Store {
   }
 
   /**
+   * Служебная наладка: ставит жетоны числом, а не начислением.
+   *
+   * Здесь нет ни окна между начислениями, ни проверки, за что платят: это
+   * не игровой путь, и попасть сюда можно только со служебным ключом (см.
+   * `/api/service/*` в `app.ts`). Игровой путь — `grantToken`.
+   */
+  async setTokens(id: string, tokens: number): Promise<void> {
+    await this.client.execute({
+      sql: 'UPDATE users SET tokens = ? WHERE id = ?',
+      args: [Math.max(0, Math.round(tokens)), id],
+    });
+  }
+
+  /** Служебная наладка: ставит рейтинг и число сыгранных рейтинговых матчей. */
+  async setRating(id: string, rating: number, games: number, kind: DuelKind): Promise<void> {
+    const col = this.ratingColumns(kind);
+    await this.client.execute({
+      sql: `UPDATE users SET ${col.rating} = ?, ${col.games} = ? WHERE id = ?`,
+      args: [Math.round(rating), Math.max(0, Math.round(games)), id],
+    });
+  }
+
+  /**
+   * Служебная наладка: снимает с игрока всё нажитое — выданное, купленное,
+   * надетое и нарисованное. Нужна ровно затем, чтобы посмотреть прибор
+   * глазами новичка, не заводя новый аккаунт.
+   */
+  async clearBelongings(id: string): Promise<void> {
+    await this.client.execute({ sql: 'DELETE FROM user_marks WHERE user_id = ?', args: [id] });
+    await this.client.execute({
+      sql: 'UPDATE users SET marks = NULL, frame = NULL, art = NULL, tokens = 0 WHERE id = ?',
+      args: [id],
+    });
+  }
+
+  /**
    * Покупка за жетоны — наклейки или оправы: выдаёт её и списывает цену,
    * или не делает ничего. Купленное лежит там же, где выданное за игру:
    * прибор помнит одним списком всё, что игроку положено носить.

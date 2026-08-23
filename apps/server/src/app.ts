@@ -9,6 +9,7 @@ import {
   AvatarRequestSchema,
   BuyRequestSchema,
   FrameRequestSchema,
+  ServiceRequestSchema,
   MarksRequestSchema,
   DuelClientMessageSchema,
   FriendCodeSchema,
@@ -42,6 +43,10 @@ import {
   isArt,
   isFace,
   isOwnMark,
+  slotItem,
+  MARKS,
+  MARK_SLOTS,
+  FRAMES,
   OWN_MARK,
   leagueMark,
   markAllowed,
@@ -116,12 +121,34 @@ export interface AppOptions {
   allowedOrigins?: string[];
   /** Потолок запросов с одного адреса в минуту. Подменяется в тестах. */
   requestLimit?: number;
+  /**
+   * Служебный ключ наладки. Пока он не задан, дверей `/api/service/*` не
+   * существует вовсе — они отвечают тем же «нет такой страницы», что и любой
+   * выдуманный адрес, и по ответу сервера не видно, что режим вообще бывает.
+   *
+   * На боевом сервере его быть не должно: за этой дверью выдают жетоны и
+   * шильдики числом, а не игрой, — то есть ровно то, чего не должно быть
+   * ни у кого, кроме прибора на столе у наладчика.
+   */
+  serviceKey?: string;
 }
 
 interface TokenPayload {
   sub: string;
   name: string;
 }
+
+/**
+ * Сколько жетонов кладёт наладка. Не «бесконечно»: цену видно только на
+ * конечном счёте, а с бесконечным не проверишь ни «не хватает», ни остаток
+ * после покупки. Хватает на весь прилавок с запасом.
+ */
+const SERVICE_TOKENS = 9999;
+
+/** Все ячейки корпуса, кроме первой: она и так открыта у всех. */
+const SERVICE_SLOTS: string[] = Array.from({ length: MARK_SLOTS - 1 }, (_, index) =>
+  slotItem(index + 1),
+).filter((id): id is string => id !== null);
 
 const LEADERBOARD_SIZE = 50;
 const RATING_BOARD_SIZE = 50;
@@ -622,6 +649,99 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     }
     await store.setAvatar(user.sub, parsed.data.avatar);
     return { avatar: parsed.data.avatar };
+  });
+
+  // ---------- Наладка ----------
+
+  /**
+   * Служебный режим: прибор со снятой задней крышкой.
+   *
+   * Он нужен ровно затем, чтобы посмотреть все состояния, до которых игрой
+   * идти часами: полный корпус, все оправы, свой шильдик, лига, пустой
+   * аккаунт новичка. Играть это не помогает никак — ни поле, ни правила, ни
+   * счёт отсюда не трогаются: наладка выдаёт только украшения и жетоны.
+   *
+   * Две вещи держат её безопасной:
+   *
+   * 1. **Без ключа дверей нет.** Не «403», а `404`: сервер без `SERVICE_KEY`
+   *    отвечает так же, как на любой выдуманный адрес.
+   * 2. **Только над собой.** Кого налаживать, говорит не тело запроса, а
+   *    токен игрока: чужой аккаунт этой дверью не достать вовсе, и
+   *    воровать чей-то ключ ради чужого корпуса бессмысленно.
+   */
+  const service = async (
+    request: FastifyRequest,
+    reply: { code(status: number): { send(body: unknown): unknown } },
+  ): Promise<TokenPayload | null> => {
+    if (!options.serviceKey) {
+      reply.code(404).send({ error: 'not-found' });
+      return null;
+    }
+    const given = request.headers['x-service-key'];
+    if (typeof given !== 'string' || given !== options.serviceKey) {
+      reply.code(404).send({ error: 'not-found' });
+      return null;
+    }
+    return requireUser(request);
+  };
+
+  /** Что у игрока стало после наладки — тем же составом, что и покупка. */
+  const belongings = async (userId: string): Promise<BuyResponse> => {
+    const [tokens, earned] = await Promise.all([store.tokensOf(userId), ownedMarks(userId)]);
+    return { tokens, earned, slots: openSlots(earned) };
+  };
+
+  /**
+   * Выдать всё: каждую наклейку, каждую оправу, все ячейки корпуса, место
+   * под свой рисунок и жетонов с запасом. Отметки за игру и золото сюда не
+   * входят намеренно — их и в наладке не выдают: посмотреть, как отметка
+   * выглядит на корпусе, можно и не присваивая её себе.
+   */
+  app.post('/api/service/all', async (request, reply) => {
+    const user = await service(request, reply);
+    if (!user) return reply;
+    const sale = [
+      ...MARKS.filter((mark) => mark.price !== undefined).map((mark) => mark.id),
+      ...FRAMES.map((frame) => frame.id),
+      ...SERVICE_SLOTS,
+    ];
+    for (const id of sale) await store.grantMark(user.sub, id);
+    await store.setTokens(user.sub, SERVICE_TOKENS);
+    return belongings(user.sub);
+  });
+
+  /**
+   * Снять всё: ни жетонов, ни купленного, ни выданного, ни надетого, ни
+   * нарисованного. Так прибор выглядит у того, кто открыл его впервые, —
+   * а посмотреть на это иначе можно только заводя новый аккаунт.
+   */
+  app.post('/api/service/none', async (request, reply) => {
+    const user = await service(request, reply);
+    if (!user) return reply;
+    await store.clearBelongings(user.sub);
+    return belongings(user.sub);
+  });
+
+  /**
+   * Точные числа: жетоны и рейтинг. Жетонами проверяют цену («не хватает»
+   * — тоже состояние), рейтингом — лиги и калибровку, до которых игрой идти
+   * пять матчей.
+   */
+  app.post('/api/service/set', async (request, reply) => {
+    const user = await service(request, reply);
+    if (!user) return reply;
+    const parsed = ServiceRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
+    const { tokens, rating, games } = parsed.data;
+    if (tokens !== undefined) await store.setTokens(user.sub, tokens);
+    if (rating !== undefined) {
+      // Рейтинг ставим обеим механикам разом: лига на пропуске одна, и
+      // расхождение между цепочками и тапом здесь только мешало бы.
+      const played = games ?? PLACEMENT_GAMES;
+      await store.setRating(user.sub, rating, played, 'chain');
+      await store.setRating(user.sub, rating, played, 'order');
+    }
+    return belongings(user.sub);
   });
 
   // ---------- Спринт ----------

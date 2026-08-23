@@ -27,6 +27,11 @@ export const apiAvailable = BASE.length > 0;
 
 const TOKEN_KEY = 'doton-token';
 const NAME_KEY = 'doton-name';
+/**
+ * Ключ наладки живёт в памяти вкладки, а не в localStorage: служебный режим
+ * должен кончаться вместе с сеансом, а не оставаться на приборе навсегда.
+ */
+const SERVICE_KEY = 'doton-service';
 
 export class ApiError extends Error {
   constructor(readonly code: string, readonly status: number) {
@@ -36,6 +41,29 @@ export class ApiError extends Error {
 
 function token(): string | null {
   return localStorage.getItem(TOKEN_KEY);
+}
+
+/**
+ * Служебный ключ наладки. Приходит один раз — адресом `?service=КЛЮЧ` или
+ * ссылкой в бота `service_КЛЮЧ`, — и дальше живёт до закрытия вкладки.
+ *
+ * Проверять его здесь нечем и не нужно: правильный он или выдуманный,
+ * решает сервер, а без ключа на сервере он не открывает ничего вовсе.
+ */
+export function serviceKey(): string | null {
+  try {
+    const fromUrl = new URLSearchParams(location.search).get('service');
+    const fromBot = startParam()?.startsWith('service_') === true ? startParam()!.slice(8) : null;
+    // Ключ едет заголовком, а туда пускают только видимые знаки латиницы:
+    // с буквой из кириллицы браузер не отправит запрос вовсе, и наладка
+    // молчала бы непонятно почему. Такой ключ считаем не ключом.
+    const given = fromUrl ?? fromBot;
+    if (given !== null && /^[\x21-\x7e]+$/.test(given)) sessionStorage.setItem(SERVICE_KEY, given);
+    return sessionStorage.getItem(SERVICE_KEY);
+  } catch {
+    // Приватный режим — наладка просто не включится.
+    return null;
+  }
 }
 
 /** Токен для WebSocket: браузерный WebSocket не умеет слать заголовки. */
@@ -63,9 +91,18 @@ const REQUEST_TIMEOUT_MS = 12_000;
 let awake = false;
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  // Заголовок про тело ставим, только когда тело есть: Fastify отвечает на
+  // «json» без содержимого отказом, а запросы без тела у нас бывают.
+  const headers: Record<string, string> =
+    init.body === undefined ? {} : { 'Content-Type': 'application/json' };
   const auth = token();
   if (auth) headers.Authorization = `Bearer ${auth}`;
+  // Ключ наладки шлём только в служебные двери: в остальных он лишний, а
+  // лишний секрет в заголовке — это лишний след в чужих логах.
+  if (path.startsWith('/api/service/')) {
+    const key = serviceKey();
+    if (key) headers['x-service-key'] = key;
+  }
 
   let response: Response;
   try {
@@ -211,6 +248,30 @@ export function setArt(art: string): Promise<{ art: string }> {
   return request<{ art: string }>('/api/me/art', {
     method: 'PUT',
     body: JSON.stringify({ art }),
+  });
+}
+
+/**
+ * Наладка: выдать всё, снять всё, поставить числа. Дверей этих на сервере
+ * без ключа не существует, поэтому промах отвечает «нет такой страницы» —
+ * и служебный режим со стороны неотличим от опечатки в адресе.
+ */
+export function serviceAll(): Promise<BuyResponse> {
+  return request<BuyResponse>('/api/service/all', { method: 'POST' });
+}
+
+export function serviceNone(): Promise<BuyResponse> {
+  return request<BuyResponse>('/api/service/none', { method: 'POST' });
+}
+
+export function serviceSet(values: {
+  tokens?: number;
+  rating?: number;
+  games?: number;
+}): Promise<BuyResponse> {
+  return request<BuyResponse>('/api/service/set', {
+    method: 'POST',
+    body: JSON.stringify(values),
   });
 }
 
