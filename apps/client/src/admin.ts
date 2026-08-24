@@ -1,12 +1,14 @@
 import { isOwnMark, markById, type Mark } from '@doton/core';
 import type { AdminCard, AdminFound, MeResponse } from '@doton/protocol';
 import {
+  adminBan,
   adminCard,
   adminClearArt,
   adminFind,
   adminLog,
   adminName,
   adminTokens,
+  adminUnban,
   ApiError,
   getMe,
 } from './api';
@@ -135,7 +137,9 @@ function showFound(found: AdminFound[]): void {
   for (const player of found) {
     const row = body.insertRow();
     row.className = 'pick';
-    cell(row, player.name);
+    // Изъятый прибор виден прямо в списке: иначе служба ищет одного и того
+    // же дважды, не помня, наказан он уже или нет.
+    cell(row, player.ban ? `${player.name} · изъят` : player.name, player.ban ? 'warn' : '');
     cell(row, player.code ?? '—', 'mono');
     cell(row, String(player.rating), 'mono');
     cell(row, String(player.tokens), 'mono');
@@ -220,6 +224,15 @@ async function showPlayer(id: string): Promise<void> {
     playerEl.appendChild(big);
   }
 
+  if (card.ban) {
+    const ban = document.createElement('span');
+    ban.className = 'note warn';
+    ban.textContent =
+      `Прибор изъят ${card.ban.until === null ? 'навсегда' : `до ${moment(card.ban.until)}`}` +
+      ` · ${card.ban.reason}`;
+    playerEl.appendChild(ban);
+  }
+
   playerEl.appendChild(
     deed('Жетоны', 'Поставить', card.id, [{ name: 'tokens', value: String(card.tokens), type: 'number' }], async (values, reason) =>
       adminTokens(card.id, Number(values.tokens), reason),
@@ -239,6 +252,22 @@ async function showPlayer(id: string): Promise<void> {
       async (_values, reason) => adminClearArt(card.id, reason),
     ),
   );
+  // Изъять или вернуть — одно место: наказание и прощение это одно решение,
+  // принятое в разные стороны.
+  playerEl.appendChild(
+    card.ban
+      ? deed('Прибор изъят', 'Вернуть', card.id, [], async (_values, reason) =>
+          adminUnban(card.id, reason),
+        )
+      : deed(
+          'Изъять прибор',
+          'Изъять',
+          card.id,
+          [{ name: 'days', value: '', type: 'number', hint: 'дней · пусто — навсегда' }],
+          async (values, reason) =>
+            adminBan(card.id, values.days ? Number(values.days) : null, reason),
+        ),
+  );
 }
 
 /**
@@ -249,7 +278,7 @@ function deed(
   what: string,
   verb: string,
   id: string,
-  fields: { name: string; value: string; type: string }[],
+  fields: { name: string; value: string; type: string; hint?: string }[],
   run: (values: Record<string, string>, reason: string) => Promise<unknown>,
 ): HTMLElement {
   const box = document.createElement('div');
@@ -266,7 +295,8 @@ function deed(
     const input = document.createElement('input');
     input.type = field.type;
     input.value = field.value;
-    input.style.width = '140px';
+    if (field.hint !== undefined) input.placeholder = field.hint;
+    input.style.width = field.hint === undefined ? '140px' : '190px';
     inputs[field.name] = input;
     row.appendChild(input);
   }

@@ -43,6 +43,7 @@ import {
   startParam,
   submitOrder,
   submitSprint,
+  whenBanned,
   ApiError,
 } from './api';
 import { Cabinet } from './cabinet';
@@ -132,6 +133,7 @@ const kindKey = el<HTMLDivElement>('key-kind');
 const resetKey = el<HTMLButtonElement>('reset-key');
 const duelSheet = el<HTMLDivElement>('duel-sheet');
 const rulesSheet = el<HTMLDivElement>('rules-sheet');
+const banSheet = el<HTMLDivElement>('ban-sheet');
 const addOpponentBtn = el<HTMLButtonElement>('add-opponent');
 const inviteBarEl = el<HTMLDivElement>('invite-bar');
 const inviteTextEl = el<HTMLSpanElement>('invite-text');
@@ -1617,6 +1619,35 @@ function stopDrawing(): void {
  * видно, куплено ли место, хватает ли жетонов и есть ли свободная ячейка.
  */
 let pass: MeResponse | null = null;
+/**
+ * Прибор изъят. Окно занимает окуляр целиком и не закрывается: это не
+ * сообщение, а состояние прибора. Показать его может любая дверь сервера —
+ * бан закрывает их все, — поэтому ставим один раз и на всю игру.
+ */
+function showBan(ban: { until: string | null; reason: string }): void {
+  if (inDuel) endDuel();
+  stopDrawing();
+  cabinet.hide();
+  menuEl.hidden = true;
+  overlay.hidden = true;
+  el<HTMLElement>('ban-reason').textContent = ban.reason || 'Причина не указана.';
+  el<HTMLElement>('ban-until').textContent =
+    ban.until === null ? 'Навсегда' : `До ${banDate(ban.until)}`;
+  banSheet.hidden = false;
+}
+
+/** «3 марта, 19:04» — сроку нужны и день, и час: он кончается по часам. */
+function banDate(iso: string): string {
+  const parsed = new Date(`${iso.replace(' ', 'T')}Z`);
+  if (Number.isNaN(parsed.getTime())) return iso;
+  return parsed.toLocaleString('ru-RU', {
+    day: 'numeric',
+    month: 'long',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 /** Занесённая над покупкой рука: второе нажатие платит. Как в кабинете. */
 let stampArmed = false;
 
@@ -2277,6 +2308,9 @@ if (isTelegram()) {
 
 // Звук просыпается с первого касания: до него система держит его спящим.
 addEventListener('pointerdown', () => sound.wake(), { once: true });
+
+// Прибор могли изъять — узнаём об этом из любой двери сервера.
+whenBanned(showBan);
 
 // Пока игра открыта, она слушает приглашения друзей — и этим же говорит
 // серверу, что игрок здесь.

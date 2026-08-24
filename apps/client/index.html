@@ -994,6 +994,24 @@
 
     /* ---------- Правила ---------- */
 
+    /* Изъятый прибор. Говорит ровно две вещи: за что и до какого числа. */
+    .modal.ban { border-color: var(--acc); }
+    .ban-reason { font-size: 15px; line-height: 1.4; }
+    .ban-until {
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--acc);
+    }
+    .modal.ban .note {
+      font-family: var(--mono);
+      font-size: 9.5px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--silk-2);
+    }
+
     .rules { font-size: 13px; line-height: 1.55; }
     /*
      * «Понятно» стоит под правилами, а правила на телефоне длиннее стекла:
@@ -1779,6 +1797,20 @@
           -->
           <button id="invite">Позвать друга</button>
           <button id="duel-cancel">Назад</button>
+        </div>
+      </div>
+
+      <!--
+        Прибор изъят. Окно без клавиши закрытия: это не сообщение, которое
+        отпускают, а состояние прибора. Под ним ничего не идёт — окуляр
+        занят целиком, и играть в матч наказанному нечем.
+      -->
+      <div id="ban-sheet" class="overlay" hidden>
+        <div class="modal ban">
+          <h2>Прибор изъят</h2>
+          <span class="ban-reason" id="ban-reason"></span>
+          <span class="ban-until" id="ban-until"></span>
+          <span class="note">Заходы и матчи не идут в таблицы, пока прибор изъят.</span>
         </div>
       </div>
 

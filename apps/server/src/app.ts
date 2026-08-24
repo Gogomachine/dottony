@@ -7,6 +7,7 @@ import {
   AddFriendRequestSchema,
   ArtRequestSchema,
   AvatarRequestSchema,
+  AdminBanRequestSchema,
   AdminFindQuerySchema,
   AdminNameRequestSchema,
   AdminTokensRequestSchema,
@@ -25,6 +26,7 @@ import {
   TelegramAuthRequestSchema,
   type AdminCard,
   type AdminFindResponse,
+  type BanInfo,
   type AdminLogResponse,
   type AuthResponse,
   type BuyResponse,
@@ -445,10 +447,69 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     store.close();
   });
 
+  /**
+   * Кто сейчас наказан.
+   *
+   * Держим в памяти, а не спрашиваем базу на каждый запрос: банов единицы, а
+   * запросов у играющего десятки в минуту. Список читается при старте и
+   * правится тут же, как только служба кого-то наказала или простила, —
+   * поэтому бан действует сразу, а не «когда-нибудь».
+   *
+   * Это работает, пока сервер один (у нас так). Если инстансов станет
+   * несколько, соседние узнают о бане только при перезапуске — тогда это
+   * место придётся переделать на общий кеш.
+   */
+  const banned = await store.bans();
+
+  /** Бан игрока, если он есть и ещё не кончился. Просроченный снимаем сами. */
+  const banOf = (userId: string): BanInfo | null => {
+    const ban = banned.get(userId);
+    if (!ban) return null;
+    if (ban.until !== null && new Date(`${ban.until.replace(' ', 'T')}Z`).getTime() <= Date.now()) {
+      // Срок вышел — прибор возвращается хозяину сам, без службы. Запись в
+      // базе приберётся при следующем старте: см. `Store.bans`.
+      banned.delete(userId);
+      return null;
+    }
+    return ban;
+  };
+
+  /**
+   * Отказ наказанному. Дверей у прибора много, а место, где его встречают,
+   * должно быть одно: любая дверь за входом отвечает одинаково — чем и до
+   * какого числа, чтобы игрок узнал причину, а не упёрся в молчание.
+   */
+  class Banned extends Error {
+    constructor(readonly ban: BanInfo) {
+      super('banned');
+    }
+  }
+
   const requireUser = async (request: FastifyRequest): Promise<TokenPayload> => {
+    await request.jwtVerify();
+    const user = request.user as TokenPayload;
+    const ban = banOf(user.sub);
+    if (ban) throw new Banned(ban);
+    return user;
+  };
+
+  /**
+   * Кто пришёл, даже если он наказан. Нужен ровно одной двери — своей же
+   * карточке: не показать наказанному, за что и до какого числа, значило бы
+   * сломать прибор молча.
+   */
+  const requireAnyUser = async (request: FastifyRequest): Promise<TokenPayload> => {
     await request.jwtVerify();
     return request.user as TokenPayload;
   };
+
+  app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof Banned) {
+      return reply.code(403).send({ error: 'banned', ...error.ban });
+    }
+    // Всё остальное — как раньше: Fastify сам разберётся с кодом и телом.
+    return reply.send(error);
+  });
 
   /** Токен, если он есть и валиден. Для мест, где вход не обязателен. */
   const currentUser = async (request: FastifyRequest): Promise<TokenPayload | null> => {
@@ -808,6 +869,50 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return { name };
   });
 
+  /**
+   * Наказать. Срок в днях или навсегда; причина обязательна и уезжает
+   * игроку — наказание, о котором не сказано за что, это просто поломка
+   * прибора.
+   *
+   * Бан закрывает всё, что за входом: заходы, дуэли, таблицы, покупки,
+   * корпус. Открытой остаётся одна дверь — своя карточка, чтобы наказанный
+   * увидел срок и причину.
+   *
+   * Против гостя это лежачий полицейский: новый гостевой аккаунт заводится
+   * в одно касание. По-настоящему бан держит того, кто вошёл через Telegram:
+   * тот же номер приведёт в тот же — наказанный — аккаунт.
+   */
+  app.post('/api/admin/ban', async (request, reply) => {
+    const user = await servant(request, reply);
+    if (!user) return reply;
+    const parsed = AdminBanRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
+    const { userId, days, reason } = parsed.data;
+    if (userId === user.sub) return reply.code(400).send({ error: 'self' });
+    if (await isAdmin(userId)) return reply.code(400).send({ error: 'servant' });
+    const name = await store.nameOf(userId);
+    if (name === null) return reply.code(404).send({ error: 'no-player' });
+    const until = await store.ban(userId, days, reason);
+    banned.set(userId, { until, reason });
+    await note(user, userId, 'бан', days === null ? 'навсегда' : `${days} дн.`, reason, name);
+    const ban: BanInfo = { until, reason };
+    return ban;
+  });
+
+  /** Простить. Причина остаётся в журнале — снятие такое же решение, как бан. */
+  app.post('/api/admin/unban', async (request, reply) => {
+    const user = await servant(request, reply);
+    if (!user) return reply;
+    const parsed = AdminUserRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
+    const { userId, reason } = parsed.data;
+    const was = banned.get(userId);
+    await store.unban(userId);
+    banned.delete(userId);
+    await note(user, userId, 'бан снят', was === undefined ? 'бана не было' : was.reason, reason);
+    return { ban: null };
+  });
+
   /** Журнал: кто, кого, когда и почему. Новые записи сверху. */
   app.get('/api/admin/log', async (request, reply) => {
     const user = await servant(request, reply);
@@ -1074,7 +1179,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
 
   /** Карточка игрока: рейтинг, лига, место и сводка по дуэлям. */
   app.get('/api/me', async (request): Promise<MeResponse> => {
-    const user = await requireUser(request);
+    const user = await requireAnyUser(request);
     const [
       rating,
       rank,
@@ -1155,6 +1260,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       art,
       admin,
       telegram: telegramIds[0] ?? null,
+      ban: banOf(user.sub),
     };
   });
 
@@ -1511,6 +1617,12 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       user = app.jwt.verify<TokenPayload>(token ?? '');
     } catch {
       socket.send(JSON.stringify({ type: 'error', error: 'unauthorized' } satisfies DuelServerMessage));
+      socket.close();
+      return;
+    }
+    // Наказанного в матч не пускаем: дуэль — то, ради чего бан и бывает.
+    if (banOf(user.sub)) {
+      socket.send(JSON.stringify({ type: 'error', error: 'banned' } satisfies DuelServerMessage));
       socket.close();
       return;
     }

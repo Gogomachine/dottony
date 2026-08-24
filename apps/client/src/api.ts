@@ -1,5 +1,6 @@
 import type {
   AdminCard,
+  BanInfo,
   AdminFindResponse,
   AdminLogResponse,
   AuthResponse,
@@ -121,9 +122,24 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   if (!response.ok) {
+    // Бан закрывает все двери разом, и узнать о нём игра может из любой.
+    // Поэтому встречаем его здесь, а не в каждом месте, где ходят на сервер.
+    if (response.status === 403 && body.error === 'banned') {
+      onBanned?.({
+        until: typeof body.until === 'string' ? body.until : null,
+        reason: typeof body.reason === 'string' ? body.reason : '',
+      });
+    }
     throw new ApiError(String(body.error ?? 'unknown'), response.status);
   }
   return body as T;
+}
+
+/** Кому сказать, что прибор изъят. Ставится один раз, при заводе игры. */
+let onBanned: ((ban: BanInfo) => void) | null = null;
+
+export function whenBanned(show: (ban: BanInfo) => void): void {
+  onBanned = show;
 }
 
 interface TelegramWebApp {
@@ -219,8 +235,13 @@ export function getSprintBoard(period: BoardPeriod = 'all'): Promise<SprintLeade
 }
 
 /** Карточка игрока: рейтинг, лига, место, счёт дуэлей. Нужен токен. */
-export function getMe(): Promise<MeResponse> {
-  return request<MeResponse>('/api/me');
+export async function getMe(): Promise<MeResponse> {
+  const me = await request<MeResponse>('/api/me');
+  // Своя карточка — единственная дверь, открытая наказанному: остальные
+  // отвечают отказом. Через неё игра и узнаёт про изъятый прибор, если ещё
+  // не успела упереться в закрытую.
+  if (me.ban) onBanned?.(me.ban);
+  return me;
 }
 
 /** Шильдики корпуса: сервер хранит их, чтобы показать сопернику. */
@@ -300,6 +321,24 @@ export function adminTokens(userId: string, tokens: number, reason: string): Pro
 
 export function adminClearArt(userId: string, reason: string): Promise<unknown> {
   return request('/api/admin/art/clear', {
+    method: 'POST',
+    body: JSON.stringify({ userId, reason }),
+  });
+}
+
+export function adminBan(
+  userId: string,
+  days: number | null,
+  reason: string,
+): Promise<BanInfo> {
+  return request<BanInfo>('/api/admin/ban', {
+    method: 'POST',
+    body: JSON.stringify({ userId, days, reason }),
+  });
+}
+
+export function adminUnban(userId: string, reason: string): Promise<unknown> {
+  return request('/api/admin/unban', {
     method: 'POST',
     body: JSON.stringify({ userId, reason }),
   });

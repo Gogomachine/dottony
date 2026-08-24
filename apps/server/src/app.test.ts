@@ -1811,6 +1811,165 @@ describe('API', () => {
     }
   });
 
+  it('бан закрывает все двери, кроме своей карточки, и снимается', async () => {
+    const desk = await buildApp({
+      databaseUrl: ':memory:',
+      jwtSecret: 'test-jwt',
+      telegramBotToken: BOT_TOKEN,
+      adminTelegramIds: ['777'],
+    });
+    try {
+      const byTelegram = async (id: number, name: string): Promise<string> => {
+        const auth = await desk.inject({
+          method: 'POST',
+          url: '/api/auth/telegram',
+          payload: { initData: signedInitData({ id, first_name: name, username: name }) },
+        });
+        return (auth.json() as { token: string }).token;
+      };
+      const boss = await byTelegram(777, 'Служащий');
+      const player = await byTelegram(500, 'Нарушитель');
+      const desks = { authorization: `Bearer ${boss}` };
+      const theirs = { authorization: `Bearer ${player}` };
+      const found = await desk.inject({ method: 'GET', url: '/api/admin/find?q=Нарушитель', headers: desks });
+      const target = (found.json() as AdminFindResponse).found[0]!;
+
+      const ban = await desk.inject({
+        method: 'POST',
+        url: '/api/admin/ban',
+        headers: desks,
+        payload: { userId: target.id, days: 7, reason: 'непристойный рисунок' },
+      });
+      expect(ban.statusCode).toBe(200);
+      expect((ban.json() as { until: string | null }).until).toBeTruthy();
+
+      // Двери за входом закрыты — и отвечают, за что и до какого числа.
+      const shut = await desk.inject({ method: 'GET', url: '/api/me/friends', headers: theirs });
+      expect(shut.statusCode).toBe(403);
+      expect(shut.json()).toMatchObject({ error: 'banned', reason: 'непристойный рисунок' });
+      const marks = await desk.inject({
+        method: 'PUT',
+        url: '/api/me/marks',
+        headers: theirs,
+        payload: { marks: [] },
+      });
+      expect(marks.statusCode).toBe(403);
+
+      // Своя карточка открыта: иначе наказанный упёрся бы в молчащий прибор.
+      const card = await desk.inject({ method: 'GET', url: '/api/me', headers: theirs });
+      expect(card.statusCode).toBe(200);
+      expect((card.json() as MeResponse).ban).toMatchObject({ reason: 'непристойный рисунок' });
+
+      // Служащего наказать нельзя, и себя тоже — иначе служба запирает себя.
+      const onBoss = await desk.inject({
+        method: 'POST',
+        url: '/api/admin/ban',
+        headers: desks,
+        payload: { userId: (await desk.inject({ method: 'GET', url: '/api/admin/find?q=Служащий', headers: desks }).then((r) => (r.json() as AdminFindResponse).found[0]!)).id, days: 1, reason: 'проверка' },
+      });
+      expect([400]).toContain(onBoss.statusCode);
+
+      // Прощение возвращает прибор сразу.
+      const back = await desk.inject({
+        method: 'POST',
+        url: '/api/admin/unban',
+        headers: desks,
+        payload: { userId: target.id, reason: 'разобрались' },
+      });
+      expect(back.statusCode).toBe(200);
+      const open = await desk.inject({ method: 'GET', url: '/api/me/friends', headers: theirs });
+      expect(open.statusCode).toBe(200);
+      expect((await desk.inject({ method: 'GET', url: '/api/me', headers: theirs }).then((r) => r.json() as MeResponse)).ban).toBeNull();
+
+      // И то и другое записано в журнал.
+      const log = await desk.inject({ method: 'GET', url: '/api/admin/log', headers: desks });
+      const actions = (log.json() as AdminLogResponse).entries.map((row) => row.action);
+      expect(actions).toEqual(['бан снят', 'бан']);
+    } finally {
+      await desk.close();
+    }
+  });
+
+  it('бан помнится после перезапуска сервера и отпускает по сроку', async () => {
+    // База в файле: перезапуск сервера — это новый экземпляр на той же базе.
+    const file = join(tmpdir(), `doton-ban-${randomUUID()}.db`);
+    const first = await buildApp({
+      databaseUrl: `file:${file}`,
+      jwtSecret: 'test-jwt',
+      telegramBotToken: BOT_TOKEN,
+      adminTelegramIds: ['777'],
+    });
+    const db = createClient({ url: `file:${file}` });
+    try {
+      const byTelegram = async (id: number, name: string, app: FastifyInstance): Promise<string> => {
+        const auth = await app.inject({
+          method: 'POST',
+          url: '/api/auth/telegram',
+          payload: { initData: signedInitData({ id, first_name: name, username: name }) },
+        });
+        return (auth.json() as { token: string }).token;
+      };
+      const boss = await byTelegram(777, 'Служащий', first);
+      const player = await byTelegram(500, 'Нарушитель', first);
+      const found = await first.inject({
+        method: 'GET',
+        url: '/api/admin/find?q=Нарушитель',
+        headers: { authorization: `Bearer ${boss}` },
+      });
+      const target = (found.json() as AdminFindResponse).found[0]!;
+      await first.inject({
+        method: 'POST',
+        url: '/api/admin/ban',
+        headers: { authorization: `Bearer ${boss}` },
+        payload: { userId: target.id, days: 7, reason: 'непристойное имя' },
+      });
+      await first.close();
+
+      // Новый экземпляр читает баны при старте: бан переживает выкладку.
+      const second = await buildApp({
+        databaseUrl: `file:${file}`,
+        jwtSecret: 'test-jwt',
+        telegramBotToken: BOT_TOKEN,
+        adminTelegramIds: ['777'],
+      });
+      try {
+        const shut = await second.inject({
+          method: 'GET',
+          url: '/api/me/friends',
+          headers: { authorization: `Bearer ${player}` },
+        });
+        expect(shut.statusCode).toBe(403);
+
+        // Срок вышел — прибор возвращается сам, без службы.
+        await db.execute(`UPDATE users SET banned_until = datetime('now', '-1 hour')`);
+        const third = await buildApp({
+          databaseUrl: `file:${file}`,
+          jwtSecret: 'test-jwt',
+          telegramBotToken: BOT_TOKEN,
+          adminTelegramIds: ['777'],
+        });
+        try {
+          const open = await third.inject({
+            method: 'GET',
+            url: '/api/me/friends',
+            headers: { authorization: `Bearer ${player}` },
+          });
+          expect(open.statusCode).toBe(200);
+          // И запись о нём стёрта: просроченный бан не висит в базе вечно.
+          const rows = await db.execute('SELECT banned_until FROM users WHERE banned_until IS NOT NULL');
+          expect(rows.rows).toHaveLength(0);
+        } finally {
+          await third.close();
+        }
+      } finally {
+        await second.close();
+      }
+    } finally {
+      db.close();
+      await rm(file, { force: true });
+    }
+  });
+
   it('служба: без списка служащих пульта нет ни у кого', async () => {
     const desk = await buildApp({
       databaseUrl: ':memory:',

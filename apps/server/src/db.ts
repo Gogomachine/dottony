@@ -89,6 +89,7 @@ export interface AdminFoundRow {
   tokens: number;
   seenAt: string | null;
   identities: string[];
+  ban?: { until: string | null; reason: string };
 }
 
 /** Запись журнала службы. */
@@ -278,6 +279,11 @@ export class Store {
     // Свой шильдик: сто знаков листа. Лежит у игрока, а не в отдельной
     // таблице, — рисунок у него один, и живёт он ровно столько же.
     await this.addColumnIfMissing('users', 'art', 'TEXT');
+    // Бан: до какого времени и за что. Пустой срок при непустой причине —
+    // это «навсегда»; обе колонки пусты — прибор при игроке.
+    await this.addColumnIfMissing('users', 'banned_until', 'TEXT');
+    await this.addColumnIfMissing('users', 'banned_forever', 'INTEGER NOT NULL DEFAULT 0');
+    await this.addColumnIfMissing('users', 'ban_reason', 'TEXT');
     // Когда игрока последний раз видели в приборе. По этому и решаем, куда
     // слать приглашение: в игру или, если его там нет, в Telegram.
     await this.addColumnIfMissing('users', 'seen_at', 'TEXT');
@@ -1425,6 +1431,7 @@ export class Store {
   async findPlayers(query: string, limit = 20): Promise<AdminFoundRow[]> {
     const rows = await this.client.execute({
       sql: `SELECT u.id, u.name, u.friend_code, u.rating, u.tokens, u.seen_at,
+                   u.banned_until, u.banned_forever, u.ban_reason,
                    (SELECT GROUP_CONCAT(i.kind) FROM identities i WHERE i.user_id = u.id) AS kinds,
                    (u.friend_code = ?) AS by_code,
                    (u.id = ?) AS by_id,
@@ -1445,15 +1452,80 @@ export class Store {
         limit,
       ],
     });
-    return rows.rows.map((row) => ({
-      id: String(row.id),
-      name: String(row.name),
-      code: row.friend_code === null ? null : String(row.friend_code),
-      rating: Number(row.rating ?? 0),
-      tokens: Number(row.tokens ?? 0),
-      seenAt: row.seen_at === null || row.seen_at === undefined ? null : String(row.seen_at),
-      identities: row.kinds === null || row.kinds === undefined ? [] : String(row.kinds).split(','),
-    }));
+    return rows.rows.map((row) => {
+      const forever = Number(row.banned_forever) === 1;
+      const until = row.banned_until === null || row.banned_until === undefined ? null : String(row.banned_until);
+      return {
+        id: String(row.id),
+        name: String(row.name),
+        code: row.friend_code === null ? null : String(row.friend_code),
+        rating: Number(row.rating ?? 0),
+        tokens: Number(row.tokens ?? 0),
+        seenAt: row.seen_at === null || row.seen_at === undefined ? null : String(row.seen_at),
+        identities: row.kinds === null || row.kinds === undefined ? [] : String(row.kinds).split(','),
+        ...(forever || until !== null
+          ? { ban: { until: forever ? null : until, reason: row.ban_reason === null ? '' : String(row.ban_reason) } }
+          : {}),
+      };
+    });
+  }
+
+  /**
+   * Кто сейчас наказан. Читается один раз при старте: список короткий, а
+   * спрашивать базу на каждый запрос игрока ради редкой записи — дорого.
+   * Дальше его держит в памяти сервер, обновляя при каждом бане и снятии.
+   */
+  async bans(): Promise<Map<string, { until: string | null; reason: string }>> {
+    // Заодно прибираем отсиженное: срок вышел — записи о нём быть не должно.
+    // Место для уборки выбрано это, а не проверка на каждый запрос: чистить
+    // базу посреди чужого хода незачем, а при старте это один запрос.
+    await this.client.execute(
+      `UPDATE users SET banned_until = NULL, ban_reason = NULL
+        WHERE banned_forever = 0 AND banned_until IS NOT NULL AND banned_until <= datetime('now')`,
+    );
+    const rows = await this.client.execute(
+      `SELECT id, banned_until, banned_forever, ban_reason FROM users
+        WHERE banned_forever = 1 OR banned_until IS NOT NULL`,
+    );
+    const out = new Map<string, { until: string | null; reason: string }>();
+    for (const row of rows.rows) {
+      out.set(String(row.id), {
+        until: Number(row.banned_forever) === 1 ? null : String(row.banned_until),
+        reason: row.ban_reason === null ? '' : String(row.ban_reason),
+      });
+    }
+    return out;
+  }
+
+  /** Наказывает игрока: срок в днях, null — навсегда. */
+  async ban(id: string, days: number | null, reason: string): Promise<string | null> {
+    if (days === null) {
+      await this.client.execute({
+        sql: `UPDATE users SET banned_forever = 1, banned_until = NULL, ban_reason = ? WHERE id = ?`,
+        args: [reason, id],
+      });
+      return null;
+    }
+    await this.client.execute({
+      sql: `UPDATE users
+               SET banned_forever = 0, banned_until = datetime('now', ?), ban_reason = ?
+             WHERE id = ?`,
+      args: [`+${days} days`, reason, id],
+    });
+    const rows = await this.client.execute({
+      sql: 'SELECT banned_until FROM users WHERE id = ?',
+      args: [id],
+    });
+    const until = rows.rows[0]?.banned_until;
+    return until === null || until === undefined ? null : String(until);
+  }
+
+  /** Снимает бан. Причину снятия хранит журнал службы, а не игрок. */
+  async unban(id: string): Promise<void> {
+    await this.client.execute({
+      sql: `UPDATE users SET banned_forever = 0, banned_until = NULL, ban_reason = NULL WHERE id = ?`,
+      args: [id],
+    });
   }
 
   /** Имя игрока — для журнала: по одному номеру аккаунта в нём не разобраться. */

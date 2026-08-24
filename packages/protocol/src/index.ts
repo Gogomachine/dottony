@@ -141,6 +141,16 @@ export const AdminUserRequestSchema = z.object({
   reason: AdminReasonSchema,
 });
 
+/**
+ * Бан. Срок в днях; null — навсегда. Причина обязательна и уезжает игроку:
+ * наказание, о котором не сказано за что, — это просто поломка прибора.
+ */
+export const AdminBanRequestSchema = z.object({
+  userId: z.string().min(1).max(64),
+  days: z.number().int().min(1).max(3650).nullable(),
+  reason: AdminReasonSchema,
+});
+
 export const AdminNameRequestSchema = z.object({
   userId: z.string().min(1).max(64),
   name: NameSchema,
@@ -161,6 +171,15 @@ export interface AdminFound {
   identities: string[];
   /** Когда игрока последний раз видели в приборе; null — ни разу. */
   seenAt: string | null;
+  /** Бан, если он есть: по нему в списке видно, кого уже наказали. */
+  ban?: BanInfo;
+}
+
+/** Бан игрока: до какого времени и за что. */
+export interface BanInfo {
+  /** Время окончания в UTC; null — навсегда. */
+  until: string | null;
+  reason: string;
 }
 
 /** Карточка игрока в службе: то же, что видит он сам, плюс служебное. */
@@ -456,6 +475,12 @@ export interface MeResponse {
    * собственный номер и приходит он только своему хозяину.
    */
   telegram: string | null;
+  /**
+   * Бан, если игрок наказан; null — прибор при нём. Приходит в своей же
+   * карточке: игрок должен узнать и срок, и причину, а не упереться в
+   * молчащий прибор.
+   */
+  ban: BanInfo | null;
   /**
    * Свой рисунок на пропуске: запись листа из `art.ts` ядра; null — игрок
    * своего шильдика ещё не покупал. Хранится на сервере, а не только в
