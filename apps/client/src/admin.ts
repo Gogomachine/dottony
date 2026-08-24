@@ -34,6 +34,8 @@ function el<T extends HTMLElement>(id: string): T {
 
 const shutEl = el<HTMLDivElement>('shut');
 const shutNoteEl = el<HTMLSpanElement>('shut-note');
+const shutHintEl = el<HTMLSpanElement>('shut-hint');
+const shutKeysEl = el<HTMLDivElement>('shut-keys');
 const findCardEl = el<HTMLDivElement>('find-card');
 const foundEl = el<HTMLTableElement>('found');
 const findNoteEl = el<HTMLSpanElement>('find-note');
@@ -85,17 +87,18 @@ function why(me: MeResponse): string {
 
 async function open(): Promise<void> {
   shutEl.hidden = false;
+  shutKeysEl.hidden = true;
+  shutHintEl.textContent = '';
   try {
     const me = await getMe();
     el<HTMLSpanElement>('who').textContent = `${me.name}${me.admin ? ' · служба' : ''}`;
     if (!me.admin) {
       shutNoteEl.textContent = why(me);
-      const back = document.createElement('a');
-      back.href = './';
-      back.textContent = 'Открыть игру';
-      back.style.display = 'block';
-      back.style.marginTop = '10px';
-      shutEl.appendChild(back);
+      // Пульт — эта самая страница, и с закрытой двери это не очевидно:
+      // ссылка «Открыть игру» рядом с отказом читалась как «панель там».
+      shutHintEl.textContent =
+        'Пульт — эта страница. Ничего открывать не нужно: поправь настройку и нажми «Проверить снова».';
+      shutKeysEl.hidden = false;
       return;
     }
   } catch (error) {
@@ -323,6 +326,13 @@ async function showLog(): Promise<void> {
     // Журнал не открылся — пульт всё равно работает; молчим, а не пугаем.
   }
 }
+
+// Проверить заново, не перезагружая страницу: настройку сервера правят в
+// соседней вкладке, и возвращаться сюда за F5 — лишнее движение.
+el<HTMLButtonElement>('shut-again').addEventListener('click', () => {
+  shutNoteEl.textContent = 'Проверяю допуск…';
+  void open();
+});
 
 el<HTMLButtonElement>('find').addEventListener('click', () => void find());
 queryEl.addEventListener('keydown', (event) => {

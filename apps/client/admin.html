@@ -182,7 +182,10 @@
 
     .note { font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; color: var(--ink-2); }
     .note.warn { color: var(--acc); }
-    .shut { text-align: center; padding: 40px 0; }
+    .shut { text-align: center; padding: 40px 0; gap: 12px; }
+    .shut-keys { justify-content: center; }
+    .shut-keys[hidden] { display: none; }
+    .shut a { color: var(--ink-2); }
   </style>
 </head>
 <body>
@@ -198,6 +201,11 @@
     <!-- Постороннему пульт не отвечает ничем, кроме этой строки. -->
     <div class="card shut" id="shut" hidden>
       <span class="note" id="shut-note">Проверяю допуск…</span>
+      <span class="note" id="shut-hint"></span>
+      <div class="row shut-keys" id="shut-keys" hidden>
+        <button class="acc" id="shut-again">Проверить снова</button>
+        <a href="./">Открыть игру</a>
+      </div>
     </div>
 
     <div class="card" id="find-card" hidden>
