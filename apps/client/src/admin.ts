@@ -1,5 +1,5 @@
 import { isOwnMark, markById, type Mark } from '@doton/core';
-import type { AdminCard, AdminFound } from '@doton/protocol';
+import type { AdminCard, AdminFound, MeResponse } from '@doton/protocol';
 import {
   adminCard,
   adminClearArt,
@@ -61,22 +61,49 @@ function cell(row: HTMLTableRowElement, text: string, cls = ''): HTMLTableCellEl
   return td;
 }
 
+/**
+ * Почему пульт не открылся. Про службу здесь не говорится ничего — только
+ * про того, кто пришёл, и только ему самому: свой способ входа и свой номер
+ * в Telegram. Сначала было одно «Пульт недоступен.» на все случаи, и это
+ * оказалось глухо не для постороннего (тому и правда объяснять нечего), а
+ * для хозяина: закрытый пульт нечем отличить от опечатки в настройке или от
+ * сервера, до которого ещё не доехало обновление.
+ */
+function why(me: MeResponse): string {
+  // Поля `admin` нет вовсе — значит, сервер старее этой страницы.
+  if ((me as { admin?: boolean }).admin === undefined) {
+    return 'Сервер старее пульта: службы на нём ещё нет. Обнови сервер.';
+  }
+  if (me.telegram === null) {
+    return (
+      'Вход: гость. Пульт узнаёт служащего по Telegram — ' +
+      'открой игру, в кабинете нажми «Привязать Telegram» и вернись сюда.'
+    );
+  }
+  return `Вход: Telegram · ${me.telegram}. Пульт открыт тому, чей номер стоит в ADMIN_TELEGRAM_IDS на сервере.`;
+}
+
 async function open(): Promise<void> {
   shutEl.hidden = false;
   try {
     const me = await getMe();
     el<HTMLSpanElement>('who').textContent = `${me.name}${me.admin ? ' · служба' : ''}`;
     if (!me.admin) {
-      // Постороннему не объясняем, чего именно ему не хватает: пульт для
-      // него просто не работает.
-      shutNoteEl.textContent = 'Пульт недоступен.';
+      shutNoteEl.textContent = why(me);
+      const back = document.createElement('a');
+      back.href = './';
+      back.textContent = 'Открыть игру';
+      back.style.display = 'block';
+      back.style.marginTop = '10px';
+      shutEl.appendChild(back);
       return;
     }
   } catch (error) {
+    // Токена нет вовсе — сюда пришли, не открыв игру ни разу.
     shutNoteEl.textContent =
       error instanceof ApiError && error.status === 0
         ? 'Прибор не отвечает.'
-        : 'Пульт недоступен.';
+        : 'Сначала открой игру: пульт входит тем же аккаунтом, что и она.';
     return;
   }
   shutEl.hidden = true;

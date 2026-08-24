@@ -1095,6 +1095,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       frame,
       art,
       admin,
+      telegramIds,
     ] = await Promise.all([
         store.ratingOf(user.sub),
         store.ratingRank(user.sub),
@@ -1115,6 +1116,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         store.frameOf(user.sub),
         store.artOf(user.sub),
         isAdmin(user.sub),
+        store.telegramIdsOf(user.sub),
       ]);
     const up = nextLeague(rating.rating);
     const league = leagueOf(rating.rating);
@@ -1152,6 +1154,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       frame,
       art,
       admin,
+      telegram: telegramIds[0] ?? null,
     };
   });
 
