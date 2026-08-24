@@ -1972,6 +1972,62 @@ describe('API', () => {
     }
   });
 
+  it('имя, снятое службой, меняется и у самого игрока — вместе с пропуском', async () => {
+    // Имя лежит в токене, а чужой токен службе не переписать: раньше снятое
+    // имя менялось для всех, кроме самого игрока, — у него оно жило до
+    // следующего входа.
+    const desk = await buildApp({
+      databaseUrl: ':memory:',
+      jwtSecret: 'test-jwt',
+      telegramBotToken: BOT_TOKEN,
+      adminTelegramIds: ['777'],
+    });
+    try {
+      const byTelegram = async (id: number, name: string): Promise<string> => {
+        const auth = await desk.inject({
+          method: 'POST',
+          url: '/api/auth/telegram',
+          payload: { initData: signedInitData({ id, first_name: name, username: name }) },
+        });
+        return (auth.json() as { token: string }).token;
+      };
+      const boss = await byTelegram(777, 'Служащий');
+      const rude = await byTelegram(500, 'Похабник');
+      const desks = { authorization: `Bearer ${boss}` };
+      const found = await desk.inject({ method: 'GET', url: '/api/admin/find?q=Похабник', headers: desks });
+      const target = (found.json() as AdminFindResponse).found[0]!;
+
+      await desk.inject({
+        method: 'POST',
+        url: '/api/admin/name',
+        headers: desks,
+        payload: { userId: target.id, name: 'Игрок 2', reason: 'имя было непристойным' },
+      });
+
+      // Старым пропуском игрок видит новое имя и получает новый пропуск.
+      const card = await desk.inject({
+        method: 'GET',
+        url: '/api/me',
+        headers: { authorization: `Bearer ${rude}` },
+      });
+      const me = card.json() as MeResponse;
+      expect(me.name).toBe('Игрок 2');
+      expect(me.token).toBeTruthy();
+
+      // По новому пропуску имя то же, и второй раз его уже не переписывают.
+      const again = await desk.inject({
+        method: 'GET',
+        url: '/api/me',
+        headers: { authorization: `Bearer ${me.token!}` },
+      });
+      const settled = again.json() as MeResponse;
+      expect(settled.name).toBe('Игрок 2');
+      expect(settled.token).toBeUndefined();
+    } finally {
+      await desk.close();
+    }
+  });
+
   it('жалобы: копятся по одной от человека и уходят из очереди разобранными', async () => {
     const desk = await buildApp({
       databaseUrl: ':memory:',

@@ -238,6 +238,14 @@ export function getSprintBoard(period: BoardPeriod = 'all'): Promise<SprintLeade
 /** Карточка игрока: рейтинг, лига, место, счёт дуэлей. Нужен токен. */
 export async function getMe(): Promise<MeResponse> {
   const me = await request<MeResponse>('/api/me');
+  // Имя носит сам токен, и служба чужой токен переписать не может: когда
+  // имя сменили не рукой игрока, прибор выдаёт новый пропуск вместе с
+  // карточкой. Забрать его надо здесь — иначе игрок останется под старым
+  // именем до следующего входа.
+  if (me.token !== undefined) {
+    localStorage.setItem(TOKEN_KEY, me.token);
+    localStorage.setItem(NAME_KEY, me.name);
+  }
   // Своя карточка — единственная дверь, открытая наказанному: остальные
   // отвечают отказом. Через неё игра и узнаёт про изъятый прибор, если ещё
   // не успела упереться в закрытую.

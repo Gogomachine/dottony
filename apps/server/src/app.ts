@@ -1227,6 +1227,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       art,
       admin,
       telegramIds,
+      current,
     ] = await Promise.all([
         store.ratingOf(user.sub),
         store.ratingRank(user.sub),
@@ -1248,11 +1249,22 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         store.artOf(user.sub),
         isAdmin(user.sub),
         store.telegramIdsOf(user.sub),
+        store.nameOf(user.sub),
       ]);
     const up = nextLeague(rating.rating);
     const league = leagueOf(rating.rating);
+    /*
+     * Имя берём из базы, а не из токена. Обычно они совпадают — токен и
+     * выдаётся с именем, — но службе имя менять можно, а чужой токен ей не
+     * переписать. Раньше карточка повторяла токен, и снятое службой имя
+     * менялось для всех, кроме самого игрока: у него оно жило до следующего
+     * входа. Разошлось — выдаём новый пропуск тут же, вместе с карточкой.
+     */
+    const name = current ?? user.name;
+    const reissued = name === user.name ? {} : { token: issueToken(user.sub, name).token };
     return {
-      name: user.name,
+      name,
+      ...reissued,
       avatar,
       rating: rating.rating,
       deviation: rating.deviation,
@@ -1675,6 +1687,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
 
     const player: DuelPlayer = {
       id: user.sub,
+      // Имя из токена — стартовое: сразу за этим его уточняет чтение из базы.
       name: user.name,
       send: (message: DuelServerMessage) => {
         if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
@@ -1691,12 +1704,16 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       store.marksOf(user.sub),
       store.frameOf(user.sub),
       store.artOf(user.sub),
+      // Имя тоже читаем: в токене оно могло остаться прежним, если игрока
+      // переименовала служба, а соперник должен видеть нынешнее.
+      store.nameOf(user.sub),
     ])
-      .then(([code, marks, frame, art]) => {
+      .then(([code, marks, frame, art, name]) => {
         if (code) player.code = code;
         player.marks = marks;
         if (frame) player.frame = frame;
         if (art) player.art = art;
+        if (name) player.name = name;
       })
       .catch((error: unknown) => app.log.error(error, 'duel player lookup failed'));
 
