@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Пульт в поиск не отдаём: страница служебная, а не публичная. -->
+  <meta name="robots" content="noindex, nofollow" />
+  <title>Служба · dotoscope</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet"
+  />
+  <style>
+    /*
+     * Служебный пульт. Нарочно не прибор: прибор — вещь для игрока, а это
+     * стол с бумагами. Отсюда и вид — светлая папка, машинописные подписи,
+     * таблицы. Единственное, что переехало сюда из игры целиком, — сами
+     * шильдики: их надо видеть ровно такими, какими их видит соперник.
+     */
+    :root {
+      --paper: #edeae3;
+      --card: #ffffff;
+      --ink: #1a1b1c;
+      --ink-2: #6e6b64;
+      --edge: rgba(26, 27, 28, 0.14);
+      --acc: #e2431a;
+      --gold: #a9812a;
+      --mono: 'JetBrains Mono', ui-monospace, monospace;
+      --case: #101113;
+      --case-2: #17181a;
+      --silk: #edeae3;
+      --silk-2: #6f6c65;
+      --scope: #0c0d0e;
+      --gold-bg: rgba(216, 171, 53, 0.12);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 20px 16px 60px;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: Inter, system-ui, sans-serif;
+      font-size: 14px;
+      line-height: 1.45;
+    }
+    .sheet { max-width: 900px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+
+    .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+    .head .who {
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--ink-2);
+      text-align: right;
+    }
+    .title { font-size: 22px; font-weight: 800; font-style: italic; text-transform: uppercase; }
+    .kicker {
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--ink-2);
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--edge);
+      border-radius: 10px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    /* Без этого широкая таблица растягивает карточку, а карточка — страницу:
+       у элемента гибкой раскладки наименьшая ширина по умолчанию не нулевая. */
+    .card { min-width: 0; }
+    .card[hidden] { display: none; }
+    h2 {
+      margin: 0;
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--ink-2);
+      font-weight: 500;
+    }
+
+    input, button {
+      font-family: inherit;
+      font-size: 14px;
+      color: inherit;
+    }
+    input {
+      padding: 8px 10px;
+      border: 1px solid var(--edge);
+      border-radius: 7px;
+      background: var(--paper);
+      min-width: 0;
+    }
+    input:focus { outline: 2px solid var(--acc); outline-offset: -1px; }
+    button {
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      padding: 9px 12px;
+      border: 1px solid var(--edge);
+      border-radius: 7px;
+      background: var(--paper);
+      cursor: pointer;
+    }
+    button:active { transform: translateY(1px); }
+    button.acc { background: var(--acc); border-color: var(--acc); color: #fff; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .row .grow { flex: 1 1 180px; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th {
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--ink-2);
+      font-weight: 500;
+      text-align: left;
+      padding: 4px 8px 6px 0;
+    }
+    td { padding: 6px 8px 6px 0; border-top: 1px solid var(--edge); vertical-align: top; }
+    tr.pick { cursor: pointer; }
+    tr.pick:hover td { background: rgba(226, 67, 26, 0.06); }
+    .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+    .dim { color: var(--ink-2); }
+    /* Таблицы шире экрана прокручиваются сами, а не растягивают страницу. */
+    .scroll { overflow-x: auto; max-width: 100%; min-width: 0; }
+
+    /* Строка с полем и причиной: причина обязательна у каждого действия. */
+    .deed { display: flex; flex-direction: column; gap: 6px; padding-top: 10px; border-top: 1px solid var(--edge); }
+    .deed .what { font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-2); }
+
+    /* Кусок прибора: шильдики и рисунок показываем на своём тёмном стекле. */
+    .plate {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 10px;
+      background: var(--case);
+      border-radius: 8px;
+      color: var(--silk);
+      min-height: 38px;
+    }
+    /* На столе шильдики разглядывают, а не узнают мельком, — поэтому здесь
+       они крупнее, чем на корпусе. */
+    .plate .mark { --mark-scale: 1.8; }
+    .plate .none { font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--silk-2); }
+    .mark {
+      --mark-scale: 1;
+      --mark-size: 9px;
+      font-style: normal;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: calc(17px * var(--mark-scale));
+      min-width: calc(17px * var(--mark-scale));
+      padding: 0 calc(4px * var(--mark-scale));
+      font-size: calc(var(--mark-size) * var(--mark-scale));
+      line-height: 1;
+      letter-spacing: 0.06em;
+      white-space: nowrap;
+    }
+    .mark.gold { border: 1px solid var(--gold); border-radius: 3px; font-family: var(--mono); --mark-size: 8.5px; color: #d8ab35; background: var(--gold-bg); }
+    .mark.earned { border: 1px solid var(--acc); border-radius: 3px; font-family: var(--mono); --mark-size: 8.5px; color: var(--acc); }
+    .mark.sticker, .mark.own { background: var(--scope); border-radius: 4px; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45); }
+    .mark.sticker { --mark-size: 11px; letter-spacing: 0; }
+    .mark.own { --mark-size: 8.5px; font-family: var(--mono); color: var(--silk-2); }
+    .mark .art { width: calc(13px * var(--mark-scale)); height: calc(13px * var(--mark-scale)); display: block; }
+    /* Рисунок в карточке крупный: его тут разглядывают, а не узнают. */
+    .big-art { width: 120px; height: 120px; background: var(--scope); border-radius: 10px; padding: 6px; }
+    .big-art svg { width: 100%; height: 100%; display: block; }
+
+    .note { font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; color: var(--ink-2); }
+    .note.warn { color: var(--acc); }
+    .shut { text-align: center; padding: 40px 0; }
+  </style>
+</head>
+<body>
+  <div class="sheet">
+    <div class="head">
+      <div>
+        <span class="kicker">Round Things Inc · служба</span>
+        <div class="title">Дотоскоп 36</div>
+      </div>
+      <span class="who" id="who">—</span>
+    </div>
+
+    <!-- Постороннему пульт не отвечает ничем, кроме этой строки. -->
+    <div class="card shut" id="shut" hidden>
+      <span class="note" id="shut-note">Проверяю допуск…</span>
+    </div>
+
+    <div class="card" id="find-card" hidden>
+      <h2>Найти игрока</h2>
+      <div class="row">
+        <input class="grow" id="q" placeholder="Имя, код друга, Telegram-id или номер аккаунта" />
+        <button class="acc" id="find">Искать</button>
+      </div>
+      <span class="note" id="find-note"></span>
+      <div class="scroll"><table id="found" hidden>
+        <thead>
+          <tr><th>Имя</th><th>Код</th><th>Рейтинг</th><th>Жетоны</th><th>Вход</th><th>Был</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table></div>
+    </div>
+
+    <div class="card" id="player" hidden></div>
+
+    <div class="card" id="log-card" hidden>
+      <h2>Журнал службы</h2>
+      <div class="scroll"><table id="log">
+        <thead>
+          <tr><th>Когда</th><th>Кто</th><th>Кому</th><th>Что</th><th>Было → стало</th><th>Причина</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table></div>
+      <span class="note">Записи не стираются: без них отменить чужое решение нечем.</span>
+    </div>
+  </div>
+  <script type="module" src="/src/admin.ts"></script>
+</body>
+</html>

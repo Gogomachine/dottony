@@ -121,6 +121,82 @@ export const ServiceRequestSchema = z.object({
   games: z.number().int().min(0).max(1000).optional(),
 });
 
+/**
+ * Служба: действия над чужим аккаунтом. Причина обязательна и не пустая —
+ * не ради бюрократии, а потому что через неделю ни один админ не помнит, за
+ * что снял игроку имя, а игрок помнит всегда.
+ */
+export const AdminReasonSchema = z.string().trim().min(3).max(200);
+
+export const AdminTokensRequestSchema = z.object({
+  userId: z.string().min(1).max(64),
+  /** Сколько станет. Не «прибавить»: у прибавки нет верного значения, если
+   * страница показывает устаревший счёт. */
+  tokens: z.number().int().min(0).max(1_000_000),
+  reason: AdminReasonSchema,
+});
+
+export const AdminUserRequestSchema = z.object({
+  userId: z.string().min(1).max(64),
+  reason: AdminReasonSchema,
+});
+
+export const AdminNameRequestSchema = z.object({
+  userId: z.string().min(1).max(64),
+  name: NameSchema,
+  reason: AdminReasonSchema,
+});
+
+/** Строка поиска: имя, код друга, Telegram-id или номер аккаунта. */
+export const AdminFindQuerySchema = z.string().trim().min(1).max(64);
+
+/** Строка списка найденных: столько, чтобы узнать нужного и не больше. */
+export interface AdminFound {
+  id: string;
+  name: string;
+  code: string | null;
+  rating: number;
+  tokens: number;
+  /** Способы входа: по ним видно, гость это или человек из Telegram. */
+  identities: string[];
+  /** Когда игрока последний раз видели в приборе; null — ни разу. */
+  seenAt: string | null;
+}
+
+/** Карточка игрока в службе: то же, что видит он сам, плюс служебное. */
+export interface AdminCard extends AdminFound {
+  league: string;
+  /** Шильдики корпуса и рисунок — то, что видно сопернику. */
+  marks: (string | null)[];
+  art: string | null;
+  frame: string | null;
+  avatar: string | null;
+  duels: { played: number; won: number };
+  sprint: number;
+  order: number;
+  /** Всё, что игроку положено носить. */
+  earned: string[];
+}
+
+/** Запись журнала службы: без него отменить чужое решение нечем. */
+export interface AdminLogEntry {
+  at: string;
+  admin: string;
+  target: string;
+  targetName: string;
+  action: string;
+  detail: string;
+  reason: string;
+}
+
+export interface AdminFindResponse {
+  found: AdminFound[];
+}
+
+export interface AdminLogResponse {
+  entries: AdminLogEntry[];
+}
+
 export const InviteRequestSchema = z.object({
   room: z.string().trim().min(4).max(16),
 });
@@ -368,6 +444,11 @@ export interface MeResponse {
   earned: string[];
   /** Надетая оправа полосы шильдиков; null — полоса без оправы. */
   frame: string | null;
+  /**
+   * Служба: игрок значится в списке служащих прибора. Не «может больше» в
+   * игре — в игре он ровно такой же, — а «видит служебный пульт».
+   */
+  admin: boolean;
   /**
    * Свой рисунок на пропуске: запись листа из `art.ts` ядра; null — игрок
    * своего шильдика ещё не покупал. Хранится на сервере, а не только в

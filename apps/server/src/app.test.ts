@@ -34,6 +34,9 @@ import {
   type OrderRun,
 } from '@doton/core';
 import type {
+  AdminCard,
+  AdminFindResponse,
+  AdminLogResponse,
   DuelServerMessage,
   MeResponse,
   MoveLog,
@@ -1651,6 +1654,137 @@ describe('API', () => {
       db.close();
       await shop.close();
       await rm(file, { force: true });
+    }
+  });
+
+  it('служба: посторонним дверей нет, служащему открыт пульт и журнал', async () => {
+    const desk = await buildApp({
+      databaseUrl: ':memory:',
+      jwtSecret: 'test-jwt',
+      telegramBotToken: BOT_TOKEN,
+      // Служащий один, и узнают его по номеру в Telegram — не по паролю.
+      adminTelegramIds: ['777'],
+    });
+    try {
+      const byTelegram = async (id: number, name: string): Promise<string> => {
+        const auth = await desk.inject({
+          method: 'POST',
+          url: '/api/auth/telegram',
+          payload: { initData: signedInitData({ id, first_name: name, username: name }) },
+        });
+        return (auth.json() as { token: string }).token;
+      };
+      const boss = await byTelegram(777, 'Служащий');
+      const player = await byTelegram(500, 'Игрок');
+      const desks = { authorization: `Bearer ${boss}` };
+      const theirs = { authorization: `Bearer ${player}` };
+
+      // Обычному игроку пульта не существует — ни одной двери.
+      for (const url of ['/api/admin/find?q=и', '/api/admin/card?id=1', '/api/admin/log']) {
+        expect((await desk.inject({ method: 'GET', url, headers: theirs })).statusCode).toBe(404);
+      }
+      // И без токена тоже: незачем и знать, что пульт бывает.
+      expect((await desk.inject({ method: 'GET', url: '/api/admin/log' })).statusCode).toBe(404);
+      // В самой игре у служащего прав не больше: признак только в карточке.
+      const mine = await desk.inject({ method: 'GET', url: '/api/me', headers: desks });
+      expect((mine.json() as MeResponse).admin).toBe(true);
+      const his = await desk.inject({ method: 'GET', url: '/api/me', headers: theirs });
+      expect((his.json() as MeResponse).admin).toBe(false);
+
+      // Поиск по имени находит игрока, и по нему открывается карточка.
+      const found = await desk.inject({ method: 'GET', url: '/api/admin/find?q=Игрок', headers: desks });
+      const list = (found.json() as AdminFindResponse).found;
+      expect(list.length).toBeGreaterThan(0);
+      const target = list.find((row) => row.name === 'Игрок')!;
+      expect(target.identities).toContain('telegram');
+      // По коду друга находится тот же самый — им и диктуют.
+      const byCode = await desk.inject({
+        method: 'GET',
+        url: `/api/admin/find?q=${target.code}`,
+        headers: desks,
+      });
+      expect((byCode.json() as AdminFindResponse).found[0]?.id).toBe(target.id);
+
+      const deed = async (
+        what: string,
+        payload: Record<string, unknown>,
+      ): Promise<{ statusCode: number }> =>
+        desk.inject({ method: 'POST', url: `/api/admin/${what}`, headers: desks, payload });
+
+      // Без причины не делается ничего: журнал без причины бесполезен.
+      expect((await deed('tokens', { userId: target.id, tokens: 500 })).statusCode).toBe(400);
+      expect((await deed('tokens', { userId: target.id, tokens: 500, reason: 'ок' })).statusCode).toBe(400);
+
+      expect(
+        (await deed('tokens', { userId: target.id, tokens: 500, reason: 'вернул за сбой матча' }))
+          .statusCode,
+      ).toBe(200);
+      expect(
+        (await deed('name', { userId: target.id, name: 'Игрок 2', reason: 'имя было непристойным' }))
+          .statusCode,
+      ).toBe(200);
+      expect(
+        (await deed('art/clear', { userId: target.id, reason: 'рисунок непристойный' })).statusCode,
+      ).toBe(200);
+
+      const card = await desk.inject({
+        method: 'GET',
+        url: `/api/admin/card?id=${target.id}`,
+        headers: desks,
+      });
+      const after = card.json() as AdminCard;
+      expect(after.tokens).toBe(500);
+      expect(after.name).toBe('Игрок 2');
+      expect(after.art).toBeNull();
+
+      // Своё право на замену имени игрок при этом не потерял: за чужое
+      // решение он платить не должен.
+      const player2 = await desk.inject({ method: 'GET', url: '/api/me', headers: theirs });
+      expect((player2.json() as MeResponse).canRename).toBe(true);
+
+      // Всё записано: кто, кому, что и почему.
+      const log = await desk.inject({ method: 'GET', url: '/api/admin/log', headers: desks });
+      const entries = (log.json() as AdminLogResponse).entries;
+      expect(entries).toHaveLength(3);
+      expect(entries.map((row) => row.action)).toEqual(['рисунок снят', 'имя', 'жетоны']);
+      for (const row of entries) {
+        expect(row.admin).toBeTruthy();
+        expect(row.reason.length).toBeGreaterThan(2);
+        expect(row.target).toBe(target.id);
+      }
+      expect(entries.find((row) => row.action === 'жетоны')?.detail).toBe('0 → 500');
+    } finally {
+      await desk.close();
+    }
+  });
+
+  it('служба: без списка служащих пульта нет ни у кого', async () => {
+    const desk = await buildApp({
+      databaseUrl: ':memory:',
+      jwtSecret: 'test-jwt',
+      telegramBotToken: BOT_TOKEN,
+    });
+    try {
+      const auth = await desk.inject({
+        method: 'POST',
+        url: '/api/auth/telegram',
+        payload: { initData: signedInitData({ id: 777, first_name: 'Служащий' }) },
+      });
+      const token = (auth.json() as { token: string }).token;
+      const me = await desk.inject({
+        method: 'GET',
+        url: '/api/me',
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect((me.json() as MeResponse).admin).toBe(false);
+      const log = await desk.inject({
+        method: 'GET',
+        url: '/api/admin/log',
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(log.statusCode).toBe(404);
+    } finally {
+      await desk.close();
     }
   });
 

@@ -1,4 +1,7 @@
 import type {
+  AdminCard,
+  AdminFindResponse,
+  AdminLogResponse,
   AuthResponse,
   BoardPeriod,
   BuyResponse,
@@ -273,6 +276,44 @@ export function serviceSet(values: {
     method: 'POST',
     body: JSON.stringify(values),
   });
+}
+
+/**
+ * Служба: поиск, карточка, действия, журнал. Дверей этих не существует ни
+ * для кого, кроме служащих, — посторонним сервер отвечает «нет такой
+ * страницы», и по ответу не видно, что пульт вообще бывает.
+ */
+export function adminFind(query: string): Promise<AdminFindResponse> {
+  return request<AdminFindResponse>(`/api/admin/find?q=${encodeURIComponent(query)}`);
+}
+
+export function adminCard(id: string): Promise<AdminCard> {
+  return request<AdminCard>(`/api/admin/card?id=${encodeURIComponent(id)}`);
+}
+
+export function adminTokens(userId: string, tokens: number, reason: string): Promise<unknown> {
+  return request('/api/admin/tokens', {
+    method: 'POST',
+    body: JSON.stringify({ userId, tokens, reason }),
+  });
+}
+
+export function adminClearArt(userId: string, reason: string): Promise<unknown> {
+  return request('/api/admin/art/clear', {
+    method: 'POST',
+    body: JSON.stringify({ userId, reason }),
+  });
+}
+
+export function adminName(userId: string, name: string, reason: string): Promise<unknown> {
+  return request('/api/admin/name', {
+    method: 'POST',
+    body: JSON.stringify({ userId, name, reason }),
+  });
+}
+
+export function adminLog(): Promise<AdminLogResponse> {
+  return request<AdminLogResponse>('/api/admin/log');
 }
 
 /** Надевает оправу полосы шильдиков; null — снимает. */

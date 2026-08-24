@@ -40,6 +40,16 @@ if (serviceKey) {
   console.warn('SERVICE_KEY задан — включена наладка. На боевом сервере её быть не должно.');
 }
 
+/**
+ * Кто держит службу прибора — номера в Telegram через запятую. Пусто —
+ * служебного пульта нет ни у кого, и двери `/api/admin/*` отвечают «нет
+ * такой страницы» всем без исключения.
+ */
+const adminTelegramIds = (process.env.ADMIN_TELEGRAM_IDS ?? '')
+  .split(',')
+  .map((id) => id.trim())
+  .filter((id) => id.length > 0);
+
 /** Кому из браузеров разрешено ходить в API. Пусто — любому. */
 const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? '')
   .split(',')
@@ -64,6 +74,7 @@ const app = await buildApp({
   ...(trustProxy > 0 ? { trustProxy } : {}),
   ...(allowedOrigins.length > 0 ? { allowedOrigins } : {}),
   ...(serviceKey ? { serviceKey } : {}),
+  ...(adminTelegramIds.length > 0 ? { adminTelegramIds } : {}),
 });
 
 try {

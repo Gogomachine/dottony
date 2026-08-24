@@ -98,7 +98,7 @@ export function savePlate(marks: (string | null)[]): void {
  *
  * Пустая клетка не рисуется вовсе — на её месте стекло, ровно как на листе.
  */
-function artPicture(art: string): SVGSVGElement {
+export function artPicture(art: string): SVGSVGElement {
   const ns = 'http://www.w3.org/2000/svg';
   const svg = document.createElementNS(ns, 'svg');
   svg.setAttribute('viewBox', `0 0 ${ART_SIZE} ${ART_SIZE}`);

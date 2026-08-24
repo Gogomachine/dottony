@@ -7,6 +7,10 @@ import {
   AddFriendRequestSchema,
   ArtRequestSchema,
   AvatarRequestSchema,
+  AdminFindQuerySchema,
+  AdminNameRequestSchema,
+  AdminTokensRequestSchema,
+  AdminUserRequestSchema,
   BuyRequestSchema,
   FrameRequestSchema,
   ServiceRequestSchema,
@@ -19,6 +23,9 @@ import {
   SubmitOrderRequestSchema,
   SubmitSprintRequestSchema,
   TelegramAuthRequestSchema,
+  type AdminCard,
+  type AdminFindResponse,
+  type AdminLogResponse,
   type AuthResponse,
   type BuyResponse,
   type OrderLeaderboardResponse,
@@ -131,6 +138,14 @@ export interface AppOptions {
    * ни у кого, кроме прибора на столе у наладчика.
    */
   serviceKey?: string;
+  /**
+   * Номера в Telegram тех, кто держит службу прибора. Список лежит в
+   * настройках сервера, а не в базе: право входа в службу даёт тот, у кого
+   * доступ к серверу, и отобрать его можно, не заходя в игру. Отдельного
+   * пароля у службы нет — служащий входит обычным способом, и прибор узнаёт
+   * его по той же личности, что и все остальные.
+   */
+  adminTelegramIds?: string[];
 }
 
 interface TokenPayload {
@@ -651,6 +666,176 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return { avatar: parsed.data.avatar };
   });
 
+  // ---------- Служба ----------
+
+  /**
+   * Служащий ли это. Прав в игре у него ровно столько же, сколько у всех:
+   * служба — это не «может больше», а «отвечает за прибор». Единственное,
+   * что она даёт, — служебный пульт над чужими аккаунтами, и каждое
+   * движение там записывается в журнал.
+   */
+  const admins = new Set(options.adminTelegramIds ?? []);
+  const isAdmin = async (userId: string): Promise<boolean> => {
+    if (admins.size === 0) return false;
+    const ids = await store.telegramIdsOf(userId);
+    return ids.some((id) => admins.has(id));
+  };
+
+  /**
+   * Пускает в служебную дверь. Не служащему отвечаем «нет такой страницы»,
+   * как и наладка: знать, что пульт существует, посторонним незачем.
+   */
+  const servant = async (
+    request: FastifyRequest,
+    reply: { code(status: number): { send(body: unknown): unknown } },
+  ): Promise<TokenPayload | null> => {
+    let user: TokenPayload;
+    try {
+      user = await requireUser(request);
+    } catch {
+      reply.code(404).send({ error: 'not-found' });
+      return null;
+    }
+    if (!(await isAdmin(user.sub))) {
+      reply.code(404).send({ error: 'not-found' });
+      return null;
+    }
+    return user;
+  };
+
+  /** Поиск игрока: одной строкой по имени, коду друга, Telegram или номеру. */
+  app.get('/api/admin/find', async (request, reply) => {
+    const user = await servant(request, reply);
+    if (!user) return reply;
+    const parsed = AdminFindQuerySchema.safeParse((request.query as { q?: string }).q ?? '');
+    if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
+    const response: AdminFindResponse = { found: await store.findPlayers(parsed.data) };
+    return response;
+  });
+
+  /** Карточка игрока: то же, что видит он сам, плюс служебное. */
+  app.get('/api/admin/card', async (request, reply) => {
+    const user = await servant(request, reply);
+    if (!user) return reply;
+    const id = (request.query as { id?: string }).id ?? '';
+    const found = await store.findPlayers(id, 1);
+    const row = found.find((player) => player.id === id);
+    if (!row) return reply.code(404).send({ error: 'no-player' });
+    const [rating, marks, art, frame, avatar, duels, sprint, order, earned] = await Promise.all([
+      store.ratingOf(id),
+      store.marksOf(id),
+      store.artOf(id),
+      store.frameOf(id),
+      store.avatarOf(id),
+      store.duelRecord(id),
+      store.bestSprint(id),
+      store.bestOrder(id),
+      ownedMarks(id),
+    ]);
+    const card: AdminCard = {
+      ...row,
+      rating: rating.rating,
+      league: leagueOf(rating.rating).name,
+      marks,
+      art,
+      frame,
+      avatar,
+      duels,
+      sprint,
+      order,
+      earned,
+    };
+    return card;
+  });
+
+  /**
+   * Жетоны игроку. Ставим числом, а не прибавкой: страница могла показывать
+   * устаревший счёт, и «прибавить сто» превратилось бы в лотерею.
+   */
+  app.post('/api/admin/tokens', async (request, reply) => {
+    const user = await servant(request, reply);
+    if (!user) return reply;
+    const parsed = AdminTokensRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
+    const { userId, tokens, reason } = parsed.data;
+    const was = await store.tokensOf(userId);
+    await store.setTokens(userId, tokens);
+    await note(user, userId, 'жетоны', `${was} → ${tokens}`, reason);
+    return { tokens };
+  });
+
+  /**
+   * Снять рисунок с пропуска. Это единственное в приборе, что игрок рисует
+   * сам, — и единственное, что может оказаться непристойным. Место под свой
+   * шильдик при этом остаётся: оно куплено за жетоны, и снимаем мы картинку,
+   * а не покупку.
+   */
+  app.post('/api/admin/art/clear', async (request, reply) => {
+    const user = await servant(request, reply);
+    if (!user) return reply;
+    const parsed = AdminUserRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
+    const { userId, reason } = parsed.data;
+    const was = await store.artOf(userId);
+    await store.clearArt(userId);
+    // В журнал пишем размер, а не сам рисунок: сто знаков подряд в строке
+    // «было → стало» читать невозможно, а восстанавливать рисунок незачем —
+    // игрок нарисует новый.
+    await note(
+      user,
+      userId,
+      'рисунок снят',
+      was === null ? 'рисунка не было' : `закрашено ${artPainted(was)}`,
+      reason,
+    );
+    return { art: null };
+  });
+
+  /**
+   * Сменить имя. Право игрока на собственную замену при этом возвращается:
+   * за чужое решение он платить не должен.
+   */
+  app.post('/api/admin/name', async (request, reply) => {
+    const user = await servant(request, reply);
+    if (!user) return reply;
+    const parsed = AdminNameRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
+    const { userId, name, reason } = parsed.data;
+    const was = await store.nameOf(userId);
+    if (was === null) return reply.code(404).send({ error: 'no-player' });
+    await store.renameByService(userId, name);
+    await note(user, userId, 'имя', `${was} → ${name}`, reason, name);
+    return { name };
+  });
+
+  /** Журнал: кто, кого, когда и почему. Новые записи сверху. */
+  app.get('/api/admin/log', async (request, reply) => {
+    const user = await servant(request, reply);
+    if (!user) return reply;
+    const response: AdminLogResponse = { entries: await store.adminLog() };
+    return response;
+  });
+
+  /** Запись в журнал. Зовётся из каждого действия — молчаливых тут нет. */
+  async function note(
+    admin: TokenPayload,
+    targetId: string,
+    action: string,
+    detail: string,
+    reason: string,
+    targetName?: string,
+  ): Promise<void> {
+    await store.logAdmin({
+      adminId: admin.sub,
+      adminName: admin.name,
+      targetId,
+      targetName: targetName ?? (await store.nameOf(targetId)) ?? '—',
+      action,
+      detail,
+      reason,
+    });
+  }
+
   // ---------- Наладка ----------
 
   /**
@@ -909,6 +1094,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       tokens,
       frame,
       art,
+      admin,
     ] = await Promise.all([
         store.ratingOf(user.sub),
         store.ratingRank(user.sub),
@@ -928,6 +1114,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         store.tokensOf(user.sub),
         store.frameOf(user.sub),
         store.artOf(user.sub),
+        isAdmin(user.sub),
       ]);
     const up = nextLeague(rating.rating);
     const league = leagueOf(rating.rating);
@@ -964,6 +1151,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       tokens,
       frame,
       art,
+      admin,
     };
   });
 

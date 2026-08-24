@@ -80,6 +80,28 @@ export interface DuelHistoryRow {
   hasReplay: boolean;
 }
 
+/** Строка поиска службы: то, чем игрока можно узнать в списке. */
+export interface AdminFoundRow {
+  id: string;
+  name: string;
+  code: string | null;
+  rating: number;
+  tokens: number;
+  seenAt: string | null;
+  identities: string[];
+}
+
+/** Запись журнала службы. */
+export interface AdminLogRow {
+  at: string;
+  admin: string;
+  target: string;
+  targetName: string;
+  action: string;
+  detail: string;
+  reason: string;
+}
+
 /** Рейтинг игрока вместе с историей: когда играл и сколько рейтинговых матчей. */
 export interface PlayerRating extends Rating {
   ratedAt: string | null;
@@ -196,6 +218,21 @@ export class Store {
            created_at TEXT NOT NULL DEFAULT (datetime('now')),
            PRIMARY KEY (user_id, friend_id)
          )`,
+        // Журнал службы: кто из служащих, что, с кем и почему сделал.
+        // Пишется на каждое действие над чужим аккаунтом и не стирается:
+        // без него отменить чужое решение нечем, а спорить не с чем.
+        `CREATE TABLE IF NOT EXISTS admin_log (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           at TEXT NOT NULL DEFAULT (datetime('now')),
+           admin_id TEXT NOT NULL,
+           admin_name TEXT NOT NULL,
+           target_id TEXT NOT NULL,
+           target_name TEXT NOT NULL,
+           action TEXT NOT NULL,
+           detail TEXT NOT NULL DEFAULT '',
+           reason TEXT NOT NULL
+         )`,
+        `CREATE INDEX IF NOT EXISTS idx_admin_log_at ON admin_log (at DESC)`,
       ],
       'write',
     );
@@ -1361,6 +1398,139 @@ export class Store {
       args: [id, `-${gapSeconds} seconds`],
     });
     return result.rowsAffected > 0;
+  }
+
+  // ---------- Служба ----------
+
+  /**
+   * Есть ли у игрока вход из Telegram с таким номером. По этому и решается,
+   * служащий он или нет: список номеров лежит в настройках сервера, а не в
+   * базе, — права даёт тот, у кого доступ к серверу, и отобрать их можно,
+   * не заходя в игру.
+   */
+  async telegramIdsOf(userId: string): Promise<string[]> {
+    const rows = await this.client.execute({
+      sql: `SELECT external_id FROM identities WHERE user_id = ? AND kind = 'telegram'`,
+      args: [userId],
+    });
+    return rows.rows.map((row) => String(row.external_id));
+  }
+
+  /**
+   * Поиск игрока службой. Одной строкой ищем по всему, чем игрока вообще
+   * можно назвать: имя, код друга, номер в Telegram, номер аккаунта.
+   * Точные совпадения идут первыми — по коду друга ищут именно того, кого
+   * назвали, а не всех похожих.
+   */
+  async findPlayers(query: string, limit = 20): Promise<AdminFoundRow[]> {
+    const rows = await this.client.execute({
+      sql: `SELECT u.id, u.name, u.friend_code, u.rating, u.tokens, u.seen_at,
+                   (SELECT GROUP_CONCAT(i.kind) FROM identities i WHERE i.user_id = u.id) AS kinds,
+                   (u.friend_code = ?) AS by_code,
+                   (u.id = ?) AS by_id,
+                   EXISTS (SELECT 1 FROM identities i
+                            WHERE i.user_id = u.id AND i.kind = 'telegram' AND i.external_id = ?)
+                     AS by_telegram
+              FROM users u
+             WHERE u.friend_code = ? OR u.id = ? OR u.name LIKE ? OR by_telegram
+             ORDER BY by_code DESC, by_id DESC, by_telegram DESC, u.rating DESC
+             LIMIT ?`,
+      args: [
+        query.toUpperCase(),
+        query,
+        query,
+        query.toUpperCase(),
+        query,
+        `%${query}%`,
+        limit,
+      ],
+    });
+    return rows.rows.map((row) => ({
+      id: String(row.id),
+      name: String(row.name),
+      code: row.friend_code === null ? null : String(row.friend_code),
+      rating: Number(row.rating ?? 0),
+      tokens: Number(row.tokens ?? 0),
+      seenAt: row.seen_at === null || row.seen_at === undefined ? null : String(row.seen_at),
+      identities: row.kinds === null || row.kinds === undefined ? [] : String(row.kinds).split(','),
+    }));
+  }
+
+  /** Имя игрока — для журнала: по одному номеру аккаунта в нём не разобраться. */
+  async nameOf(userId: string): Promise<string | null> {
+    const rows = await this.client.execute({
+      sql: 'SELECT name FROM users WHERE id = ?',
+      args: [userId],
+    });
+    const name = rows.rows[0]?.name;
+    return name === undefined || name === null ? null : String(name);
+  }
+
+  /**
+   * Служба меняет имя без оглядки на «замену раз в жизни»: она снимает
+   * непристойное имя, а не тратит право игрока. Право при этом возвращаем —
+   * игрок за чужое решение платить не должен.
+   */
+  async renameByService(id: string, name: string): Promise<void> {
+    await this.client.execute({
+      sql: 'UPDATE users SET name = ?, renamed = 0 WHERE id = ?',
+      args: [name, id],
+    });
+  }
+
+  /**
+   * Снимает рисунок с пропуска. Место под свой шильдик не отбираем: оно
+   * куплено за жетоны, а снимаем мы картинку, а не покупку, — игрок рисует
+   * новую.
+   */
+  async clearArt(id: string): Promise<void> {
+    await this.client.execute({
+      sql: 'UPDATE users SET art = NULL WHERE id = ?',
+      args: [id],
+    });
+  }
+
+  /** Записывает действие службы. Пишется всегда — и когда всё прошло, и когда нет. */
+  async logAdmin(entry: {
+    adminId: string;
+    adminName: string;
+    targetId: string;
+    targetName: string;
+    action: string;
+    detail: string;
+    reason: string;
+  }): Promise<void> {
+    await this.client.execute({
+      sql: `INSERT INTO admin_log (admin_id, admin_name, target_id, target_name, action, detail, reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        entry.adminId,
+        entry.adminName,
+        entry.targetId,
+        entry.targetName,
+        entry.action,
+        entry.detail,
+        entry.reason,
+      ],
+    });
+  }
+
+  /** Последние записи журнала — новые сверху. */
+  async adminLog(limit = 50): Promise<AdminLogRow[]> {
+    const rows = await this.client.execute({
+      sql: `SELECT at, admin_name, target_id, target_name, action, detail, reason
+              FROM admin_log ORDER BY id DESC LIMIT ?`,
+      args: [limit],
+    });
+    return rows.rows.map((row) => ({
+      at: String(row.at),
+      admin: String(row.admin_name),
+      target: String(row.target_id),
+      targetName: String(row.target_name),
+      action: String(row.action),
+      detail: String(row.detail),
+      reason: String(row.reason),
+    }));
   }
 
   /**
