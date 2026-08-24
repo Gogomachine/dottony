@@ -551,6 +551,7 @@
       padding: 5px 9px;
       cursor: pointer;
     }
+    .stamp.left { right: auto; left: 12px; }
     .stamp[hidden] { display: none; }
     .stamp:active { transform: translateY(1px); }
     /* Занесённая рука: второе нажатие платит, и клавиша об этом говорит. */
@@ -1719,6 +1720,13 @@
         — часы, а часов у листа нет, и её место в этом режиме свободно.
       -->
       <button class="stamp" id="paper-stamp" hidden>На пропуск</button>
+      <!--
+        Образцы: готовые картинки из точек, которые кладутся под лист
+        подложкой. Клавиша слева, у того же края, что и шкала делений, —
+        напротив «На пропуск»: одна зовёт рисунок на стекло, другая уносит
+        его с него.
+      -->
+      <button class="stamp left" id="paper-sample" hidden>Образец</button>
       <canvas id="game"></canvas>
       <div class="stat" id="stat">Сигнал ровный</div>
       <i class="finger" id="finger" hidden></i>

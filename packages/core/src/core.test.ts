@@ -50,6 +50,7 @@ import {
   encodeArt,
   isArt,
 } from './art.js';
+import { SAMPLES, nextSample, sampleAt, samplesValid } from './samples.js';
 import { nextInt, seedRng } from './rng.js';
 import {
   DEFAULT_CONFIG,
@@ -893,6 +894,52 @@ describe('шильдики', () => {
     // Лишнее за край корпуса просто не помещается.
     expect(cleanMarks(free.slice(0, 5).map((mark) => mark.id))).toHaveLength(MARK_SLOTS);
     expect(cleanMarks([])).toEqual([null, null, null]);
+  });
+});
+
+describe('образцы листа', () => {
+  it('каждый записан как рисунок: сто клеток и знакомые краски', () => {
+    expect(SAMPLES.length).toBeGreaterThan(0);
+    expect(samplesValid()).toBe(true);
+    for (const sample of SAMPLES) {
+      expect(sample.name).toBeTruthy();
+      expect(artPainted(sample.art)).toBeGreaterThan(10);
+    }
+    // Названия не повторяются: по ним образец и зовут в приборной строке.
+    expect(new Set(SAMPLES.map((sample) => sample.name)).size).toBe(SAMPLES.length);
+  });
+
+  it('в образце нет одиночных клеток — их не нарисовать одним движением', () => {
+    // Красит цепочка от двух клеток: у каждой закрашенной клетки должна быть
+    // соседка того же цвета, хотя бы по диагонали. Иначе точку пришлось бы
+    // ставить парой и половину закрывать сверху.
+    const lonely: string[] = [];
+    for (const sample of SAMPLES) {
+      const cells = decodeArt(sample.art);
+      for (let r = 0; r < ART_SIZE; r++) {
+        for (let c = 0; c < ART_SIZE; c++) {
+          const paint = cells[r]![c];
+          if (paint === null) continue;
+          const friends = [-1, 0, 1].some((dr) =>
+            [-1, 0, 1].some(
+              (dc) => (dr !== 0 || dc !== 0) && cells[r + dr]?.[c + dc] === paint,
+            ),
+          );
+          if (!friends) lonely.push(`${sample.name}: ряд ${r}, клетка ${c}`);
+        }
+      }
+    }
+    expect(lonely).toEqual([]);
+  });
+
+  it('образцы листаются по кругу и через пустое место', () => {
+    expect(nextSample(null)).toBe(0);
+    expect(nextSample(0)).toBe(1);
+    // После последнего — чистое стекло, и только потом снова первый.
+    expect(nextSample(SAMPLES.length - 1)).toBeNull();
+    expect(sampleAt(null)).toBeNull();
+    expect(sampleAt(0)?.name).toBe(SAMPLES[0]!.name);
+    expect(sampleAt(SAMPLES.length)).toBeNull();
   });
 });
 

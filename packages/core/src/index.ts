@@ -49,6 +49,8 @@ export {
   artPainted,
 } from './art.js';
 export type { ArtCell } from './art.js';
+export { SAMPLES, nextSample, sampleAt, samplesValid } from './samples.js';
+export type { Sample } from './samples.js';
 export { FRAMES, FRAME_PRICE, frameById, isFrame, frameAllowed } from './frames.js';
 export type { Frame } from './frames.js';
 export { FACES, isFace } from './faces.js';

@@ -2,6 +2,8 @@ import {
   cleanMarks,
   markById,
   DEFAULT_CONFIG,
+  nextSample,
+  sampleAt,
   OWN_MARK,
   OWN_PRICE,
   type Cell,
@@ -104,6 +106,7 @@ const miniPartEls = [
 ];
 const ticksEl = el<HTMLDivElement>('ticks');
 const stampEl = el<HTMLButtonElement>('paper-stamp');
+const sampleKeyEl = el<HTMLButtonElement>('paper-sample');
 const statEl = el<HTMLDivElement>('stat');
 const chainCountEl = el<HTMLDivElement>('chain-count');
 const seedEl = el<HTMLSpanElement>('seed');
@@ -1584,6 +1587,9 @@ function startDrawing(): void {
   for (const tick of tickEls) tick.className = 'tick';
   ticksEl.hidden = true;
   stampEl.hidden = false;
+  sampleKeyEl.hidden = false;
+  sampleKeyEl.classList.toggle('arm', sampleAt(sampleIndex) !== null);
+  paper.setSample(sampleAt(sampleIndex)?.art ?? null);
   armStamp(false);
   // Пропуск читаем заранее: к первому нажатию цена и остаток уже известны.
   void readPass();
@@ -1592,8 +1598,11 @@ function startDrawing(): void {
   timeFieldEl.className = 'field right';
   timeEl.textContent = `${PAPER_SIZE} × ${PAPER_SIZE}`;
   // Коротко: в углу окуляра на узком телефоне длинная строка обрезалась
-  // многоточием, и подсказка кончалась на полуслове.
-  setStat('Цепочка, потом цвет');
+  // многоточием, и подсказка кончалась на полуслове. Если под листом лежит
+  // образец, называем его: кольца на стекле сами по себе не говорят, что
+  // это за зверь.
+  const under = sampleAt(sampleIndex);
+  setStat(under === null ? 'Цепочка, потом цвет' : `Образец · ${under.name}`);
   updatePaperHud();
   updateKeys();
 }
@@ -1607,10 +1616,51 @@ function stopDrawing(): void {
   showPalette(false);
   ticksEl.hidden = false;
   stampEl.hidden = true;
+  sampleKeyEl.hidden = true;
   armStamp(false);
   scoreLabelEl.textContent = 'Потенциал';
   miniCache = '';
   shownChain = '';
+}
+
+/**
+ * Образец под листом. Чистое стекло — честное начало, но перед ним человек
+ * чаще всего замирает: рисовать можно что угодно, и потому непонятно, с
+ * чего начать. Образец отвечает не советом, а примером — вот кот, обведи.
+ *
+ * Клавиша листает набор по кругу и через пустое место: убрать подложку
+ * должно быть так же просто, как её позвать.
+ */
+let sampleIndex: number | null = loadSample();
+
+function showSample(index: number | null): void {
+  sampleIndex = index;
+  const sample = sampleAt(index);
+  paper.setSample(sample?.art ?? null);
+  saveSample(index);
+  sampleKeyEl.classList.toggle('arm', sample !== null);
+  setStat(sample === null ? 'Чистое стекло' : `Образец · ${sample.name}`);
+}
+
+/** Какой образец лежал под листом в прошлый раз. */
+function loadSample(): number | null {
+  try {
+    const saved = localStorage.getItem('doton.paper-sample.v1');
+    if (saved === null) return null;
+    const index = Number(saved);
+    return sampleAt(index) === null ? null : index;
+  } catch {
+    return null;
+  }
+}
+
+function saveSample(index: number | null): void {
+  try {
+    if (index === null) localStorage.removeItem('doton.paper-sample.v1');
+    else localStorage.setItem('doton.paper-sample.v1', String(index));
+  } catch {
+    // Приватный режим — образец живёт до конца сеанса.
+  }
 }
 
 /**
@@ -1902,6 +1952,7 @@ paletteEl.addEventListener('click', (event) => {
 });
 
 stampEl.addEventListener('click', () => void stampPass());
+sampleKeyEl.addEventListener('click', () => showSample(nextSample(sampleIndex)));
 
 el<HTMLButtonElement>('tut-skip').addEventListener('click', () => stopTutorial());
 // Показ листают руками: «Дальше» на последнем шаге его и закрывает.

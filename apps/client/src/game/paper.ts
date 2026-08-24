@@ -2,6 +2,7 @@ import {
   ART_PAINTS,
   ART_SIZE,
   artEmptyCells,
+  decodeArt,
   encodeArt,
   type ArtCell,
   type Cell,
@@ -60,6 +61,12 @@ function neighbours(a: Cell, b: Cell): boolean {
 
 export class Paper {
   private cells: PaperCell[][] = empty();
+  /**
+   * Образец под рисунком: подложка, которую обводят. Живёт отдельно от
+   * клеток — его не сохраняют и не стирают вместе с листом, он не часть
+   * рисунка, а то, по чему рисуют.
+   */
+  private sample: PaperCell[][] | null = null;
   /** Набранная цепочка. Она переживает поднятый палец: цвет жмут после. */
   chain: Cell[] = [];
   private readonly ctx: CanvasRenderingContext2D;
@@ -102,6 +109,11 @@ export class Paper {
     this.chain = [];
     save(this.cells);
     return painted;
+  }
+
+  /** Кладёт образец под лист; null — убирает подложку. */
+  setSample(art: string | null): void {
+    this.sample = art === null ? null : decodeArt(art);
   }
 
   /** Рисунок строкой — в том виде, в каком он уезжает на пропуск. */
@@ -212,6 +224,38 @@ export class Paper {
     ctx.stroke();
 
     const radius = this.cell * DOT;
+
+    /*
+     * Образец — под всем остальным и вполсилы: он подложка, а не рисунок.
+     * Клетку, которую игрок уже закрасил, не рисуем вовсе: обведённое место
+     * должно выглядеть законченным, а не подсвеченным. По тому, что осталось
+     * светиться, и видно, сколько ещё обводить.
+     */
+    if (this.sample) {
+      // Клетка образца — кольцо со слабой заливкой, а не бледная точка.
+      // Бледной заливки мало: тёмные краски на чёрном стекле от неё почти
+      // не отличаются, и графитовый кот выходил невидимым. Кольцо светлое
+      // всегда — оно и говорит «сюда», а заливка внутри — «этой краской».
+      for (let r = 0; r < PAPER_SIZE; r++) {
+        for (let c = 0; c < PAPER_SIZE; c++) {
+          const under = this.sample[r]?.[c] ?? null;
+          if (under === null || this.cells[r]![c] !== null) continue;
+          const paint = PAPER_PAINTS[under]?.css;
+          if (paint === undefined) continue;
+          const center = this.center({ r, c });
+          ctx.globalAlpha = 0.5;
+          ctx.beginPath();
+          ctx.arc(center.x, center.y, radius * 0.92, 0, Math.PI * 2);
+          ctx.fillStyle = paint;
+          ctx.fill();
+          ctx.globalAlpha = 0.4;
+          ctx.strokeStyle = this.theme.chainOutline;
+          ctx.lineWidth = Math.max(1, this.cell * 0.08);
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+        }
+      }
+    }
 
     // Нить набранной цепочки — под точками, как и в игре.
     if (this.chain.length > 1) {
