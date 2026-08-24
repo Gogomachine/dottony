@@ -4,6 +4,8 @@ import {
   adminBan,
   adminCard,
   adminClearArt,
+  adminClearReports,
+  adminReports,
   adminFind,
   adminLog,
   adminName,
@@ -39,6 +41,9 @@ const shutNoteEl = el<HTMLSpanElement>('shut-note');
 const shutHintEl = el<HTMLSpanElement>('shut-hint');
 const shutKeysEl = el<HTMLDivElement>('shut-keys');
 const findCardEl = el<HTMLDivElement>('find-card');
+const reportsCardEl = el<HTMLDivElement>('reports-card');
+const reportsEl = el<HTMLDivElement>('reports');
+const reportsNoteEl = el<HTMLSpanElement>('reports-note');
 const foundEl = el<HTMLTableElement>('found');
 const findNoteEl = el<HTMLSpanElement>('find-note');
 const playerEl = el<HTMLDivElement>('player');
@@ -112,9 +117,74 @@ async function open(): Promise<void> {
     return;
   }
   shutEl.hidden = true;
+  reportsCardEl.hidden = false;
   findCardEl.hidden = false;
   logCardEl.hidden = false;
-  await showLog();
+  await Promise.all([showReports(), showLog()]);
+}
+
+/**
+ * Очередь жалоб. Сгруппирована по тому, на кого жалуются: три жалобы на
+ * одного — это сигнал, а тот же список по одной строке на жалобу заставлял
+ * бы считать их глазами.
+ */
+async function showReports(): Promise<void> {
+  try {
+    const { reports } = await adminReports();
+    reportsEl.innerHTML = '';
+    reportsNoteEl.textContent = reports.length === 0 ? 'Пусто — и хорошо.' : '';
+    for (const report of reports) {
+      const row = document.createElement('div');
+      row.className = 'report';
+
+      // Пустое стекло рядом с именем ничего не говорит: у кого рисунка нет,
+      // тому и места под него в строке не нужно.
+      if (report.art !== null) {
+        const art = document.createElement('div');
+        art.className = 'art-box';
+        art.appendChild(artPicture(report.art));
+        row.appendChild(art);
+      }
+
+      const who = document.createElement('div');
+      who.className = 'who';
+      const name = document.createElement('b');
+      name.textContent = report.targetName;
+      who.appendChild(name);
+      const facts = document.createElement('div');
+      facts.className = 'note';
+      facts.textContent =
+        `жалоб: ${report.count} · последняя ${moment(report.lastAt)}` +
+        (report.ban ? ' · прибор уже изъят' : '');
+      who.appendChild(facts);
+      row.appendChild(who);
+
+      const open = document.createElement('button');
+      open.textContent = 'Карточка';
+      open.addEventListener('click', () => void showPlayer(report.targetId));
+      row.appendChild(open);
+
+      const done = document.createElement('button');
+      done.textContent = 'Разобрано';
+      done.addEventListener('click', () => {
+        void (async () => {
+          done.disabled = true;
+          try {
+            await adminClearReports(report.targetId, 'разобрано из очереди');
+            await Promise.all([showReports(), showLog()]);
+          } catch {
+            done.disabled = false;
+            reportsNoteEl.textContent = 'Не вышло.';
+          }
+        })();
+      });
+      row.appendChild(done);
+
+      reportsEl.appendChild(row);
+    }
+  } catch {
+    reportsNoteEl.textContent = 'Очередь не открылась.';
+  }
 }
 
 async function find(): Promise<void> {
@@ -328,7 +398,7 @@ function deed(
         await run(values, reason.value.trim());
         done = `Готово · ${what.toLowerCase()}: ${reason.value.trim()}`;
         reason.value = '';
-        await Promise.all([showPlayer(id), showLog()]);
+        await Promise.all([showPlayer(id), showLog(), showReports()]);
       } catch (error) {
         note.className = 'note warn';
         note.textContent = error instanceof ApiError ? `Отказ: ${error.code}` : 'Не вышло.';

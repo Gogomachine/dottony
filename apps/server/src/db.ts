@@ -92,6 +92,16 @@ export interface AdminFoundRow {
   ban?: { until: string | null; reason: string };
 }
 
+/** Строка очереди жалоб. */
+export interface AdminReportRow {
+  targetId: string;
+  targetName: string;
+  count: number;
+  lastAt: string;
+  art: string | null;
+  ban?: { until: string | null; reason: string };
+}
+
 /** Запись журнала службы. */
 export interface AdminLogRow {
   at: string;
@@ -234,6 +244,22 @@ export class Store {
            reason TEXT NOT NULL
          )`,
         `CREATE INDEX IF NOT EXISTS idx_admin_log_at ON admin_log (at DESC)`,
+        // Жалобы игроков. Разобранные не стираются: по ним видно, что на
+        // человека уже жаловались и чем это кончилось.
+        `CREATE TABLE IF NOT EXISTS reports (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           at TEXT NOT NULL DEFAULT (datetime('now')),
+           from_user TEXT NOT NULL REFERENCES users(id),
+           target_user TEXT NOT NULL REFERENCES users(id),
+           handled_at TEXT,
+           handled_by TEXT
+         )`,
+        // Один игрок — одна неразобранная жалоба на одного и того же: иначе
+        // очередь набивается одним обиженным, а «сколько человек пожаловалось»
+        // перестаёт что-либо значить.
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_open
+           ON reports (from_user, target_user) WHERE handled_at IS NULL`,
+        `CREATE INDEX IF NOT EXISTS idx_reports_target ON reports (target_user)`,
       ],
       'write',
     );
@@ -898,7 +924,7 @@ export class Store {
         sql: `SELECT u.id, u.name, u.marks, u.art, r.score AS value, ${extra}
             FROM ${table} r JOIN users u ON u.id = r.user_id
             WHERE ${where}
-            ORDER BY r.score DESC, r.created_at ASC
+            ORDER BY r.score DESC, r.created_at ASC, r.rowid ASC
             LIMIT ?`,
         args: [limit],
       }),
@@ -1217,9 +1243,14 @@ export class Store {
     for (const board of boards) {
       const { table, where } = this.source(board, 'all');
       const result = await this.client.execute({
+        // Время записи хранится с точностью до секунды, и два одинаковых
+        // рекорда в одну секунду встают в произвольном порядке — а золото
+        // при этом перескакивает с одного на другого без всякой причины.
+        // Номер строки разрешает ничью навсегда: кто записался первым, тот и
+        // держит таблицу.
         sql: `SELECT user_id FROM ${table}
               WHERE score > 0 AND ${where}
-              ORDER BY score DESC, created_at ASC
+              ORDER BY score DESC, created_at ASC, rowid ASC
               LIMIT 1`,
         args: [],
       });
@@ -1526,6 +1557,57 @@ export class Store {
       sql: `UPDATE users SET banned_forever = 0, banned_until = NULL, ban_reason = NULL WHERE id = ?`,
       args: [id],
     });
+  }
+
+  /**
+   * Принимает жалобу. Повторная от того же на того же ничего не меняет:
+   * очередь — про то, сколько человек пожаловалось, а не сколько раз нажали.
+   */
+  async addReport(fromUser: string, targetUser: string): Promise<void> {
+    await this.client.execute({
+      sql: `INSERT INTO reports (from_user, target_user) VALUES (?, ?)
+            ON CONFLICT DO NOTHING`,
+      args: [fromUser, targetUser],
+    });
+  }
+
+  /** Неразобранные жалобы, сгруппированные по тому, на кого жалуются. */
+  async openReports(limit = 50): Promise<AdminReportRow[]> {
+    const rows = await this.client.execute({
+      sql: `SELECT r.target_user AS id, u.name, u.art,
+                   u.banned_until, u.banned_forever, u.ban_reason,
+                   COUNT(*) AS n, MAX(r.at) AS last_at
+              FROM reports r JOIN users u ON u.id = r.target_user
+             WHERE r.handled_at IS NULL
+             GROUP BY r.target_user
+             ORDER BY n DESC, last_at DESC
+             LIMIT ?`,
+      args: [limit],
+    });
+    return rows.rows.map((row) => {
+      const forever = Number(row.banned_forever) === 1;
+      const until = row.banned_until === null || row.banned_until === undefined ? null : String(row.banned_until);
+      return {
+        targetId: String(row.id),
+        targetName: String(row.name),
+        count: Number(row.n),
+        lastAt: String(row.last_at),
+        art: isArt(row.art) ? row.art : null,
+        ...(forever || until !== null
+          ? { ban: { until: forever ? null : until, reason: row.ban_reason === null ? '' : String(row.ban_reason) } }
+          : {}),
+      };
+    });
+  }
+
+  /** Помечает жалобы на игрока разобранными. Записи остаются — они история. */
+  async clearReports(targetUser: string, byAdmin: string): Promise<number> {
+    const result = await this.client.execute({
+      sql: `UPDATE reports SET handled_at = datetime('now'), handled_by = ?
+             WHERE target_user = ? AND handled_at IS NULL`,
+      args: [byAdmin, targetUser],
+    });
+    return result.rowsAffected;
   }
 
   /** Имя игрока — для журнала: по одному номеру аккаунта в нём не разобраться. */

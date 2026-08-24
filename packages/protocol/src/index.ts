@@ -216,6 +216,35 @@ export interface AdminLogResponse {
   entries: AdminLogEntry[];
 }
 
+/**
+ * Жалоба на игрока. Называют его кодом друга — тем же, что уже есть у
+ * клиента после матча: своего номера аккаунта игрок не видит нигде, и
+ * просить его было бы неоткуда.
+ *
+ * На что именно жалуются, не спрашиваем: после матча человек видел и имя, и
+ * шильдик разом, а лишний выбор на этом экране стоит дороже, чем ответ на
+ * него. Служба всё равно смотрит карточку целиком.
+ */
+export const ReportRequestSchema = z.object({
+  code: z.string().trim().length(6),
+});
+
+/** Строка очереди жалоб: на кого жалуются и сколько раз. */
+export interface AdminReport {
+  targetId: string;
+  targetName: string;
+  /** Сколько разных игроков пожаловались. Три жалобы на одного — уже сигнал. */
+  count: number;
+  lastAt: string;
+  /** Его рисунок и имя — то, на что обычно и жалуются. */
+  art: string | null;
+  ban?: BanInfo;
+}
+
+export interface AdminReportsResponse {
+  reports: AdminReport[];
+}
+
 export const InviteRequestSchema = z.object({
   room: z.string().trim().min(4).max(16),
 });

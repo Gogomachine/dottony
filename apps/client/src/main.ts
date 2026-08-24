@@ -41,6 +41,7 @@ import {
   resetAuth,
   savedName,
   startParam,
+  report,
   submitOrder,
   submitSprint,
   whenBanned,
@@ -135,6 +136,7 @@ const duelSheet = el<HTMLDivElement>('duel-sheet');
 const rulesSheet = el<HTMLDivElement>('rules-sheet');
 const banSheet = el<HTMLDivElement>('ban-sheet');
 const addOpponentBtn = el<HTMLButtonElement>('add-opponent');
+const reportBtn = el<HTMLButtonElement>('report-opponent');
 const inviteBarEl = el<HTMLDivElement>('invite-bar');
 const inviteTextEl = el<HTMLSpanElement>('invite-text');
 const replayBarEl = el<HTMLDivElement>('replay-bar');
@@ -756,8 +758,12 @@ function showOverModal(options: {
   if (options.rating) showRatingChange(options.rating);
   // Добавить соперника проще всего сразу после матча — потом искать код.
   addOpponentBtn.hidden = options.addFriend === undefined;
+  // Пожаловаться — тоже: и то и другое про того, с кем только что играл.
+  reportBtn.hidden = options.addFriend === undefined;
   if (options.addFriend) {
     addOpponentBtn.textContent = `+ ${options.addFriend.name} в друзья`;
+    reportBtn.textContent = 'Пожаловаться';
+    reportBtn.disabled = false;
     pendingFriendCode = options.addFriend.code;
   }
   // Пока ждём соперника, единственное осмысленное действие — отменить поиск.
@@ -2111,6 +2117,25 @@ function showRoomCode(show: boolean): void {
   showCode = show;
   roomBoxEl.hidden = !show;
 }
+
+/**
+ * Жалоба на соперника. Одно нажатие и никаких вопросов: на что именно
+ * жаловаться, игрок только что видел сам, а служба всё равно смотрит
+ * карточку целиком. Повторная жалоба ничего не добавляет — поэтому клавиша
+ * после нажатия говорит спасибо и запирается.
+ */
+reportBtn.addEventListener('click', () => {
+  if (!pendingFriendCode) return;
+  reportBtn.disabled = true;
+  void report(pendingFriendCode)
+    .then(() => {
+      reportBtn.textContent = 'Жалоба отправлена';
+    })
+    .catch(() => {
+      reportBtn.textContent = 'Не отправилось';
+      reportBtn.disabled = false;
+    });
+});
 
 addOpponentBtn.addEventListener('click', () => {
   const code = pendingFriendCode;

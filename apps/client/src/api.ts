@@ -3,6 +3,7 @@ import type {
   BanInfo,
   AdminFindResponse,
   AdminLogResponse,
+  AdminReportsResponse,
   AuthResponse,
   BoardPeriod,
   BuyResponse,
@@ -321,6 +322,25 @@ export function adminTokens(userId: string, tokens: number, reason: string): Pro
 
 export function adminClearArt(userId: string, reason: string): Promise<unknown> {
   return request('/api/admin/art/clear', {
+    method: 'POST',
+    body: JSON.stringify({ userId, reason }),
+  });
+}
+
+/** Жалоба на соперника: называем его тем же кодом, что и при добавлении в друзья. */
+export function report(code: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>('/api/reports', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  });
+}
+
+export function adminReports(): Promise<AdminReportsResponse> {
+  return request<AdminReportsResponse>('/api/admin/reports');
+}
+
+export function adminClearReports(userId: string, reason: string): Promise<unknown> {
+  return request('/api/admin/reports/clear', {
     method: 'POST',
     body: JSON.stringify({ userId, reason }),
   });

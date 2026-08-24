@@ -11,6 +11,7 @@ import {
   AdminFindQuerySchema,
   AdminNameRequestSchema,
   AdminTokensRequestSchema,
+  ReportRequestSchema,
   AdminUserRequestSchema,
   BuyRequestSchema,
   FrameRequestSchema,
@@ -28,6 +29,8 @@ import {
   type AdminFindResponse,
   type BanInfo,
   type AdminLogResponse,
+  type AdminReportsResponse,
+  type DuelKind,
   type AuthResponse,
   type BuyResponse,
   type OrderLeaderboardResponse,
@@ -913,6 +916,29 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return { ban: null };
   });
 
+  /** Очередь жалоб: на кого жалуются и сколько человек. */
+  app.get('/api/admin/reports', async (request, reply) => {
+    const user = await servant(request, reply);
+    if (!user) return reply;
+    const response: AdminReportsResponse = { reports: await store.openReports() };
+    return response;
+  });
+
+  /**
+   * Жалобы разобраны. Записи не стираются — по ним видно, что на человека
+   * уже жаловались; они лишь уходят из очереди.
+   */
+  app.post('/api/admin/reports/clear', async (request, reply) => {
+    const user = await servant(request, reply);
+    if (!user) return reply;
+    const parsed = AdminUserRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
+    const { userId, reason } = parsed.data;
+    const count = await store.clearReports(userId, user.sub);
+    await note(user, userId, 'жалобы разобраны', `${count}`, reason);
+    return { cleared: count };
+  });
+
   /** Журнал: кто, кого, когда и почему. Новые записи сверху. */
   app.get('/api/admin/log', async (request, reply) => {
     const user = await servant(request, reply);
@@ -1415,6 +1441,26 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
 
   /**
+   * Жалоба на игрока. Единственная дверь, которой игрок говорит о другом
+   * игроке, — и потому единственная, куда стоит смотреть, ожидая злоупотреблений.
+   *
+   * Называют соперника кодом друга: он уже есть у клиента после матча, а
+   * номера чужого аккаунта игрок не видит нигде. На что жалуются, не
+   * спрашиваем — служба смотрит карточку целиком; повторная жалоба от того
+   * же на того же ничего не добавляет.
+   */
+  app.post('/api/reports', async (request, reply) => {
+    const user = await requireUser(request);
+    const parsed = ReportRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
+    const target = await store.userByFriendCode(parsed.data.code.toUpperCase());
+    if (!target) return reply.code(404).send({ error: 'no-such-code' });
+    if (target.id === user.sub) return reply.code(400).send({ error: 'self' });
+    await store.addReport(user.sub, target.id);
+    return { ok: true };
+  });
+
+  /**
    * Код привязки Telegram. Нужен, когда игра открыта в браузере на другом
    * устройстве: там initData взять неоткуда, и без этого у человека
    * появился бы второй аккаунт.
@@ -1637,8 +1683,10 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
 
     // Код друга нужен сопернику на экране результата, шильдики — с первой
     // секунды матча: на время дуэли соперник занимает корпус целиком.
-    // Читаем один раз при подключении: к моменту подбора оба уже на месте.
-    void Promise.all([
+    // Читаем один раз при подключении, но в подбор пускаем только после:
+    // раньше это была гонка, и при быстром подборе соперник получал матч без
+    // корпуса и без кода — а без кода нет ни «в друзья», ни жалобы.
+    const known = Promise.all([
       store.friendCodeOf(user.sub),
       store.marksOf(user.sub),
       store.frameOf(user.sub),
@@ -1651,6 +1699,18 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         if (art) player.art = art;
       })
       .catch((error: unknown) => app.log.error(error, 'duel player lookup failed'));
+
+    /**
+     * Ждём, пока прочитается корпус, и только потом становимся в очередь.
+     * Задержка тут в один запрос к базе, а цена спешки — матч, в котором
+     * соперник безымянный.
+     */
+    const joinWhenKnown = (room: string | undefined, kind: DuelKind): void => {
+      void known.then(() => {
+        // Сокет мог закрыться, пока читали: в очередь ставить уже некого.
+        if (socket.readyState === socket.OPEN) matchmaker.join(player, room, kind);
+      });
+    };
 
     socket.on('message', (raw: Buffer | string) => {
       let parsed: unknown;
@@ -1669,7 +1729,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
 
       switch (message.data.type) {
         case 'join':
-          matchmaker.join(player, message.data.room, message.data.kind ?? 'chain');
+          joinWhenKnown(message.data.room, message.data.kind ?? 'chain');
           break;
         case 'move': {
           const outcome = matchmaker.move(player.id, message.data.path);

@@ -37,7 +37,9 @@ import type {
   AdminCard,
   AdminFindResponse,
   AdminLogResponse,
+  AdminReportsResponse,
   DuelServerMessage,
+  FriendsResponse,
   MeResponse,
   MoveLog,
   OrderLeaderboardResponse,
@@ -1967,6 +1969,95 @@ describe('API', () => {
     } finally {
       db.close();
       await rm(file, { force: true });
+    }
+  });
+
+  it('жалобы: копятся по одной от человека и уходят из очереди разобранными', async () => {
+    const desk = await buildApp({
+      databaseUrl: ':memory:',
+      jwtSecret: 'test-jwt',
+      telegramBotToken: BOT_TOKEN,
+      adminTelegramIds: ['777'],
+    });
+    try {
+      const byTelegram = async (id: number, name: string): Promise<string> => {
+        const auth = await desk.inject({
+          method: 'POST',
+          url: '/api/auth/telegram',
+          payload: { initData: signedInitData({ id, first_name: name, username: name }) },
+        });
+        return (auth.json() as { token: string }).token;
+      };
+      const boss = await byTelegram(777, 'Служащий');
+      const first = await byTelegram(500, 'Первый');
+      const second = await byTelegram(501, 'Второй');
+      const rude = await byTelegram(502, 'Грубиян');
+      const desks = { authorization: `Bearer ${boss}` };
+      const codeOf = async (token: string): Promise<string> => {
+        const friends = await desk.inject({
+          method: 'GET',
+          url: '/api/me/friends',
+          headers: { authorization: `Bearer ${token}` },
+        });
+        return (friends.json() as FriendsResponse).code;
+      };
+      const rudeCode = await codeOf(rude);
+      const complain = async (
+        token: string,
+        code: string,
+      ): Promise<{ statusCode: number }> =>
+        desk.inject({
+          method: 'POST',
+          url: '/api/reports',
+          headers: { authorization: `Bearer ${token}` },
+          payload: { code },
+        });
+
+      expect((await complain(first, rudeCode)).statusCode).toBe(200);
+      // Повторная от того же ничего не добавляет: очередь про то, сколько
+      // человек пожаловалось, а не сколько раз нажали.
+      expect((await complain(first, rudeCode)).statusCode).toBe(200);
+      expect((await complain(second, rudeCode)).statusCode).toBe(200);
+      // На себя не жалуются, и выдуманный код никого не находит.
+      expect((await complain(rude, rudeCode)).statusCode).toBe(400);
+      expect((await complain(first, 'ZZZZZZ')).statusCode).toBe(404);
+
+      const queue = await desk.inject({ method: 'GET', url: '/api/admin/reports', headers: desks });
+      const reports = (queue.json() as AdminReportsResponse).reports;
+      expect(reports).toHaveLength(1);
+      expect(reports[0]).toMatchObject({ targetName: 'Грубиян', count: 2 });
+
+      // Разобранное уходит из очереди и попадает в журнал.
+      const cleared = await desk.inject({
+        method: 'POST',
+        url: '/api/admin/reports/clear',
+        headers: desks,
+        payload: { userId: reports[0]!.targetId, reason: 'посмотрел, ничего такого' },
+      });
+      expect(cleared.json()).toEqual({ cleared: 2 });
+      const empty = await desk.inject({ method: 'GET', url: '/api/admin/reports', headers: desks });
+      expect((empty.json() as AdminReportsResponse).reports).toHaveLength(0);
+      const log = await desk.inject({ method: 'GET', url: '/api/admin/log', headers: desks });
+      expect((log.json() as AdminLogResponse).entries[0]).toMatchObject({
+        action: 'жалобы разобраны',
+        detail: '2',
+      });
+
+      // Разобранное не мешает пожаловаться заново: человек мог не исправиться.
+      expect((await complain(first, rudeCode)).statusCode).toBe(200);
+      const again = await desk.inject({ method: 'GET', url: '/api/admin/reports', headers: desks });
+      expect((again.json() as AdminReportsResponse).reports[0]).toMatchObject({ count: 1 });
+
+      // Наказанному жаловаться нечем: двери за входом ему закрыты.
+      await desk.inject({
+        method: 'POST',
+        url: '/api/admin/ban',
+        headers: desks,
+        payload: { userId: reports[0]!.targetId, days: 1, reason: 'по жалобам' },
+      });
+      expect((await complain(rude, await codeOf(first))).statusCode).toBe(403);
+    } finally {
+      await desk.close();
     }
   });
 
