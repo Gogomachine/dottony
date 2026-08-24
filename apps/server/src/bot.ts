@@ -81,13 +81,33 @@ export class Bot {
     }
   }
 
-  /** Имя бота — из него строятся все ссылки вида t.me/… */
+  /**
+   * Имя бота — из него строятся все ссылки вида t.me/…
+   *
+   * Спрашиваем один раз и держим ответ: имя не меняется. Пока ответ в пути,
+   * все, кто пришёл следом, ждут тот же запрос, а не шлют свой, — иначе
+   * первый же наплыв после пробуждения сервера превратился бы в десяток
+   * одинаковых обращений к Telegram.
+   *
+   * Неудачу не запоминаем: имя останется null, и следующий спрашивающий
+   * попробует снова. Раньше одна осечка при старте гасила ссылки в Telegram
+   * до самого перезапуска сервера.
+   */
   async resolveUsername(): Promise<string | null> {
     if (this.username) return this.username;
-    const me = await this.call<{ username?: string }>('getMe', {});
-    this.username = me?.username ?? null;
-    return this.username;
+    this.asking ??= this.call<{ username?: string }>('getMe', {})
+      .then((me) => {
+        this.username = me?.username ?? null;
+        return this.username;
+      })
+      .finally(() => {
+        this.asking = null;
+      });
+    return this.asking;
   }
+
+  /** Запрос имени, который сейчас в пути; null — никто не спрашивает. */
+  private asking: Promise<string | null> | null = null;
 
   get knownUsername(): string | null {
     return this.username;

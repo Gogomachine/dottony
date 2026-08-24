@@ -28,6 +28,7 @@ import {
   setAvatar,
   setFrame,
   setMarks,
+  getConfig,
   getFriends,
   getHistory,
   getMe,
@@ -153,6 +154,10 @@ export class Cabinet {
   private earned: string[] = [];
   private slot = 0;
   private miniApp: string | null = null;
+  /** Привязан ли Telegram у игрока — по последнему прочитанному профилю. */
+  private hasTelegram = false;
+  /** Ссылка привязки, уже взятая у сервера: по ней уходят второй раз. */
+  private linkUrl: string | null = null;
   /** Жетоны игрока: по ним видно, хватает ли на наклейку. */
   private tokens = 0;
   /**
@@ -218,6 +223,7 @@ export class Cabinet {
   async show(tab: CabTab | null = null): Promise<void> {
     this.overlay.hidden = false;
     this.openTab(tab);
+    void this.askConfig();
     this.historyEl.innerHTML = '<li class="empty">Загружаю…</li>';
     this.boardsEl.innerHTML = '<li class="empty">Загружаю…</li>';
     try {
@@ -660,9 +666,38 @@ export class Cabinet {
     }
   }
 
-  /** Ссылка на мини-приложение приезжает с сервера уже после открытия. */
+  /**
+   * Ссылка на мини-приложение приезжает с сервера уже после открытия — и
+   * может приехать позже, чем откроется кабинет.
+   */
   setMiniApp(url: string | null): void {
     this.miniApp = url;
+    this.showLink();
+  }
+
+  /**
+   * Кнопку привязки показываем тому, у кого Telegram ещё не привязан, и
+   * только если бот вообще настроен.
+   */
+  private showLink(): void {
+    const button = el<HTMLButtonElement>('cab-link-tg');
+    button.hidden = this.hasTelegram || this.miniApp === null;
+    if (!button.hidden && this.linkUrl === null) button.textContent = 'Привязать Telegram';
+  }
+
+  /**
+   * Дозапрашивает настройки сервера. Раньше их спрашивали один раз при
+   * запуске игры, и если сервер в тот миг ещё не знал имени бота, привязка
+   * Telegram пропадала до перезагрузки страницы. Спрашиваем при каждом
+   * открытии кабинета, пока не узнаем.
+   */
+  private async askConfig(): Promise<void> {
+    if (this.miniApp !== null) return;
+    try {
+      this.setMiniApp((await getConfig()).miniApp);
+    } catch {
+      // Бот не настроен или сервер молчит — привязку просто не показываем.
+    }
   }
 
   /**
@@ -672,12 +707,21 @@ export class Cabinet {
    */
   private async linkTelegram(): Promise<void> {
     const button = el<HTMLButtonElement>('cab-link-tg');
+    // Второе нажатие уходит по уже взятой ссылке этой же вкладкой. Так
+    // бывает, когда браузер не дал открыть новую: между нажатием и открытием
+    // мы успели сходить на сервер, и для браузера это уже не нажатие
+    // человека, а самовольное окно — он его гасит молча.
+    if (this.linkUrl !== null) {
+      location.href = this.linkUrl;
+      return;
+    }
     button.disabled = true;
     try {
       const { url } = await telegramLinkUrl();
+      this.linkUrl = url;
       // Внутри Telegram переход просим сделать сам мессенджер.
-      if (!openInTelegram(url)) window.open(url, '_blank', 'noopener');
-      button.textContent = 'Подтверди в Telegram…';
+      const opened = openInTelegram(url) || window.open(url, '_blank', 'noopener') !== null;
+      button.textContent = opened ? 'Подтверди в Telegram…' : 'Открыть Telegram';
     } catch {
       button.textContent = 'Пока недоступно';
     } finally {
@@ -767,11 +811,8 @@ export class Cabinet {
     this.showAvatar(me.avatar ?? '');
     const logins = me.identities.map((identity) => LOGIN_NAMES[identity.kind] ?? identity.kind);
     this.loginEl.textContent = `вход: ${logins.join(', ')}`;
-    // Кнопку привязки показываем только тем, у кого Telegram ещё не привязан.
-    const hasTelegram = me.identities.some((identity) => identity.kind === 'telegram');
-    const linkBtn = el<HTMLButtonElement>('cab-link-tg');
-    linkBtn.hidden = hasTelegram || this.miniApp === null;
-    if (!linkBtn.hidden) linkBtn.textContent = 'Привязать Telegram';
+    this.hasTelegram = me.identities.some((identity) => identity.kind === 'telegram');
+    this.showLink();
 
     el<HTMLSpanElement>('cab-tokens').textContent = groupDigits(me.tokens);
     // Рейтингов два: дуэли на цепочках и дуэли в тапе — разные механики,

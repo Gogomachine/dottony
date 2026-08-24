@@ -450,6 +450,59 @@ describe('бот', () => {
     vi.unstubAllGlobals();
   });
 
+  it('имя бота приходит в конфиг с первого же запроса, а не когда успеет', async () => {
+    // Раньше имя узнавали при старте, не дожидаясь ответа Telegram. На
+    // спящем хостинге сервер будит первый же запрос игрока, и клиент
+    // успевал спросить конфиг раньше, чем приезжало имя: привязка Telegram
+    // молча пропадала до перезагрузки страницы.
+    //
+    // Медленный ответ Telegram здесь и воспроизводит ту гонку: без ожидания
+    // конфиг ответил бы «бота нет».
+    let asked = 0;
+    vi.stubGlobal('fetch', async (url: string) => {
+      const method = String(url).split('/').pop() ?? '';
+      if (method !== 'getMe') {
+        return new Response(JSON.stringify({ ok: true, result: {} }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      asked += 1;
+      await new Promise((done) => setTimeout(done, 50));
+      return new Response(JSON.stringify({ ok: true, result: { username: 'dotoscope_bot' } }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+    const cold = await buildApp({
+      databaseUrl: ':memory:',
+      jwtSecret: JWT,
+      telegramBotToken: BOT_TOKEN,
+    });
+    try {
+      const config = await cold.inject({ method: 'GET', url: '/api/config' });
+      expect(config.json()).toEqual({
+        bot: 'dotoscope_bot',
+        miniApp: 'https://t.me/dotoscope_bot?startapp=',
+      });
+      // Спрошенное имя держим, а пока ответ в пути — ждём один запрос на
+      // всех: наплыв после пробуждения не должен стать наплывом на Telegram.
+      expect(asked).toBe(1);
+      await cold.inject({ method: 'GET', url: '/api/config' });
+      expect(asked).toBe(1);
+    } finally {
+      await cold.close();
+    }
+  });
+
+  it('без бота конфиг честно пуст, а не молчит', async () => {
+    const bare = await buildApp({ databaseUrl: ':memory:', jwtSecret: JWT });
+    try {
+      const config = await bare.inject({ method: 'GET', url: '/api/config' });
+      expect(config.json()).toEqual({ bot: null, miniApp: null });
+    } finally {
+      await bare.close();
+    }
+  });
+
   /** Сообщение боту, как его прислал бы Telegram. */
   function update(text: string, from = { id: 777, username: 'ada' }) {
     return {

@@ -1249,11 +1249,20 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     });
   }
 
-  /** Что клиенту нужно знать о сервере: как построить ссылки в Telegram. */
-  app.get('/api/config', (): { bot: string | null; miniApp: string | null } => ({
-    bot: bot?.knownUsername ?? null,
-    miniApp: bot?.miniAppLink('') ?? null,
-  }));
+  /**
+   * Что клиенту нужно знать о сервере: как построить ссылки в Telegram.
+   *
+   * Имя бота спрашиваем прямо здесь, если оно ещё не известно. Раньше его
+   * узнавали только при старте, не дожидаясь ответа, — а на спящем хостинге
+   * сервер будит первый же запрос игрока, и клиент успевал спросить конфиг
+   * раньше, чем приезжало имя. Ответ «бота нет» клиент запоминал на весь
+   * сеанс, и привязка Telegram молча пропадала до перезагрузки страницы.
+   */
+  app.get('/api/config', async (): Promise<{ bot: string | null; miniApp: string | null }> => {
+    if (!bot) return { bot: null, miniApp: null };
+    await bot.resolveUsername();
+    return { bot: bot.knownUsername, miniApp: bot.miniAppLink('') };
+  });
 
   // ---------- Друзья ----------
 
