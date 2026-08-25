@@ -92,6 +92,26 @@ export interface AdminFoundRow {
   ban?: { until: string | null; reason: string };
 }
 
+/** Участие игрока в турнире дня. */
+export interface TourneyEntryRow {
+  rounds: number;
+  score: number;
+  place: number | null;
+  prize: number | null;
+}
+
+/** Строка таблицы турнира. */
+export interface TourneyRow {
+  id: string;
+  name: string;
+  score: number;
+  rounds: number;
+  place: number | null;
+  prize: number | null;
+  mark: string | null;
+  art?: string;
+}
+
 /** Строка очереди жалоб. */
 export interface AdminReportRow {
   targetId: string;
@@ -260,6 +280,41 @@ export class Store {
         `CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_open
            ON reports (from_user, target_user) WHERE handled_at IS NULL`,
         `CREATE INDEX IF NOT EXISTS idx_reports_target ON reports (target_user)`,
+        // Турнир дня. Ключ — сам день в поясе турнира: другого у него нет,
+        // и двух турниров в один день не бывает. Сид выдаётся при первом
+        // обращении и дальше не меняется — он общий для всех участников.
+        `CREATE TABLE IF NOT EXISTS tourneys (
+           day TEXT PRIMARY KEY,
+           seed INTEGER NOT NULL,
+           created_at TEXT NOT NULL DEFAULT (datetime('now')),
+           settled_at TEXT
+         )`,
+        // Участие: взнос уплачен, заходы сыграны, сумма очков и приз.
+        `CREATE TABLE IF NOT EXISTS tourney_entries (
+           day TEXT NOT NULL REFERENCES tourneys(day),
+           user_id TEXT NOT NULL REFERENCES users(id),
+           paid INTEGER NOT NULL,
+           rounds INTEGER NOT NULL DEFAULT 0,
+           score INTEGER NOT NULL DEFAULT 0,
+           /* Когда сыгран последний заход: им и разрешается равенство очков. */
+           last_at TEXT,
+           place INTEGER,
+           prize INTEGER,
+           PRIMARY KEY (day, user_id)
+         )`,
+        `CREATE INDEX IF NOT EXISTS idx_tourney_entries_day
+           ON tourney_entries (day, score DESC)`,
+        // Заходы турнира хранятся с журналом ходов: рекорд должен оставаться
+        // доказуемым и после того, как его засчитали, — как в таблицах.
+        `CREATE TABLE IF NOT EXISTS tourney_rounds (
+           day TEXT NOT NULL,
+           user_id TEXT NOT NULL,
+           round INTEGER NOT NULL,
+           score INTEGER NOT NULL,
+           moves TEXT NOT NULL,
+           played_at TEXT NOT NULL DEFAULT (datetime('now')),
+           PRIMARY KEY (day, user_id, round)
+         )`,
       ],
       'write',
     );
@@ -1435,6 +1490,216 @@ export class Store {
       args: [id, `-${gapSeconds} seconds`],
     });
     return result.rowsAffected > 0;
+  }
+
+  // ---------- Турнир ----------
+
+  /**
+   * Турнир дня: заводится при первом обращении и дальше только читается.
+   * Сид выдаётся здесь же — один на всех, кто придёт в этот день.
+   *
+   * Гонки двух первых игроков не боимся: ключ дня уникален, и второй
+   * `INSERT` просто не проходит — сид остаётся тот, что записался первым.
+   */
+  async tourneyOf(day: string): Promise<{ seed: number; settled: boolean }> {
+    await this.client.execute({
+      sql: `INSERT INTO tourneys (day, seed) VALUES (?, ?) ON CONFLICT DO NOTHING`,
+      args: [day, randomInt(0, 0xffffffff)],
+    });
+    const rows = await this.client.execute({
+      sql: 'SELECT seed, settled_at FROM tourneys WHERE day = ?',
+      args: [day],
+    });
+    const row = rows.rows[0]!;
+    return { seed: Number(row.seed), settled: row.settled_at !== null };
+  }
+
+  /** Участие игрока в турнире дня; null — не входил. */
+  async tourneyEntry(day: string, userId: string): Promise<TourneyEntryRow | null> {
+    const rows = await this.client.execute({
+      sql: `SELECT rounds, score, place, prize FROM tourney_entries
+             WHERE day = ? AND user_id = ?`,
+      args: [day, userId],
+    });
+    const row = rows.rows[0];
+    if (!row) return null;
+    return {
+      rounds: Number(row.rounds),
+      score: Number(row.score),
+      place: row.place === null ? null : Number(row.place),
+      prize: row.prize === null ? null : Number(row.prize),
+    };
+  }
+
+  /**
+   * Взнос за вход. Списываем тем же порядком, что и покупку: сначала
+   * запись об участии (она уникальна и не даст войти дважды), потом деньги
+   * с условием в самом запросе, и если денег не хватило — запись убираем.
+   * Ошибаться прибор должен в пользу того, кто за ним сидит.
+   */
+  async tourneyEnter(day: string, userId: string, fee: number): Promise<'ok' | 'poor' | 'in'> {
+    const joined = await this.client.execute({
+      sql: `INSERT INTO tourney_entries (day, user_id, paid) VALUES (?, ?, ?)
+            ON CONFLICT DO NOTHING`,
+      args: [day, userId, fee],
+    });
+    if (joined.rowsAffected === 0) return 'in';
+    const paid = await this.client.execute({
+      sql: 'UPDATE users SET tokens = tokens - ? WHERE id = ? AND tokens >= ?',
+      args: [fee, userId, fee],
+    });
+    if (paid.rowsAffected === 0) {
+      await this.client.execute({
+        sql: 'DELETE FROM tourney_entries WHERE day = ? AND user_id = ?',
+        args: [day, userId],
+      });
+      return 'poor';
+    }
+    return 'ok';
+  }
+
+  /**
+   * Начинает заход: раунд тратится здесь, а не в конце.
+   *
+   * Иначе турнира не получается вовсе. Заход, который засчитывается только
+   * по истечении трёх минут, можно бросить на любой секунде и начать
+   * заново — и тогда «три захода» превращаются в «сколько угодно попыток,
+   * в зачёт три лучших». Раунд, потраченный на старте, делает неудачный
+   * заход настоящей потерей: доигрывать его или нет — выбор игрока, но
+   * раунд уже израсходован.
+   */
+  async tourneyStart(day: string, userId: string, round: number): Promise<boolean> {
+    const started = await this.client.execute({
+      sql: `INSERT INTO tourney_rounds (day, user_id, round, score, moves)
+            VALUES (?, ?, ?, 0, '') ON CONFLICT DO NOTHING`,
+      args: [day, userId, round],
+    });
+    if (started.rowsAffected === 0) return false;
+    await this.countTourney(day, userId);
+    return true;
+  }
+
+  /**
+   * Дописывает счёт в начатый заход. Дописать можно только тот, что ещё не
+   * доигран: пустой журнал ходов и есть признак начатого. Второй присыл в
+   * тот же раунд ничего не меняет.
+   */
+  async tourneyFinish(day: string, userId: string, score: number, moves: string): Promise<boolean> {
+    const saved = await this.client.execute({
+      sql: `UPDATE tourney_rounds SET score = ?, moves = ?, played_at = datetime('now')
+             WHERE day = ? AND user_id = ? AND moves = ''`,
+      args: [score, moves, day, userId],
+    });
+    if (saved.rowsAffected === 0) return false;
+    await this.countTourney(day, userId);
+    return true;
+  }
+
+  /** Счета сыгранных заходов по порядку — их видно в своей карточке турнира. */
+  async tourneyScores(day: string, userId: string): Promise<number[]> {
+    const rows = await this.client.execute({
+      sql: `SELECT score FROM tourney_rounds WHERE day = ? AND user_id = ? ORDER BY round ASC`,
+      args: [day, userId],
+    });
+    return rows.rows.map((row) => Number(row.score));
+  }
+
+  /** Пересчитывает число заходов и сумму очков участника по его заходам. */
+  private async countTourney(day: string, userId: string): Promise<void> {
+    await this.client.execute({
+      sql: `UPDATE tourney_entries
+               SET rounds = (SELECT COUNT(*) FROM tourney_rounds r
+                              WHERE r.day = tourney_entries.day AND r.user_id = tourney_entries.user_id),
+                   score = (SELECT COALESCE(SUM(r.score), 0) FROM tourney_rounds r
+                              WHERE r.day = tourney_entries.day AND r.user_id = tourney_entries.user_id),
+                   last_at = datetime('now')
+             WHERE day = ? AND user_id = ?`,
+      args: [day, userId],
+    });
+  }
+
+  /**
+   * Таблица турнира: сыгравшие сверху, по сумме очков. Равенство очков
+   * разрешается временем последнего захода — выше тот, кто закончил раньше:
+   * он раньше показал этот результат, и ждать его повторения не пришлось.
+   */
+  async tourneyBoard(day: string, limit = 50): Promise<TourneyRow[]> {
+    const rows = await this.client.execute({
+      sql: `SELECT u.id, u.name, u.marks, u.art, e.score, e.rounds, e.prize, e.place
+              FROM tourney_entries e JOIN users u ON u.id = e.user_id
+             WHERE e.day = ?
+             ORDER BY e.rounds = 0, e.score DESC, e.last_at ASC
+             LIMIT ?`,
+      args: [day, limit],
+    });
+    const holders = await this.champions();
+    return rows.rows.map((row) => {
+      const mark = this.firstMark(row.marks, holders.get(String(row.id)) ?? []);
+      return {
+        id: String(row.id),
+        name: String(row.name),
+        score: Number(row.score),
+        rounds: Number(row.rounds),
+        prize: row.prize === null ? null : Number(row.prize),
+        place: row.place === null ? null : Number(row.place),
+        mark,
+        ...this.ownArt(mark, row.art),
+      };
+    });
+  }
+
+  /** Сколько народу вошло и сколько из них сыграло хотя бы заход. */
+  async tourneyCount(day: string): Promise<{ entered: number; scorers: number; pool: number }> {
+    const rows = await this.client.execute({
+      sql: `SELECT COUNT(*) AS entered,
+                   SUM(CASE WHEN rounds > 0 THEN 1 ELSE 0 END) AS scorers,
+                   COALESCE(SUM(paid), 0) AS pool
+              FROM tourney_entries WHERE day = ?`,
+      args: [day],
+    });
+    const row = rows.rows[0]!;
+    return {
+      entered: Number(row.entered ?? 0),
+      scorers: Number(row.scorers ?? 0),
+      pool: Number(row.pool ?? 0),
+    };
+  }
+
+  /** Дни, которые пора считать: время итогов пришло, а котёл ещё цел. */
+  async tourneysToSettle(today: string): Promise<string[]> {
+    const rows = await this.client.execute({
+      sql: 'SELECT day FROM tourneys WHERE settled_at IS NULL AND day <= ? ORDER BY day ASC',
+      args: [today],
+    });
+    return rows.rows.map((row) => String(row.day));
+  }
+
+  /**
+   * Раздаёт котёл. Места и призы сначала записываются участникам, потом
+   * жетоны начисляются, и только затем турнир помечается посчитанным:
+   * пометка последней — если оборвётся посередине, следующий запуск
+   * посчитает тот же день заново, а не пропустит его.
+   *
+   * Повторной раздачи при этом не будет: призы кладутся тем же числом, а
+   * начисление идёт по колонке `prize`, которую мы только что и записали.
+   */
+  async tourneySettle(day: string, prizes: { userId: string; place: number; prize: number }[]): Promise<void> {
+    for (const { userId, place, prize } of prizes) {
+      await this.client.execute({
+        sql: 'UPDATE tourney_entries SET place = ?, prize = ? WHERE day = ? AND user_id = ?',
+        args: [place, prize, day, userId],
+      });
+      if (prize > 0) {
+        await this.client.execute({
+          sql: 'UPDATE users SET tokens = tokens + ? WHERE id = ?',
+          args: [prize, userId],
+        });
+      }
+    }
+    await this.client.execute({
+      sql: `UPDATE tourneys SET settled_at = datetime('now') WHERE day = ? AND settled_at IS NULL`,
+      args: [day],
+    });
   }
 
   // ---------- Служба ----------

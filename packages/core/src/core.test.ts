@@ -51,6 +51,18 @@ import {
   isArt,
 } from './art.js';
 import { SAMPLES, nextSample, sampleAt, samplesValid } from './samples.js';
+import {
+  TOURNEY_CLOSE_HOUR,
+  TOURNEY_ENTRY,
+  TOURNEY_OPEN_HOUR,
+  TOURNEY_RESULTS_HOUR,
+  TOURNEY_TZ_HOURS,
+  prizeShares,
+  tourneyDay,
+  tourneyNext,
+  tourneyPhase,
+  tourneyPrizes,
+} from './tourney.js';
 import { nextInt, seedRng } from './rng.js';
 import {
   DEFAULT_CONFIG,
@@ -988,5 +1000,66 @@ describe('рисунок листа', () => {
     expect(back[1]![1]).toBeNull();
     // Краски с несуществующим номером на листе не бывает.
     expect(artPainted(encodeArt([[99, -1, 1.5]] as (number | null)[][]))).toBe(0);
+  });
+});
+
+describe('турнир', () => {
+  /** Час в поясе турнира — так проще думать про расписание в тесте. */
+  const at = (hour: number, day = 15): Date =>
+    new Date(Date.UTC(2026, 2, day, hour - TOURNEY_TZ_HOURS, 0, 0));
+
+  it('расписание одно для всех: открытие, игра, закрытие, итоги', () => {
+    expect(tourneyPhase(at(8))).toBe('before');
+    expect(tourneyPhase(at(TOURNEY_OPEN_HOUR))).toBe('open');
+    expect(tourneyPhase(at(15))).toBe('open');
+    expect(tourneyPhase(at(TOURNEY_CLOSE_HOUR - 1))).toBe('open');
+    // После закрытия таблица уже не меняется, но котёл ещё не разделён.
+    expect(tourneyPhase(at(TOURNEY_CLOSE_HOUR))).toBe('closed');
+    expect(tourneyPhase(at(TOURNEY_RESULTS_HOUR))).toBe('done');
+    expect(tourneyPhase(at(23.5))).toBe('done');
+  });
+
+  it('день турнира считается по его поясу, а не по часам телефона', () => {
+    // Полночь в Москве — уже новый день турнира, хотя в UTC ещё вчера.
+    const midnight = new Date(Date.UTC(2026, 2, 15, 21, 30, 0));
+    expect(tourneyDay(midnight)).toBe('2026-03-16');
+    expect(tourneyDay(new Date(Date.UTC(2026, 2, 15, 20, 30, 0)))).toBe('2026-03-15');
+  });
+
+  it('следующая веха расписания — та, до которой ждут', () => {
+    expect(tourneyNext(at(8)).phase).toBe('open');
+    expect(tourneyNext(at(12)).phase).toBe('closed');
+    expect(tourneyNext(at(22, 15)).phase).toBe('done');
+    // Ночью ждут открытия следующего дня.
+    expect(tourneyNext(at(23, 15)).at.getTime()).toBeGreaterThan(at(23, 15).getTime());
+  });
+
+  it('доли котла всегда дают сотню и растут числом мест', () => {
+    for (const players of [1, 2, 3, 4, 7, 8, 15, 16, 31, 32, 100]) {
+      const shares = prizeShares(players);
+      expect(shares.reduce((sum, share) => sum + share, 0)).toBe(100);
+      // Мест не больше, чем сыгравших, и доли не растут к хвосту.
+      expect(shares.length).toBeLessThanOrEqual(Math.max(1, players));
+      for (let i = 1; i < shares.length; i++) {
+        expect(shares[i]!).toBeLessThanOrEqual(shares[i - 1]!);
+      }
+    }
+    // Чем больше народу, тем больше мест получают долю.
+    expect(prizeShares(3).length).toBeLessThan(prizeShares(10).length);
+    expect(prizeShares(10).length).toBeLessThan(prizeShares(40).length);
+    expect(prizeShares(0)).toEqual([]);
+  });
+
+  it('котёл раздаётся весь, без остатка и без доли прибора', () => {
+    for (const players of [1, 2, 5, 9, 20, 33]) {
+      const pool = TOURNEY_ENTRY * players;
+      const prizes = tourneyPrizes(pool, players);
+      expect(prizes.reduce((sum, prize) => sum + prize, 0)).toBe(pool);
+      expect(prizes.every((prize) => prize > 0)).toBe(true);
+    }
+    // Одному сыгравшему возвращается всё: соревноваться было не с кем.
+    expect(tourneyPrizes(TOURNEY_ENTRY * 4, 1)).toEqual([TOURNEY_ENTRY * 4]);
+    // Не сыграл никто — раздавать нечего.
+    expect(tourneyPrizes(5000, 0)).toEqual([]);
   });
 });

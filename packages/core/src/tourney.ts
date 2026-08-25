@@ -1,0 +1,137 @@
+/**
+ * Дневной турнир: один образец на всех, три захода за день, общий котёл.
+ *
+ * Всё остальное в приборе игрок делает сам с собой: рекорд — это спор со
+ * вчерашним собой, дуэль — с одним соперником. Турнир — единственное место,
+ * где в один день сравниваются все и где ставка не время, а жетоны.
+ *
+ * Три вещи делают его честным, и все три живут здесь, в общем модуле:
+ *
+ * 1. **Один сид на всех.** Поле у всех участников начинается одинаковым, и
+ *    решает только игра. Сид выдаётся на день и не зависит от того, когда
+ *    игрок зашёл.
+ * 2. **Часы одни для всех.** Открытие, закрытие и подсчёт — по одному
+ *    поясу, а не по часам телефона: иначе «день» у каждого свой.
+ * 3. **Котёл без доли прибора.** Всё, что внесли, уходит игрокам. Прибор не
+ *    берёт себе ничего — за игру он и так не берёт денег.
+ */
+
+/** Взнос за вход в турнир — тот же счёт, что и всё остальное: жетоны. */
+export const TOURNEY_ENTRY = 1000;
+
+/**
+ * Сколько заходов идёт в зачёт. Три — чтобы решала не одна удачная попытка,
+ * а умение повторить: очки складываются, и слабый заход не вычёркивается.
+ */
+export const TOURNEY_ROUNDS = 3;
+
+/**
+ * Часы турнира, по московскому времени: открывается в девять утра,
+ * закрывается в десять вечера, итоги в одиннадцать.
+ *
+ * Пояс задан числом, а не берётся из телефона: турнир общий, и «день» у
+ * всех участников обязан начинаться и кончаться в один и тот же миг. Час
+ * между закрытием и итогами — не техническая пауза, а обещание: после
+ * закрытия таблица уже не меняется, и её видно до раздачи.
+ */
+export const TOURNEY_TZ_HOURS = 3;
+export const TOURNEY_OPEN_HOUR = 9;
+export const TOURNEY_CLOSE_HOUR = 22;
+export const TOURNEY_RESULTS_HOUR = 23;
+
+/** Чем турнир занят прямо сейчас. */
+export type TourneyPhase =
+  /** До девяти утра: образец ещё не выдан. */
+  | 'before'
+  /** Идёт: можно войти и играть заходы. */
+  | 'open'
+  /** После десяти вечера: играть нельзя, таблица уже не меняется. */
+  | 'closed'
+  /** После одиннадцати: котёл разделён. */
+  | 'done';
+
+/** Смещённое на пояс турнира время — по нему считаются и день, и часы. */
+function local(now: Date): Date {
+  return new Date(now.getTime() + TOURNEY_TZ_HOURS * 3600_000);
+}
+
+/**
+ * День турнира — `ГГГГ-ММ-ДД` в его поясе. Это же ключ строки в базе: у
+ * каждого дня свой турнир, и никакой другой ключ ему не нужен.
+ */
+export function tourneyDay(now: Date = new Date()): string {
+  return local(now).toISOString().slice(0, 10);
+}
+
+/** Час дня в поясе турнира — от него зависит всё расписание. */
+function hourOf(now: Date): number {
+  return local(now).getUTCHours();
+}
+
+export function tourneyPhase(now: Date = new Date()): TourneyPhase {
+  const hour = hourOf(now);
+  if (hour < TOURNEY_OPEN_HOUR) return 'before';
+  if (hour < TOURNEY_CLOSE_HOUR) return 'open';
+  if (hour < TOURNEY_RESULTS_HOUR) return 'closed';
+  return 'done';
+}
+
+/**
+ * Когда наступит следующая веха расписания — открытие, закрытие или итоги.
+ * По ней клиент показывает «до открытия столько-то», не считая часы сам.
+ */
+export function tourneyNext(now: Date = new Date()): { phase: TourneyPhase; at: Date } {
+  const hour = hourOf(now);
+  const border =
+    hour < TOURNEY_OPEN_HOUR
+      ? TOURNEY_OPEN_HOUR
+      : hour < TOURNEY_CLOSE_HOUR
+        ? TOURNEY_CLOSE_HOUR
+        : hour < TOURNEY_RESULTS_HOUR
+          ? TOURNEY_RESULTS_HOUR
+          : TOURNEY_OPEN_HOUR + 24;
+  const at = new Date(local(now));
+  at.setUTCHours(border, 0, 0, 0);
+  return {
+    phase: tourneyPhase(new Date(at.getTime() - TOURNEY_TZ_HOURS * 3600_000 + 1000)),
+    at: new Date(at.getTime() - TOURNEY_TZ_HOURS * 3600_000),
+  };
+}
+
+/**
+ * Доли котла по числу тех, кто сыграл хотя бы заход, в процентах.
+ *
+ * Чем больше народу, тем больше мест получают долю: в турнире на троих
+ * второе место — это «почти никто», а в турнире на полсотни второе место —
+ * это уже достижение, за которое стыдно не заплатить. Верхняя доля при этом
+ * падает: с ростом числа участников растёт и котёл, и забирать его целиком
+ * одному значило бы делать турнир лотереей на выбывание.
+ *
+ * Доли всегда дают ровно сотню — это проверено тестом, а не обещано.
+ */
+export function prizeShares(scorers: number): number[] {
+  if (scorers <= 0) return [];
+  if (scorers === 1) return [100];
+  if (scorers <= 3) return [100];
+  if (scorers <= 7) return [60, 40];
+  if (scorers <= 15) return [50, 30, 20];
+  if (scorers <= 31) return [40, 25, 15, 12, 8];
+  return [35, 20, 13, 10, 8, 6, 4, 4];
+}
+
+/**
+ * Кому сколько жетонов из котла. Мест не больше, чем сыгравших; остаток от
+ * деления достаётся первому — он же и рискует больше всех, приходя за
+ * победой, а не за долей.
+ *
+ * Особый случай — один сыгравший: ему возвращается котёл целиком. Забирать
+ * взнос у того, с кем некому было соревноваться, нечестно.
+ */
+export function tourneyPrizes(pool: number, scorers: number): number[] {
+  const shares = prizeShares(scorers).slice(0, scorers);
+  if (shares.length === 0) return [];
+  const prizes = shares.map((share) => Math.floor((pool * share) / 100));
+  const given = prizes.reduce((sum, prize) => sum + prize, 0);
+  prizes[0] = (prizes[0] ?? 0) + (pool - given);
+  return prizes;
+}

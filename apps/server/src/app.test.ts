@@ -16,6 +16,9 @@ import {
   STICKER_PRICE,
   SLOT_PRICES,
   ART_LEN,
+  TOURNEY_ENTRY,
+  TOURNEY_ROUNDS,
+  TOURNEY_TZ_HOURS,
   OWN_MARK,
   OWN_PRICE,
   MARKS,
@@ -39,6 +42,7 @@ import type {
   AdminLogResponse,
   AdminReportsResponse,
   DuelServerMessage,
+  TourneyResponse,
   FriendsResponse,
   MeResponse,
   MoveLog,
@@ -191,6 +195,20 @@ function seedWithOrders(minimum: number): {
     if (run.orders >= minimum) return { seed, ...run };
   }
   throw new Error('no seed with orders found');
+}
+
+/**
+ * Заход строго сильнее заданного счёта. Именно строго: при равных рекордах
+ * таблица оставляет место тому, кто записался раньше, — на ничьей золото не
+ * переезжает, и тест, построенный на повторе чужого захода, зависел бы от
+ * того, успела ли смениться секунда в `created_at`.
+ */
+function strongerRun(than: number): { seed: number; moves: OrderMove[]; score: number } {
+  for (let seed = 1; seed < 60; seed++) {
+    const run = playOrderRun(seed, 90);
+    if (run.score > than) return { seed, moves: run.moves, score: run.score };
+  }
+  throw new Error(`no run stronger than ${than} found`);
 }
 
 /** Заход, где до цели не дотянули: счёт нулевой, окна уходят впустую. */
@@ -1712,6 +1730,176 @@ describe('API', () => {
     }
   });
 
+  it('турнир: взнос, три захода, таблица и раздача котла', { timeout: 30000 }, async () => {
+    // Часы турнира настоящие, поэтому берём их в свои руки: играем в полдень,
+    // считаем в полночь. Иначе тест зависел бы от времени запуска.
+    //
+    // Подменяем только часы, но не таймеры: с поддельными таймерами подвисает
+    // всё, что ждёт ввода-вывода. По той же причине жетоны раздаём не второй
+    // связью с базой, а служебной дверью: со стоящими часами два подключения
+    // к одному файлу встают намертво, дожидаясь друг друга.
+    const noon = new Date(Date.UTC(2026, 2, 15, 12 - TOURNEY_TZ_HOURS, 0, 0));
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(noon);
+    const app = await buildApp({
+      databaseUrl: ':memory:',
+      jwtSecret: 'test-jwt',
+      serviceKey: 'kluch-naladki',
+    });
+    try {
+      const guest = async (name: string): Promise<string> => {
+        const auth = await app.inject({ method: 'POST', url: '/api/auth/guest', payload: { name } });
+        const token = (auth.json() as { token: string }).token;
+        // Взнос в тысячу заходами в тесте не заработать — кладём наладкой.
+        await app.inject({
+          method: 'POST',
+          url: '/api/service/set',
+          headers: { authorization: `Bearer ${token}`, 'x-service-key': 'kluch-naladki' },
+          payload: { tokens: TOURNEY_ENTRY + 500 },
+        });
+        return token;
+      };
+      const tokensOf = async (token: string): Promise<number> => {
+        const me = await app.inject({
+          method: 'GET',
+          url: '/api/me',
+          headers: { authorization: `Bearer ${token}` },
+        });
+        return (me.json() as MeResponse).tokens;
+      };
+      const ada = await guest('Ада');
+      const bob = await guest('Боб');
+      const vera = await guest('Вера');
+      const gleb = await guest('Глеб');
+      const shy = await guest('Робкий');
+
+      const look = async (token?: string): Promise<TourneyResponse> => {
+        const seen = await app.inject({
+          method: 'GET',
+          url: '/api/tourney',
+          ...(token ? { headers: { authorization: `Bearer ${token}` } } : {}),
+        });
+        return seen.json() as TourneyResponse;
+      };
+      const enter = async (token: string): Promise<{ statusCode: number }> =>
+        app.inject({
+          method: 'POST',
+          url: '/api/tourney/enter',
+          headers: { authorization: `Bearer ${token}` },
+        });
+      /** Начать и доиграть заход: раунд тратится в начале, а не в конце. */
+      const play = async (
+        token: string,
+        seed: number,
+        moves: number,
+      ): Promise<{ statusCode: number }> => {
+        const started = await app.inject({
+          method: 'POST',
+          url: '/api/tourney/round/start',
+          headers: { authorization: `Bearer ${token}` },
+        });
+        if (started.statusCode !== 200) return started;
+        return app.inject({
+          method: 'POST',
+          url: '/api/tourney/round',
+          headers: { authorization: `Bearer ${token}` },
+          payload: { moves: playHonestRun(seed, moves).moves },
+        });
+      };
+
+      // Витрину видно и без входа, но своего участия там нет.
+      const cold = await look();
+      expect(cold.phase).toBe('open');
+      expect(cold.mine).toBeNull();
+      expect(cold.entry).toBe(TOURNEY_ENTRY);
+
+      // Без взноса заход не принимают.
+      expect((await play(ada, 1, 3)).statusCode).toBe(403);
+
+      expect((await enter(ada)).statusCode).toBe(200);
+      // Второй раз в тот же турнир не входят, и жетоны второй раз не берут.
+      expect((await enter(ada)).statusCode).toBe(409);
+      expect(await tokensOf(ada)).toBe(500);
+      for (const token of [bob, vera, gleb, shy]) {
+        expect((await enter(token)).statusCode).toBe(200);
+      }
+
+      const mine = await look(ada);
+      expect(mine.mine).toMatchObject({ rounds: 0, score: 0 });
+      // Сид приходит вошедшему — и он общий для всех.
+      const seed = mine.mine!.seed!;
+      expect((await look(bob)).mine!.seed).toBe(seed);
+      expect(mine.pool).toBe(TOURNEY_ENTRY * 5);
+      expect(mine.entered).toBe(5);
+
+      // Три захода — и четвёртый не принимают.
+      for (let round = 1; round <= TOURNEY_ROUNDS; round++) {
+        expect((await play(ada, seed, 2 + round)).statusCode).toBe(200);
+      }
+      expect((await play(ada, seed, 3)).statusCode).toBe(409);
+      // Брошенный заход тратит раунд: начали — и не доиграли. Такой заход
+      // стоит нулём, а переиграть его нельзя.
+      const quitter = await guest('Беглец');
+      expect((await enter(quitter)).statusCode).toBe(200);
+      const begun = await app.inject({
+        method: 'POST',
+        url: '/api/tourney/round/start',
+        headers: { authorization: `Bearer ${quitter}` },
+      });
+      expect(begun.statusCode).toBe(200);
+      const left = await look(quitter);
+      expect(left.mine).toMatchObject({ rounds: 1, score: 0, scores: [0] });
+      // Ещё трое играют по одному заходу: сыгравших становится четверо, и
+      // котёл делится уже на два места, а не забирается целиком.
+      for (const token of [bob, vera, gleb]) {
+        expect((await play(token, seed, 2)).statusCode).toBe(200);
+      }
+
+      const mid = await look(ada);
+      expect(mid.mine!.rounds).toBe(TOURNEY_ROUNDS);
+      expect(mid.mine!.score).toBeGreaterThan(0);
+      // Беглец тоже сыгравший: раунд он потратил. Не участвует в раздаче
+      // только тот, кто вошёл и не начал ни одного захода.
+      expect(mid.scorers).toBe(5);
+      // Сыгравшие стоят выше вошедшего, но не игравшего.
+      expect(mid.board[0]!.score).toBeGreaterThanOrEqual(mid.board[1]!.score);
+      expect(mid.board[5]!.rounds).toBe(0);
+      // Пока турнир идёт, котёл не делится.
+      expect(mid.board.every((row) => row.prize === null)).toBe(true);
+
+      // Одиннадцать вечера: время итогов, и котёл делится при первом взгляде.
+      vi.setSystemTime(new Date(Date.UTC(2026, 2, 15, 23 - TOURNEY_TZ_HOURS, 30, 0)));
+      const done = await look(ada);
+      expect(done.phase).toBe('done');
+      const winner = done.board[0]!;
+      expect(winner.place).toBe(1);
+      // Сыграли пятеро: победителю шесть десятых котла, второму четыре,
+      // остальным ничего — на пятерых больше двух мест не даётся.
+      const pool = TOURNEY_ENTRY * 6;
+      expect(done.pool).toBe(pool);
+      expect(winner.prize).toBe(Math.floor(pool * 0.6));
+      expect(done.board[1]!.prize).toBe(pool - winner.prize!);
+      for (const row of done.board.slice(2)) expect(row.prize).toBe(0);
+
+      // Жетоны и правда начислены, и второй раз котёл не делится.
+      const purse = () => Promise.all([ada, bob, vera, gleb, shy, quitter].map(tokensOf));
+      const paid = await purse();
+      // Весь котёл ушёл игрокам: у прибора доли нет.
+      expect(paid.reduce((sum, tokens) => sum + tokens, 0)).toBe(500 * 6 + pool);
+      // Вошедший, но не игравший остался при своих пятистах — взнос потерян.
+      expect(paid[4]).toBe(500);
+      await look(bob);
+      expect(await purse()).toEqual(paid);
+
+      // После закрытия в турнир не входят и заходов не шлют.
+      expect((await enter(shy)).statusCode).toBe(409);
+      expect((await play(bob, seed, 2)).statusCode).toBe(409);
+    } finally {
+      await app.close();
+      vi.useRealTimers();
+    }
+  });
+
   it('служба: посторонним дверей нет, служащему открыт пульт и журнал', async () => {
     const desk = await buildApp({
       databaseUrl: ':memory:',
@@ -2434,14 +2622,10 @@ describe('API', () => {
   });
 
   it('шильдики: золото вечной таблицы снимается, как только тебя обогнали', async () => {
-    // Два захода на разных сидах: слабый и заведомо сильнее его.
+    // Три захода на разных сидах, каждый строго сильнее предыдущего.
     const weak = seedWithOrders(1);
-    let strong: { seed: number; moves: OrderMove[]; score: number } | null = null;
-    for (let seed = 1; seed < 60 && strong === null; seed++) {
-      const run = playOrderRun(seed, 90);
-      if (run.score > weak.score) strong = { seed, moves: run.moves, score: run.score };
-    }
-    if (strong === null) throw new Error('no stronger run found');
+    const strong = strongerRun(weak.score);
+    const strongest = strongerRun(strong.score);
 
     const ada = await guestToken('Ада');
     const bob = await guestToken('Боб');
@@ -2486,10 +2670,40 @@ describe('API', () => {
     expect(entries.find((entry) => entry.name === 'Ада')?.mark).toBeNull();
 
     // Место вернулось — вернулось и золото: выбор в базе никто не стирал.
-    await send(ada, { seed: strong.seed, moves: strong.moves });
+    await send(ada, strongest);
     const adaBack = await me(ada);
     expect(adaBack.earned).toContain('g-order');
     expect(adaBack.marks).toEqual(['g-order', null, null]);
+  });
+
+  it('шильдики: повторить чужой рекорд мало — на ничьей золото не переезжает', async () => {
+    // Ничья — не победа: место держит тот, кто записал счёт первым. Иначе
+    // золото прыгало бы туда-сюда от того, в какую секунду пришёл запрос.
+    const run = seedWithOrders(1);
+    const ada = await guestToken('Ада');
+    const bob = await guestToken('Боб');
+    const send = async (token: string): Promise<void> => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/order',
+        headers: { authorization: `Bearer ${token}` },
+        payload: { seed: run.seed, moves: run.moves },
+      });
+      expect(response.statusCode).toBe(200);
+    };
+    const earned = async (token: string): Promise<string[]> => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/me',
+        headers: { authorization: `Bearer ${token}` },
+      });
+      return (response.json() as { earned: string[] }).earned;
+    };
+
+    await send(ada);
+    await send(bob);
+    expect(await earned(ada)).toContain('g-order');
+    expect(await earned(bob)).not.toContain('g-order');
   });
 
   it('шильдики: крупная группа и серия окон дают свои отметки', async () => {

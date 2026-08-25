@@ -1022,6 +1022,59 @@
       color: var(--silk-2);
     }
 
+    /*
+      Турнир перерисовывает окно целиком: после входа и после захода над
+      клавишей дописывается таблица. Браузер в такие мгновения придерживает
+      содержимое на месте (привязка прокрутки) — и окно открывалось с
+      середины чужих строк, пряча котёл, часы и свои заходы. Здесь держать
+      нечего: окно всякий раз показывается с начала.
+    */
+    #tourney-sheet .modal { overflow-anchor: none; }
+
+    /* Турнир: котёл крупно — он и есть повод прийти. */
+    .tourney-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+    /* Котёл не переносится: «1 000» и «ж» на разных строках читались как
+       два разных числа. Остальное в строке ужимается вокруг него. */
+    .tourney-pool {
+      font-size: 24px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      flex: 0 0 auto;
+    }
+    #tourney-note {
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      line-height: 1.5;
+      color: var(--silk-2);
+    }
+    .tourney-when {
+      font-family: var(--mono);
+      font-size: 9.5px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--silk-2);
+      text-align: right;
+    }
+    /* Три захода — три клетки: сыгранное со счётом, начатое пустым. */
+    .tourney-rounds { display: flex; gap: 6px; }
+    .tourney-rounds[hidden] { display: none; }
+    .tourney-rounds i {
+      flex: 1;
+      font-style: normal;
+      font-family: var(--mono);
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+      text-align: center;
+      padding: 7px 4px;
+      border: 1px solid var(--edge);
+      border-radius: 7px;
+      color: var(--silk-2);
+    }
+    .tourney-rounds i.done { color: var(--silk); border-color: var(--silk-2); }
+    .tourney-rounds i.now { color: var(--acc); border-color: var(--acc); }
+
     .rules { font-size: 13px; line-height: 1.55; }
     /*
      * «Понятно» стоит под правилами, а правила на телефоне длиннее стекла:
@@ -1767,6 +1820,11 @@
                 <span class="when mono">10 × 10</span>
                 <span class="hint">Чистое стекло: ведите цепочку и красьте.</span>
               </li>
+              <li class="mode" data-go="tourney">
+                <b>Турнир</b>
+                <span class="when mono">9:00 — 22:00</span>
+                <span class="hint">Один образец на всех, три захода, общий котёл.</span>
+              </li>
               <li class="mode" data-go="duel">
                 <b>Дуэль</b>
                 <!-- Время зависит от механики: его ставит переключатель на корпусе. -->
@@ -1828,6 +1886,27 @@
           <span class="ban-reason" id="ban-reason"></span>
           <span class="ban-until" id="ban-until"></span>
           <span class="note">Заходы и матчи не идут в таблицы, пока прибор изъят.</span>
+        </div>
+      </div>
+
+      <!--
+        Турнир дня: один образец на всех, три захода, общий котёл. Окно
+        показывает всё разом — расписание, котёл, свои заходы и таблицу:
+        состояний у турнира много, и собирать их по экранам значило бы
+        заставлять игрока держать их в голове.
+      -->
+      <div id="tourney-sheet" class="overlay" hidden>
+        <div class="modal">
+          <h2>Турнир дня</h2>
+          <div class="tourney-top">
+            <span class="tourney-pool mono" id="tourney-pool">—</span>
+            <span class="tourney-when" id="tourney-when"></span>
+          </div>
+          <span class="note" id="tourney-note"></span>
+          <div class="tourney-rounds" id="tourney-rounds" hidden></div>
+          <ol class="board-list" id="tourney-board"></ol>
+          <button id="tourney-go" class="acc" hidden></button>
+          <button id="tourney-close">Закрыть</button>
         </div>
       </div>
 

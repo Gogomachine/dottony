@@ -245,6 +245,67 @@ export interface AdminReportsResponse {
   reports: AdminReport[];
 }
 
+/**
+ * Заход турнира. Сид не присылают: он у турнира один на всех, и сервер
+ * знает его сам — присланному сиду тут верить нельзя вовсе.
+ */
+export const TourneyRoundRequestSchema = z.object({
+  moves: z.array(MoveLogSchema).min(1).max(400),
+});
+
+/** Строка таблицы турнира. */
+export interface TourneyEntry {
+  rank: number;
+  name: string;
+  /** Сумма очков за сыгранные заходы. */
+  score: number;
+  /** Сколько заходов сыграно из трёх. */
+  rounds: number;
+  /** Место и приз — только после раздачи котла. */
+  place: number | null;
+  prize: number | null;
+  mark: string | null;
+  art?: string;
+  /** Это ты. */
+  me?: boolean;
+}
+
+/**
+ * Турнир дня целиком: расписание, котёл, своё участие и таблица. Один
+ * ответ на весь экран — состояний у турнира много, и собирать их из
+ * нескольких запросов значило бы показывать несогласованное.
+ */
+export interface TourneyResponse {
+  day: string;
+  /** До открытия, идёт, закрыт до итогов, посчитан. */
+  phase: 'before' | 'open' | 'closed' | 'done';
+  /** Когда наступит следующая веха расписания. */
+  nextAt: string;
+  /** Взнос и сколько заходов идёт в зачёт. */
+  entry: number;
+  rounds: number;
+  /** Вошло всего и сыграло хотя бы заход. */
+  entered: number;
+  scorers: number;
+  /** Котёл: всё, что внесли. Доли прибора в нём нет. */
+  pool: number;
+  /** Как котёл разделится по нынешнему числу сыгравших. */
+  prizes: number[];
+  /** Своё участие; null — не входил. */
+  mine: {
+    /** Сколько заходов начато: раунд тратится в начале, а не в конце. */
+    rounds: number;
+    score: number;
+    /** Счёт каждого захода по порядку; брошенный заход стоит нулём. */
+    scores: number[];
+    place: number | null;
+    prize: number | null;
+    /** Сид турнира: приходит только вошедшему и только пока турнир идёт. */
+    seed?: number;
+  } | null;
+  board: TourneyEntry[];
+}
+
 export const InviteRequestSchema = z.object({
   room: z.string().trim().min(4).max(16),
 });

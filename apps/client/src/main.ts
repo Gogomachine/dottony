@@ -14,6 +14,7 @@ import type {
   BoardPeriod,
   InviteInfo,
   MeResponse,
+  TourneyResponse,
   MoveLog,
   OrderLeaderboardResponse,
   OrderMove,
@@ -44,6 +45,10 @@ import {
   savedName,
   startParam,
   report,
+  getTourney,
+  tourneyEnter,
+  tourneyRound,
+  tourneyStart,
   submitOrder,
   submitSprint,
   whenBanned,
@@ -138,6 +143,13 @@ const resetKey = el<HTMLButtonElement>('reset-key');
 const duelSheet = el<HTMLDivElement>('duel-sheet');
 const rulesSheet = el<HTMLDivElement>('rules-sheet');
 const banSheet = el<HTMLDivElement>('ban-sheet');
+const tourneySheet = el<HTMLDivElement>('tourney-sheet');
+const tourneyPoolEl = el<HTMLSpanElement>('tourney-pool');
+const tourneyWhenEl = el<HTMLSpanElement>('tourney-when');
+const tourneyNoteEl = el<HTMLSpanElement>('tourney-note');
+const tourneyRoundsEl = el<HTMLDivElement>('tourney-rounds');
+const tourneyBoardEl = el<HTMLOListElement>('tourney-board');
+const tourneyGoEl = el<HTMLButtonElement>('tourney-go');
 const addOpponentBtn = el<HTMLButtonElement>('add-opponent');
 const reportBtn = el<HTMLButtonElement>('report-opponent');
 const inviteBarEl = el<HTMLDivElement>('invite-bar');
@@ -610,6 +622,14 @@ function guestName(): string {
  * экране — свой, но в таблицу идёт только пересчитанный сервером.
  */
 async function finishSprint(run: { seed: number; moves: MoveLog[] }, score: number): Promise<void> {
+  // Заход турнира уходит в зачёт дня, а не в таблицу рекордов: это другой
+  // счёт и другая дверь.
+  if (inTourneyRound) {
+    inTourneyRound = false;
+    updateKeys();
+    await finishTourneyRound(run.moves, score);
+    return;
+  }
   showResult('Наблюдение завершено', score);
   if (!apiAvailable || run.moves.length === 0) return;
 
@@ -634,6 +654,27 @@ async function finishSprint(run: { seed: number; moves: MoveLog[] }, score: numb
     // Молчать нельзя: партия сыграна, а места в таблице нет — игрок должен
     // видеть, что дело в отправке, а не в его счёте.
     resultSubEl.textContent = 'Заход не дошёл до таблицы';
+  }
+}
+
+/**
+ * Конец захода турнира: журнал уходит на проверку, и сразу за ним игрок
+ * видит турнир целиком — своё место и что осталось от заходов.
+ */
+async function finishTourneyRound(moves: MoveLog[], score: number): Promise<void> {
+  showResult('Заход турнира', score);
+  if (!apiAvailable || moves.length === 0) return;
+  try {
+    const state = await tourneyRound(moves);
+    // Сперва открываем окно, потом заполняем: прокрутку скрытому окну не
+    // задать, и заполненное окно открылось бы с конца таблицы.
+    tourneySheet.hidden = false;
+    renderTourney(state);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) resetAuth();
+    // Молчать нельзя: заход сыгран, а в зачёт не попал — игрок должен
+    // видеть, что дело в отправке, а не в его счёте.
+    resultSubEl.textContent = 'Заход не дошёл до турнира';
   }
 }
 
@@ -1624,6 +1665,164 @@ function stopDrawing(): void {
 }
 
 /**
+ * Турнир дня: один образец на всех, три захода, общий котёл.
+ *
+ * Заход турнира — обычные цепочки, только сид не свой, а общий, и результат
+ * уходит не в таблицу рекордов, а в зачёт дня. Раунд тратится в начале: об
+ * этом говорит и сервер, и мы — бросивший заход теряет его.
+ */
+let tourney: TourneyResponse | null = null;
+/** Идёт заход турнира: им заняты и сид, и то, куда уедет журнал ходов. */
+let inTourneyRound = false;
+
+/** «до 22:00» / «через 3 ч» — сколько осталось до следующей вехи. */
+function untilWhen(iso: string): string {
+  const left = new Date(iso).getTime() - Date.now();
+  if (!Number.isFinite(left) || left <= 0) return 'вот-вот';
+  const hours = Math.floor(left / 3600_000);
+  const minutes = Math.round((left % 3600_000) / 60_000);
+  if (hours > 0) return `через ${hours} ч ${minutes} мин`;
+  return `через ${minutes} мин`;
+}
+
+async function showTourney(): Promise<void> {
+  tourneySheet.hidden = false;
+  tourneyNoteEl.textContent = 'Читаю турнир…';
+  tourneyGoEl.hidden = true;
+  tourneyRoundsEl.hidden = true;
+  tourneyBoardEl.innerHTML = '';
+  if (!hasAuth()) {
+    // Турнир идёт на жетоны, а жетоны — у аккаунта: заводим его молча, как
+    // и перед таблицей рекордов.
+    try {
+      await ensureAuth(guestName);
+    } catch {
+      // Без сервера турнира нет — так и скажем ниже.
+    }
+  }
+  try {
+    renderTourney(await getTourney());
+  } catch {
+    tourneyPoolEl.textContent = '—';
+    tourneyWhenEl.textContent = '';
+    tourneyNoteEl.textContent = 'Турнир недоступен — прибор не отвечает.';
+  }
+}
+
+const TOURNEY_PHASE: Record<TourneyResponse['phase'], string> = {
+  before: 'Открытие',
+  open: 'До закрытия',
+  closed: 'Итоги',
+  done: 'Следующий',
+};
+
+function renderTourney(state: TourneyResponse): void {
+  tourney = state;
+  tourneyPoolEl.textContent = `${groupDigits(state.pool)} ж`;
+  tourneyWhenEl.textContent = `${TOURNEY_PHASE[state.phase]} ${untilWhen(state.nextAt)}`;
+
+  // Строка под котлом объясняет ровно то, что игрок сейчас может сделать.
+  const mine = state.mine;
+  const places = state.prizes.length;
+  // Двоеточием, а не «1 играют»: число тут любое, и согласовывать слово с
+  // ним пришлось бы правилом про одиннадцать-четырнадцать.
+  const split =
+    state.scorers === 0
+      ? `взнос ${groupDigits(state.entry)} · котёл делят те, кто сыграет`
+      : `играют: ${state.scorers} · мест в котле: ${places}`;
+  tourneyNoteEl.textContent =
+    state.phase === 'before'
+      ? `Образец выдадут в 9:00. Взнос ${groupDigits(state.entry)} жетонов, три захода за день.`
+      : state.phase === 'closed'
+        ? `Заходы кончились. Котёл ${groupDigits(state.pool)} разделят в 23:00.`
+        : state.phase === 'done'
+          ? mine?.prize
+            ? `Ваше место ${mine.place} · выигрыш ${groupDigits(mine.prize)} жетонов.`
+            : 'Турнир дня посчитан. Следующий — завтра в 9:00.'
+          : split;
+
+  // Свои заходы: сыгранный со счётом, потраченный впустую нулём.
+  if (mine) {
+    tourneyRoundsEl.hidden = false;
+    tourneyRoundsEl.innerHTML = '';
+    for (let round = 0; round < state.rounds; round++) {
+      const box = document.createElement('i');
+      const score = mine.scores[round];
+      box.textContent = score === undefined ? '—' : groupDigits(score);
+      box.className = score === undefined ? (round === mine.rounds ? 'now' : '') : 'done';
+      tourneyRoundsEl.appendChild(box);
+    }
+  }
+
+  tourneyBoardEl.innerHTML = '';
+  for (const row of state.board) {
+    const item = document.createElement('li');
+    if (row.me) item.className = 'me';
+    item.innerHTML =
+      `<span class="rank">${row.rank}</span><span class="who-line"></span><span class="pts"></span>`;
+    nameWithMark(item.children[1] as HTMLElement, row.name, row.mark, row.art ?? null);
+    // Пока турнир идёт, справа очки; после раздачи — выигрыш.
+    (item.children[2] as HTMLElement).textContent =
+      row.prize === null || row.prize === 0
+        ? groupDigits(row.score)
+        : `+${groupDigits(row.prize)} ж`;
+    tourneyBoardEl.appendChild(item);
+  }
+
+  // Клавиша называет единственное осмысленное действие.
+  const canPlay = state.phase === 'open';
+  tourneyGoEl.hidden = !canPlay || (mine !== null && mine.rounds >= state.rounds);
+  if (!tourneyGoEl.hidden) {
+    tourneyGoEl.textContent =
+      mine === null
+        ? `Войти · ${groupDigits(state.entry)} жетонов`
+        : `Заход ${mine.rounds + 1} из ${state.rounds}`;
+  }
+
+  // Окно всегда показывается с начала. Иначе браузер, дописав таблицу над
+  // клавишей, придержит клавишу на месте (так работает привязка прокрутки) —
+  // и после входа игрок увидит середину чужих строк вместо котла, часов и
+  // своих заходов.
+  tourneySheet.querySelector('.modal')?.scrollTo({ top: 0 });
+}
+
+/** Вход в турнир или начало захода — смотря что игроку сейчас доступно. */
+async function tourneyAct(): Promise<void> {
+  const state = tourney;
+  if (!state) return;
+  tourneyGoEl.disabled = true;
+  try {
+    if (state.mine === null) {
+      renderTourney(await tourneyEnter());
+      return;
+    }
+    // Раунд тратится здесь: сервер отдаёт сид, и заход считается начатым.
+    const { seed } = await tourneyStart();
+    tourneySheet.hidden = true;
+    // Турнир идёт на цепочках: если прибор стоит на тапе, переставляем его.
+    if (deviceKind !== 'chain') {
+      deviceKind = 'chain';
+      saveKind(deviceKind);
+      applyKind();
+    }
+    mode = 'sprint';
+    startGame(seed);
+    inTourneyRound = true;
+    updateKeys();
+    setStat(`Заход турнира ${state.mine.rounds + 1} из ${state.rounds}`, 'live');
+  } catch (error) {
+    tourneyNoteEl.textContent =
+      error instanceof ApiError && error.code === 'not-enough'
+        ? `Не хватает жетонов: взнос ${groupDigits(state.entry)}.`
+        : error instanceof ApiError && error.code === 'closed'
+          ? 'Турнир уже закрыт.'
+          : 'Не вышло — попробуйте ещё раз.';
+  } finally {
+    tourneyGoEl.disabled = false;
+  }
+}
+
+/**
  * Образец под листом. Чистое стекло — честное начало, но перед ним человек
  * чаще всего замирает: рисовать можно что угодно, и потому непонятно, с
  * чего начать. Образец отвечает не советом, а примером — вот кот, обведи.
@@ -1854,7 +2053,9 @@ const KIND_DUEL_TIME: Record<DuelKind, string> = { chain: '1:30', order: '3:00' 
 function updateKeys(): void {
   // Во время показа заперты обе: поле под ним чужое, и новый образец
   // подменил бы обучению доску прямо посреди объяснения.
-  const locked = inDuel || replay !== null || !tutEl.hidden;
+  // Заход турнира тоже запирает сброс: раунд уже потрачен, и «новый
+  // образец» посреди него означал бы бесконечные попытки за один раунд.
+  const locked = inDuel || replay !== null || !tutEl.hidden || inTourneyRound;
   kindKey.toggleAttribute('disabled', locked);
   kindKey.firstChild!.nodeValue = `⇄ ${KIND_NAME[other(deviceKind)]}`;
   resetKey.toggleAttribute('disabled', locked);
@@ -1891,6 +2092,10 @@ function applyKind(): void {
 // Пункта «Продолжить» здесь нет: заслонку убирает та же клавиша, что её
 // открыла, и отдельная строка списка только повторяла бы её.
 const MENU_ACTIONS: Record<string, () => void> = {
+  tourney: () => {
+    closeMenu();
+    void showTourney();
+  },
   sprint: () => {
     menuEl.hidden = true;
     setMode('sprint');
@@ -1958,6 +2163,11 @@ el<HTMLButtonElement>('tut-skip').addEventListener('click', () => stopTutorial()
 // Показ листают руками: «Дальше» на последнем шаге его и закрывает.
 el<HTMLButtonElement>('tut-next').addEventListener('click', () => tutorial.next());
 el<HTMLButtonElement>('tut-back').addEventListener('click', () => tutorial.back());
+
+el<HTMLButtonElement>('tourney-close').addEventListener('click', () => {
+  tourneySheet.hidden = true;
+});
+tourneyGoEl.addEventListener('click', () => void tourneyAct());
 
 el<HTMLButtonElement>('rules-close').addEventListener('click', () => {
   rulesSheet.hidden = true;

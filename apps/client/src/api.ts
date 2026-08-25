@@ -19,6 +19,7 @@ import type {
   SprintLeaderboardResponse,
   SubmitOrderResponse,
   SubmitSprintResponse,
+  TourneyResponse,
 } from '@doton/protocol';
 
 /**
@@ -332,6 +333,35 @@ export function adminClearArt(userId: string, reason: string): Promise<unknown> 
   return request('/api/admin/art/clear', {
     method: 'POST',
     body: JSON.stringify({ userId, reason }),
+  });
+}
+
+/**
+ * Турнир дня целиком: расписание, котёл, своё участие и таблица. Смотреть
+ * можно и без входа — это витрина, а не личное дело.
+ */
+export function getTourney(): Promise<TourneyResponse> {
+  return request<TourneyResponse>('/api/tourney');
+}
+
+/** Взнос за вход. Жетоны списывает сервер — цену он знает сам. */
+export function tourneyEnter(): Promise<TourneyResponse> {
+  return request<TourneyResponse>('/api/tourney/enter', { method: 'POST' });
+}
+
+/**
+ * Начать заход. Раунд тратится здесь, а не в конце: сервер отдаёт сид, и с
+ * этого мига заход считается начатым, доиграют его или нет.
+ */
+export function tourneyStart(): Promise<{ seed: number; round: number }> {
+  return request<{ seed: number; round: number }>('/api/tourney/round/start', { method: 'POST' });
+}
+
+/** Конец захода: журнал ходов на проверку. Счёт считает сервер. */
+export function tourneyRound(moves: MoveLog[]): Promise<TourneyResponse> {
+  return request<TourneyResponse>('/api/tourney/round', {
+    method: 'POST',
+    body: JSON.stringify({ moves }),
   });
 }
 

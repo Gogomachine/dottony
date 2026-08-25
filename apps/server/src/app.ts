@@ -12,6 +12,7 @@ import {
   AdminNameRequestSchema,
   AdminTokensRequestSchema,
   ReportRequestSchema,
+  TourneyRoundRequestSchema,
   AdminUserRequestSchema,
   BuyRequestSchema,
   FrameRequestSchema,
@@ -31,6 +32,7 @@ import {
   type AdminLogResponse,
   type AdminReportsResponse,
   type DuelKind,
+  type TourneyResponse,
   type AuthResponse,
   type BuyResponse,
   type OrderLeaderboardResponse,
@@ -55,6 +57,12 @@ import {
   isArt,
   isFace,
   isOwnMark,
+  TOURNEY_ENTRY,
+  TOURNEY_ROUNDS,
+  tourneyDay,
+  tourneyNext,
+  tourneyPhase,
+  tourneyPrizes,
   slotItem,
   MARKS,
   MARK_SLOTS,
@@ -729,6 +737,184 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     await store.setAvatar(user.sub, parsed.data.avatar);
     return { avatar: parsed.data.avatar };
   });
+
+  // ---------- Турнир ----------
+
+  /**
+   * Дневной турнир: один образец на всех, три захода за день, общий котёл.
+   *
+   * Счёт заходов считает сервер тем же пересчётом, что и в таблицах, — и
+   * тем же ядром. Сид турнира клиент не присылает никогда: он общий, и
+   * присланному верить нельзя.
+   */
+  const tourneyState = async (userId: string | null): Promise<TourneyResponse> => {
+    // Прежде чем показывать что-либо, добираем несчитанные дни: итоги
+    // должны наступать сами, а не тогда, когда до сервера кто-то дошёл.
+    await settleTourneys();
+    const now = new Date();
+    const day = tourneyDay(now);
+    const phase = tourneyPhase(now);
+    const [{ seed }, counts] = await Promise.all([store.tourneyOf(day), store.tourneyCount(day)]);
+    const mine = userId === null ? null : await store.tourneyEntry(day, userId);
+    const board = await store.tourneyBoard(day);
+    return {
+      day,
+      phase,
+      nextAt: tourneyNext(now).at.toISOString(),
+      entry: TOURNEY_ENTRY,
+      rounds: TOURNEY_ROUNDS,
+      entered: counts.entered,
+      scorers: counts.scorers,
+      pool: counts.pool,
+      prizes: tourneyPrizes(counts.pool, counts.scorers),
+      mine:
+        mine === null
+          ? null
+          : {
+              rounds: mine.rounds,
+              score: mine.score,
+              scores: await store.tourneyScores(day, userId!),
+              place: mine.place,
+              prize: mine.prize,
+              // Сид даём только вошедшему и только пока турнир идёт: до
+              // открытия его знать рано, после закрытия — незачем.
+              ...(phase === 'open' ? { seed } : {}),
+            },
+      board: board.map((row, index) => ({
+        rank: index + 1,
+        name: row.name,
+        score: row.score,
+        rounds: row.rounds,
+        place: row.place,
+        prize: row.prize,
+        mark: row.mark,
+        ...(row.art === undefined ? {} : { art: row.art }),
+        ...(row.id === userId ? { me: true } : {}),
+      })),
+    };
+  };
+
+  app.get('/api/tourney', async (request): Promise<TourneyResponse> => {
+    // Смотреть турнир можно и без входа: это витрина, а не личное дело.
+    const user = await currentUser(request);
+    return tourneyState(user?.sub ?? null);
+  });
+
+  /** Взнос за вход. Пока турнир идёт — и только один раз за день. */
+  app.post('/api/tourney/enter', async (request, reply) => {
+    const user = await requireUser(request);
+    const now = new Date();
+    if (tourneyPhase(now) !== 'open') return reply.code(409).send({ error: 'closed' });
+    const day = tourneyDay(now);
+    await store.tourneyOf(day);
+    const outcome = await store.tourneyEnter(day, user.sub, TOURNEY_ENTRY);
+    if (outcome === 'poor') return reply.code(402).send({ error: 'not-enough' });
+    if (outcome === 'in') return reply.code(409).send({ error: 'already-in' });
+    return tourneyState(user.sub);
+  });
+
+  /**
+   * Начать заход. Раунд тратится здесь, а не в конце: заход, который
+   * засчитывается только по истечении трёх минут, можно бросить на любой
+   * секунде и начать заново — и «три захода» превратились бы в «сколько
+   * угодно попыток, в зачёт три лучших».
+   *
+   * Номер раунда назначает сервер по тому, сколько уже начато: присланному
+   * номеру верить нельзя.
+   */
+  app.post('/api/tourney/round/start', async (request, reply) => {
+    const user = await requireUser(request);
+    const now = new Date();
+    if (tourneyPhase(now) !== 'open') return reply.code(409).send({ error: 'closed' });
+    const day = tourneyDay(now);
+    const entry = await store.tourneyEntry(day, user.sub);
+    if (entry === null) return reply.code(403).send({ error: 'not-in' });
+    if (entry.rounds >= TOURNEY_ROUNDS) return reply.code(409).send({ error: 'no-rounds' });
+    const started = await store.tourneyStart(day, user.sub, entry.rounds + 1);
+    if (!started) return reply.code(409).send({ error: 'no-rounds' });
+    const { seed } = await store.tourneyOf(day);
+    return { seed, round: entry.rounds + 1 };
+  });
+
+  /**
+   * Конец захода: журнал ходов на проверку. Счёт считает сервер тем же
+   * пересчётом, что и в таблицах, и на сиде турнира — присланному сиду тут
+   * верить нельзя вовсе.
+   */
+  app.post('/api/tourney/round', async (request, reply) => {
+    const user = await requireUser(request);
+    const parsed = TourneyRoundRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
+    const now = new Date();
+    if (tourneyPhase(now) !== 'open') return reply.code(409).send({ error: 'closed' });
+    const day = tourneyDay(now);
+    const entry = await store.tourneyEntry(day, user.sub);
+    if (entry === null) return reply.code(403).send({ error: 'not-in' });
+
+    const { seed } = await store.tourneyOf(day);
+    const replay = replaySprint(seed, parsed.data.moves);
+    if (typeof replay === 'string') return reply.code(400).send({ error: replay });
+    const saved = await store.tourneyFinish(
+      day,
+      user.sub,
+      replay.score,
+      JSON.stringify(parsed.data.moves),
+    );
+    // Незаконченного захода нет: либо не начинали, либо он уже дописан.
+    if (!saved) return reply.code(409).send({ error: 'not-started' });
+    return tourneyState(user.sub);
+  });
+
+  /**
+   * Раздаёт котлы всех дней, у которых прошло время итогов. Зовётся при
+   * каждом взгляде на турнир и по часам — на спящем хостинге второе может и
+   * не сработать, а первое сработает наверняка: кто-то да заглянет.
+   *
+   * Порядок мест: сумма очков, при равенстве — кто закончил раньше. Тот, кто
+   * не сыграл ни одного захода, в раздаче не участвует: взнос он потерял, но
+   * и делить его между теми, кто играл, честнее, чем возвращать.
+   */
+  async function settleTourneys(): Promise<void> {
+    const now = new Date();
+    const today = tourneyDay(now);
+    const days = await store.tourneysToSettle(today);
+    for (const day of days) {
+      // Сегодняшний считаем, только когда пришло время итогов.
+      if (day === today && tourneyPhase(now) !== 'done') continue;
+      const counts = await store.tourneyCount(day);
+      const board = await store.tourneyBoard(day, 1000);
+      const played = board.filter((row) => row.rounds > 0);
+      // Не сыграл никто — возвращаем взносы: турнира не было.
+      const prizes =
+        played.length === 0
+          ? board.map(() => TOURNEY_ENTRY)
+          : tourneyPrizes(counts.pool, played.length);
+      // Место и приз получают все, кто вносил, — в том числе ноль. Пустая
+      // клетка вместо нуля читалась бы как «ещё не считали», а считали уже:
+      // вошёл, не сыграл, не выиграл — это тоже итог.
+      await store.tourneySettle(
+        day,
+        board.map((row, index) => ({
+          userId: row.id,
+          place: index + 1,
+          prize: prizes[index] ?? 0,
+        })),
+      );
+      app.log.info({ day, players: counts.entered, pool: counts.pool }, 'tourney settled');
+    }
+  }
+
+  /**
+   * Часы турнира. Раздача по времени — вежливость, а не гарантия: на спящем
+   * хостинге таймер не тикает, поэтому итоги всё равно наступают при первом
+   * взгляде на турнир. Здесь мы лишь стараемся, чтобы взгляд не понадобился.
+   */
+  const tourneyClock = setInterval(
+    () => void settleTourneys().catch((error: unknown) => app.log.error(error, 'tourney settle failed')),
+    5 * 60_000,
+  );
+  tourneyClock.unref?.();
+  app.addHook('onClose', () => clearInterval(tourneyClock));
 
   // ---------- Служба ----------
 
