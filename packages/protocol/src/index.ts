@@ -291,6 +291,12 @@ export interface TourneyResponse {
   pool: number;
   /** Как котёл разделится по нынешнему числу сыгравших. */
   prizes: number[];
+  /**
+   * Куда сейчас записывают и записан ли ты туда. Пока сегодняшний турнир
+   * принимает — это он сам; после закрытия — завтрашний: взнос в закрытый
+   * турнир не принимают, а деньги игрока никуда не делись.
+   */
+  signup: { day: string; entered: boolean };
   /** Своё участие; null — не входил. */
   mine: {
     /** Сколько заходов начато: раунд тратится в начале, а не в конце. */
@@ -304,6 +310,25 @@ export interface TourneyResponse {
     seed?: number;
   } | null;
   board: TourneyEntry[];
+}
+
+/** Свой прошедший турнир одной строкой — как он выглядит в кабинете. */
+export interface TourneyHistoryEntry {
+  day: string;
+  /** Сколько заходов сыграно и сумма очков за них. */
+  rounds: number;
+  score: number;
+  /** Место и выигрыш; null — котёл этого дня ещё не делили. */
+  place: number | null;
+  prize: number | null;
+  /** Взнос, сколько народу вошло и каким вышел котёл. */
+  paid: number;
+  entered: number;
+  pool: number;
+}
+
+export interface TourneyHistoryResponse {
+  days: TourneyHistoryEntry[];
 }
 
 export const InviteRequestSchema = z.object({

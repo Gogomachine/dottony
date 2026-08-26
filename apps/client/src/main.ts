@@ -6,6 +6,7 @@ import {
   sampleAt,
   OWN_MARK,
   OWN_PRICE,
+  TOURNEY_ROUNDS,
   type Cell,
   type Color,
   type GameConfig,
@@ -55,6 +56,12 @@ import {
   ApiError,
 } from './api';
 import { Cabinet } from './cabinet';
+import {
+  renderRounds,
+  tourneyAction,
+  tourneyNote,
+  tourneyWhen,
+} from './tourney';
 import { DuelConnection, makeRoomCode } from './duel';
 import { FEEL } from './game/feel';
 import { ChainInput } from './game/input';
@@ -1675,17 +1682,11 @@ let tourney: TourneyResponse | null = null;
 /** Идёт заход турнира: им заняты и сид, и то, куда уедет журнал ходов. */
 let inTourneyRound = false;
 
-/** «до 22:00» / «через 3 ч» — сколько осталось до следующей вехи. */
-function untilWhen(iso: string): string {
-  const left = new Date(iso).getTime() - Date.now();
-  if (!Number.isFinite(left) || left <= 0) return 'вот-вот';
-  const hours = Math.floor(left / 3600_000);
-  const minutes = Math.round((left % 3600_000) / 60_000);
-  if (hours > 0) return `через ${hours} ч ${minutes} мин`;
-  return `через ${minutes} мин`;
-}
-
-async function showTourney(): Promise<void> {
+/**
+ * Окно турнира. Без дня — сегодняшний; с днём — прошедший, каким его
+ * открывают из кабинета: там же лежит своя история турниров.
+ */
+async function showTourney(day?: string): Promise<void> {
   tourneySheet.hidden = false;
   tourneyNoteEl.textContent = 'Читаю турнир…';
   tourneyGoEl.hidden = true;
@@ -1701,7 +1702,7 @@ async function showTourney(): Promise<void> {
     }
   }
   try {
-    renderTourney(await getTourney());
+    renderTourney(await getTourney(day));
   } catch {
     tourneyPoolEl.textContent = '—';
     tourneyWhenEl.textContent = '';
@@ -1709,50 +1710,12 @@ async function showTourney(): Promise<void> {
   }
 }
 
-const TOURNEY_PHASE: Record<TourneyResponse['phase'], string> = {
-  before: 'Открытие',
-  open: 'До закрытия',
-  closed: 'Итоги',
-  done: 'Следующий',
-};
-
 function renderTourney(state: TourneyResponse): void {
   tourney = state;
   tourneyPoolEl.textContent = `${groupDigits(state.pool)} ж`;
-  tourneyWhenEl.textContent = `${TOURNEY_PHASE[state.phase]} ${untilWhen(state.nextAt)}`;
-
-  // Строка под котлом объясняет ровно то, что игрок сейчас может сделать.
-  const mine = state.mine;
-  const places = state.prizes.length;
-  // Двоеточием, а не «1 играют»: число тут любое, и согласовывать слово с
-  // ним пришлось бы правилом про одиннадцать-четырнадцать.
-  const split =
-    state.scorers === 0
-      ? `взнос ${groupDigits(state.entry)} · котёл делят те, кто сыграет`
-      : `играют: ${state.scorers} · мест в котле: ${places}`;
-  tourneyNoteEl.textContent =
-    state.phase === 'before'
-      ? `Образец выдадут в 9:00. Взнос ${groupDigits(state.entry)} жетонов, три захода за день.`
-      : state.phase === 'closed'
-        ? `Заходы кончились. Котёл ${groupDigits(state.pool)} разделят в 23:00.`
-        : state.phase === 'done'
-          ? mine?.prize
-            ? `Ваше место ${mine.place} · выигрыш ${groupDigits(mine.prize)} жетонов.`
-            : 'Турнир дня посчитан. Следующий — завтра в 9:00.'
-          : split;
-
-  // Свои заходы: сыгранный со счётом, потраченный впустую нулём.
-  if (mine) {
-    tourneyRoundsEl.hidden = false;
-    tourneyRoundsEl.innerHTML = '';
-    for (let round = 0; round < state.rounds; round++) {
-      const box = document.createElement('i');
-      const score = mine.scores[round];
-      box.textContent = score === undefined ? '—' : groupDigits(score);
-      box.className = score === undefined ? (round === mine.rounds ? 'now' : '') : 'done';
-      tourneyRoundsEl.appendChild(box);
-    }
-  }
+  tourneyWhenEl.textContent = tourneyWhen(state);
+  tourneyNoteEl.textContent = tourneyNote(state);
+  renderRounds(tourneyRoundsEl, state);
 
   tourneyBoardEl.innerHTML = '';
   for (const row of state.board) {
@@ -1770,14 +1733,9 @@ function renderTourney(state: TourneyResponse): void {
   }
 
   // Клавиша называет единственное осмысленное действие.
-  const canPlay = state.phase === 'open';
-  tourneyGoEl.hidden = !canPlay || (mine !== null && mine.rounds >= state.rounds);
-  if (!tourneyGoEl.hidden) {
-    tourneyGoEl.textContent =
-      mine === null
-        ? `Войти · ${groupDigits(state.entry)} жетонов`
-        : `Заход ${mine.rounds + 1} из ${state.rounds}`;
-  }
+  const act = tourneyAction(state);
+  tourneyGoEl.hidden = act === null;
+  if (act) tourneyGoEl.textContent = act.label;
 
   // Окно всегда показывается с начала. Иначе браузер, дописав таблицу над
   // клавишей, придержит клавишу на месте (так работает привязка прокрутки) —
@@ -1786,30 +1744,44 @@ function renderTourney(state: TourneyResponse): void {
   tourneySheet.querySelector('.modal')?.scrollTo({ top: 0 });
 }
 
-/** Вход в турнир или начало захода — смотря что игроку сейчас доступно. */
-async function tourneyAct(): Promise<void> {
+/**
+ * Начало турнирного захода. Раунд тратится здесь: сервер отдаёт сид, и с
+ * этого мига заход считается начатым, доиграют его или нет.
+ *
+ * Заход начинают из двух мест — из окна турнира и из кабинета, — а порядок
+ * у него один: переставить прибор на цепочки, завести партию на общем сиде
+ * и запереть сброс, чтобы заход нельзя было начать заново.
+ */
+async function startTourneyRound(): Promise<void> {
+  const { seed, round } = await tourneyStart();
+  tourneySheet.hidden = true;
+  cabinet.hide();
+  // Турнир идёт на цепочках: если прибор стоит на тапе, переставляем его.
+  if (deviceKind !== 'chain') {
+    deviceKind = 'chain';
+    saveKind(deviceKind);
+    applyKind();
+  }
+  mode = 'sprint';
+  startGame(seed);
+  inTourneyRound = true;
+  updateKeys();
+  setStat(`Заход турнира ${round} из ${TOURNEY_ROUNDS}`, 'live');
+}
+
+/** Запись в турнир или начало захода — смотря что игроку сейчас доступно. */
+async function tourneyGo(): Promise<void> {
   const state = tourney;
   if (!state) return;
+  const act = tourneyAction(state);
+  if (act === null) return;
   tourneyGoEl.disabled = true;
   try {
-    if (state.mine === null) {
+    if (act.kind === 'enter') {
       renderTourney(await tourneyEnter());
       return;
     }
-    // Раунд тратится здесь: сервер отдаёт сид, и заход считается начатым.
-    const { seed } = await tourneyStart();
-    tourneySheet.hidden = true;
-    // Турнир идёт на цепочках: если прибор стоит на тапе, переставляем его.
-    if (deviceKind !== 'chain') {
-      deviceKind = 'chain';
-      saveKind(deviceKind);
-      applyKind();
-    }
-    mode = 'sprint';
-    startGame(seed);
-    inTourneyRound = true;
-    updateKeys();
-    setStat(`Заход турнира ${state.mine.rounds + 1} из ${state.rounds}`, 'live');
+    await startTourneyRound();
   } catch (error) {
     tourneyNoteEl.textContent =
       error instanceof ApiError && error.code === 'not-enough'
@@ -2167,7 +2139,7 @@ el<HTMLButtonElement>('tut-back').addEventListener('click', () => tutorial.back(
 el<HTMLButtonElement>('tourney-close').addEventListener('click', () => {
   tourneySheet.hidden = true;
 });
-tourneyGoEl.addEventListener('click', () => void tourneyAct());
+tourneyGoEl.addEventListener('click', () => void tourneyGo());
 
 el<HTMLButtonElement>('rules-close').addEventListener('click', () => {
   rulesSheet.hidden = true;
@@ -2340,6 +2312,8 @@ const cabinet = new Cabinet({
     saveArt(art);
     updatePlate();
   },
+  onTourneyRound: () => startTourneyRound(),
+  onTourneyBoard: (day) => void showTourney(day),
 });
 
 /**

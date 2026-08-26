@@ -1030,6 +1030,31 @@
       нечего: окно всякий раз показывается с начала.
     */
     #tourney-sheet .modal { overflow-anchor: none; }
+    /*
+      Таблицу турнира открывают и из кабинета — и она обязана лечь поверх
+      него, а не под: окна тут все одного слоя, и порядок решала бы разметка.
+      Закроют таблицу — под ней снова кабинет, из которого её и позвали.
+    */
+    #tourney-sheet { z-index: 11; }
+
+    /*
+      Тот же турнир в кабинете — карточкой над своей историей. Рамка нужна,
+      чтобы «сегодня» не читалось первой строкой списка прошедших дней.
+    */
+    .tourney-card {
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+      padding: 11px;
+      margin-bottom: 12px;
+      background: var(--case-2);
+      border: 1px solid var(--edge);
+      border-radius: 10px;
+    }
+    .tourney-card .tourney-pool { font-size: 20px; }
+    /* Место в своей истории: золото за первое, зелень за долю котла. */
+    .history li.gold .mark { background: var(--gold); }
+    .history li.paid .mark { background: #2f9e68; }
 
     /* Турнир: котёл крупно — он и есть повод прийти. */
     .tourney-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
@@ -2060,6 +2085,7 @@
               <button class="nav" data-tab="rating"><b>Рейтинг</b><span class="note" id="nav-rating"></span></button>
               <button class="nav" data-tab="history"><b>Матчи</b><span class="note" id="nav-history"></span></button>
               <button class="nav" data-tab="friends"><b>Друзья</b><span class="note" id="nav-friends"></span></button>
+              <button class="nav" data-tab="tourney"><b>Турниры</b><span class="note" id="nav-tourney"></span></button>
               <button class="nav" data-tab="marks"><b>Шильдики</b><span class="note" id="nav-marks"></span></button>
             </nav>
 
@@ -2082,6 +2108,28 @@
             </div>
 
             <ol id="cab-history" class="history" hidden></ol>
+
+            <!--
+              Турниры. Сверху — тот, что идёт или откроется: котёл, часы и
+              своя запись; под ним — свои прошедшие дни с местом и
+              выигрышем. Раздел нужен именно затем, что турнир дня живёт
+              сутки: без истории вчерашний вечер исчезал бесследно, и по
+              игре нельзя было понять, чем кончился твой собственный день.
+            -->
+            <div id="cab-tourney" hidden>
+              <div class="tourney-card">
+                <div class="tourney-top">
+                  <span class="tourney-pool mono" id="cab-tourney-pool">—</span>
+                  <span class="tourney-when" id="cab-tourney-when"></span>
+                </div>
+                <span class="note" id="cab-tourney-note">Читаю турнир…</span>
+                <div class="tourney-rounds" id="cab-tourney-rounds" hidden></div>
+                <button id="cab-tourney-go" class="acc" hidden></button>
+                <button id="cab-tourney-board" hidden>Таблица дня</button>
+              </div>
+              <span class="cab-foot-note">Свои турниры</span>
+              <ol id="cab-tourney-days" class="history"></ol>
+            </div>
 
             <div id="cab-marks" hidden>
               <!--

@@ -16,7 +16,13 @@ import {
   type Frame,
   type Mark,
 } from '@doton/core';
-import type { DuelHistoryEntry, FriendsResponse, MeResponse } from '@doton/protocol';
+import type {
+  DuelHistoryEntry,
+  FriendsResponse,
+  MeResponse,
+  TourneyHistoryEntry,
+  TourneyResponse,
+} from '@doton/protocol';
 import {
   addFriend,
   ApiError,
@@ -36,8 +42,12 @@ import {
   removeFriend,
   rename,
   telegramLinkUrl,
+  getTourney,
+  tourneyEnter,
+  tourneyHistory,
 } from './api';
 import { brandLockup } from './brand';
+import { dayName, renderRounds, tourneyAction, tourneyNote, tourneyWhen } from './tourney';
 import { markChip } from './plate';
 
 /**
@@ -59,7 +69,7 @@ const DONE: Record<string, string> = {
 };
 
 /** Что открыто в кабинете под шапкой профиля. */
-type CabTab = 'rating' | 'history' | 'friends' | 'marks';
+type CabTab = 'rating' | 'history' | 'friends' | 'tourney' | 'marks';
 
 /**
  * Строка раздела «Рейтинг»: режим, своё число в нём и своё место. Таблицы
@@ -117,6 +127,14 @@ export interface CabinetHandlers {
   onFrame(frame: string | null): void;
   /** Свой рисунок с сервера: на корпусе его рисует не кабинет. */
   onArt(art: string | null): void;
+  /**
+   * Игрок начинает турнирный заход. Партию заводит не кабинет: сид общий,
+   * прибор переставляется на цепочки, а сброс на время захода запирается —
+   * всё это дело игрового экрана.
+   */
+  onTourneyRound(): Promise<void>;
+  /** Открыть таблицу турнира: сегодняшнего или прошедшего дня. */
+  onTourneyBoard(day?: string): void;
 }
 
 export class Cabinet {
@@ -145,6 +163,16 @@ export class Cabinet {
   private readonly framesEl = el<HTMLDivElement>('cab-frames');
   private readonly frameHintEl = el<HTMLSpanElement>('cab-frame-hint');
   private readonly facesEl = el<HTMLDivElement>('cab-faces');
+  private readonly tourneyEl = el<HTMLDivElement>('cab-tourney');
+  private readonly tourneyPoolEl = el<HTMLSpanElement>('cab-tourney-pool');
+  private readonly tourneyWhenEl = el<HTMLSpanElement>('cab-tourney-when');
+  private readonly tourneyNoteEl = el<HTMLSpanElement>('cab-tourney-note');
+  private readonly tourneyRoundsEl = el<HTMLDivElement>('cab-tourney-rounds');
+  private readonly tourneyGoEl = el<HTMLButtonElement>('cab-tourney-go');
+  private readonly tourneyBoardEl = el<HTMLButtonElement>('cab-tourney-board');
+  private readonly tourneyDaysEl = el<HTMLOListElement>('cab-tourney-days');
+  /** Турнир дня, как его последний раз прочитали: по нему и жмут клавишу. */
+  private tourney: TourneyResponse | null = null;
   /** Какой раздел сейчас открыт; null — виден сам столбик разделов. */
   private tab: CabTab | null = null;
   private readonly serviceEl = el<HTMLDivElement>('cab-service');
@@ -184,6 +212,10 @@ export class Cabinet {
       button.addEventListener('click', () => this.openTab(button.dataset.tab as CabTab));
     }
     this.backEl.addEventListener('click', () => this.openTab(null));
+    this.tourneyGoEl.addEventListener('click', () => void this.tourneyGo());
+    this.tourneyBoardEl.addEventListener('click', () =>
+      this.handlers.onTourneyBoard(this.tourney?.day),
+    );
     this.buildCatalog();
     this.buildFrames();
     el<HTMLButtonElement>('cab-add-friend').addEventListener('click', () => void this.addByCode());
@@ -234,7 +266,119 @@ export class Cabinet {
       this.historyEl.innerHTML = '<li class="empty">Профиль недоступен — сервер не ответил.</li>';
       this.boardsEl.innerHTML = '<li class="empty">Таблицы недоступны — сервер не ответил.</li>';
     }
-    await this.loadFriends();
+    await Promise.all([this.loadFriends(), this.loadTourney()]);
+  }
+
+  /**
+   * Раздел «Турниры»: турнир дня карточкой и свои прошедшие дни списком.
+   *
+   * Турнир живёт сутки и в полночь начинается заново, поэтому без истории
+   * вчерашний вечер исчезал бесследно: сыграл, выиграл — а к утру ни следа.
+   * Здесь же и записываются в следующий: жетоны лежат в кабинете, и ходить
+   * за ними в другое окно незачем.
+   */
+  private async loadTourney(): Promise<void> {
+    this.tourneyDaysEl.innerHTML = '<li class="empty">Загружаю…</li>';
+    try {
+      const [state, history] = await Promise.all([getTourney(), tourneyHistory()]);
+      this.renderTourney(state);
+      this.renderTourneyDays(history.days);
+    } catch {
+      this.tourney = null;
+      this.tourneyGoEl.hidden = true;
+      this.tourneyBoardEl.hidden = true;
+      this.tourneyRoundsEl.hidden = true;
+      this.tourneyPoolEl.textContent = '—';
+      this.tourneyWhenEl.textContent = '';
+      this.tourneyNoteEl.textContent = 'Турнир недоступен — прибор не отвечает.';
+      this.tourneyDaysEl.innerHTML = '<li class="empty">Турниры недоступны.</li>';
+      this.setNote('tourney', '—');
+    }
+  }
+
+  private renderTourney(state: TourneyResponse): void {
+    this.tourney = state;
+    this.tourneyPoolEl.textContent = `${groupDigits(state.pool)} ж`;
+    this.tourneyWhenEl.textContent = tourneyWhen(state);
+    this.tourneyNoteEl.textContent = tourneyNote(state);
+    renderRounds(this.tourneyRoundsEl, state);
+    const act = tourneyAction(state);
+    this.tourneyGoEl.hidden = act === null;
+    if (act) this.tourneyGoEl.textContent = act.label;
+    // Таблицу предлагаем, только когда в ней есть на что смотреть.
+    this.tourneyBoardEl.hidden = state.board.length === 0;
+    // Подпись раздела в столбике: по ней видно, идёт ли турнир и твой ли он.
+    this.setNote(
+      'tourney',
+      state.phase === 'open'
+        ? state.mine
+          ? `идёт · заходов ${state.rounds - state.mine.rounds}`
+          : `идёт · котёл ${groupDigits(state.pool)}`
+        : state.signup.entered
+          ? 'вы записаны'
+          : `взнос ${groupDigits(state.entry)}`,
+    );
+  }
+
+  /** Свои турниры: день, место и что из котла досталось. */
+  private renderTourneyDays(days: TourneyHistoryEntry[]): void {
+    this.tourneyDaysEl.innerHTML = '';
+    if (days.length === 0) {
+      this.tourneyDaysEl.innerHTML = '<li class="empty">Турниров ещё не было.</li>';
+      return;
+    }
+    for (const day of days) {
+      const item = document.createElement('li');
+      item.className = 'playable';
+      // Золото за первое место, зелень за долю котла: место без денег и
+      // место с деньгами — разные истории, и по цвету это видно сразу.
+      if (day.place === 1) item.classList.add('gold');
+      else if ((day.prize ?? 0) > 0) item.classList.add('paid');
+      item.innerHTML =
+        '<span class="mark"></span><span class="who"><b></b><span class="when"></span></span>' +
+        '<span class="pts"></span><span class="rd"></span>';
+      const [, who, pts, rd] = [...item.children] as HTMLElement[];
+      who!.querySelector('b')!.textContent = dayName(day.day);
+      who!.querySelector('.when')!.textContent =
+        day.rounds === 0
+          ? `не играл · вошло ${day.entered}`
+          : `место ${day.place ?? '—'} из ${day.entered} · заходов ${day.rounds}`;
+      pts!.textContent = groupDigits(day.score);
+      // Выигрыш крупнее взноса — это плюс дня, а не просто число.
+      const prize = day.prize ?? 0;
+      rd!.textContent = prize > 0 ? `+${groupDigits(prize)}` : `−${groupDigits(day.paid)}`;
+      rd!.classList.add(prize > day.paid ? 'up' : prize > 0 ? '' : 'down');
+      item.addEventListener('click', () => this.handlers.onTourneyBoard(day.day));
+      this.tourneyDaysEl.appendChild(item);
+    }
+  }
+
+  /** Запись в турнир или начало захода — тем же правилом, что и в окне. */
+  private async tourneyGo(): Promise<void> {
+    const state = this.tourney;
+    if (!state) return;
+    const act = tourneyAction(state);
+    if (act === null) return;
+    this.tourneyGoEl.disabled = true;
+    try {
+      if (act.kind === 'enter') {
+        this.renderTourney(await tourneyEnter());
+        // Взнос ушёл из кошелька — число в пропуске обязано это показать.
+        this.tokens -= state.entry;
+        el<HTMLSpanElement>('cab-tokens').textContent = groupDigits(this.tokens);
+      } else {
+        await this.handlers.onTourneyRound();
+      }
+    } catch (error) {
+      this.tourneyNoteEl.textContent =
+        error instanceof ApiError && error.code === 'not-enough'
+          ? `Не хватает жетонов: взнос ${groupDigits(state.entry)}.`
+          : error instanceof ApiError && error.code === 'already-in'
+            ? 'Вы уже записаны.'
+            : 'Не вышло — попробуйте ещё раз.';
+    } finally {
+      this.tourneyGoEl.disabled = false;
+    }
   }
 
   /**
@@ -253,9 +397,17 @@ export class Cabinet {
     this.ratingEl.hidden = tab !== 'rating';
     this.historyEl.hidden = tab !== 'history';
     this.friendsEl.hidden = tab !== 'friends';
+    this.tourneyEl.hidden = tab !== 'tourney';
     this.marksEl.hidden = tab !== 'marks';
     this.navEl.hidden = tab !== null;
     this.backEl.hidden = tab === null;
+    // Раздел открывается со своего начала, а не с середины: браузер, подводя
+    // нажатую строку столбика к пальцу, оставляет карточку прокрученной —
+    // и раздел, вставший на место столбика, начинался выше экрана. Наверх
+    // выводим не всю карточку, а строку возврата: на узком телефоне шапка
+    // пропуска съедает окуляр целиком, и до самого раздела дело не доходит.
+    if (tab === null) this.overlay.querySelector('.modal')?.scrollTo({ top: 0 });
+    else this.backEl.scrollIntoView({ block: 'start' });
     if (tab !== null) {
       const opened = this.navEl.querySelector<HTMLButtonElement>(`.nav[data-tab="${tab}"] b`);
       el<HTMLElement>('cab-back-name').textContent = opened?.textContent ?? '';

@@ -112,6 +112,19 @@ export interface TourneyRow {
   art?: string;
 }
 
+/** Строка личной истории турниров: свой день целиком. */
+export interface TourneyHistoryRow {
+  day: string;
+  rounds: number;
+  score: number;
+  place: number | null;
+  prize: number | null;
+  paid: number;
+  entered: number;
+  pool: number;
+  settled: boolean;
+}
+
 /** Строка очереди жалоб. */
 export interface AdminReportRow {
   targetId: string;
@@ -1663,6 +1676,40 @@ export class Store {
       scorers: Number(row.scorers ?? 0),
       pool: Number(row.pool ?? 0),
     };
+  }
+
+  /**
+   * Турниры игрока, новые сверху. Это его собственная история: за какой
+   * день он платил, сколько заходов сыграл, какое место занял и что из
+   * котла получил.
+   *
+   * Котёл и число участников считаем тем же запросом, а не отдельным на
+   * каждый день: строка истории без котла — просто место без веса, а
+   * тридцать запросов ради тридцати чисел прибор бы не пережил.
+   */
+  async tourneyHistory(userId: string, limit = 30): Promise<TourneyHistoryRow[]> {
+    const rows = await this.client.execute({
+      sql: `SELECT e.day, e.rounds, e.score, e.place, e.prize, e.paid,
+                   (SELECT COUNT(*) FROM tourney_entries a WHERE a.day = e.day) AS entered,
+                   (SELECT COALESCE(SUM(a.paid), 0) FROM tourney_entries a WHERE a.day = e.day) AS pool,
+                   t.settled_at
+              FROM tourney_entries e JOIN tourneys t ON t.day = e.day
+             WHERE e.user_id = ?
+             ORDER BY e.day DESC
+             LIMIT ?`,
+      args: [userId, limit],
+    });
+    return rows.rows.map((row) => ({
+      day: String(row.day),
+      rounds: Number(row.rounds),
+      score: Number(row.score),
+      place: row.place === null ? null : Number(row.place),
+      prize: row.prize === null ? null : Number(row.prize),
+      paid: Number(row.paid),
+      entered: Number(row.entered),
+      pool: Number(row.pool),
+      settled: row.settled_at !== null,
+    }));
   }
 
   /** Дни, которые пора считать: время итогов пришло, а котёл ещё цел. */

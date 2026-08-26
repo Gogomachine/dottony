@@ -59,6 +59,8 @@ import {
   TOURNEY_TZ_HOURS,
   prizeShares,
   tourneyDay,
+  tourneyDayShift,
+  tourneyEntryDay,
   tourneyNext,
   tourneyPhase,
   tourneyPrizes,
@@ -1061,5 +1063,18 @@ describe('турнир', () => {
     expect(tourneyPrizes(TOURNEY_ENTRY * 4, 1)).toEqual([TOURNEY_ENTRY * 4]);
     // Не сыграл никто — раздавать нечего.
     expect(tourneyPrizes(5000, 0)).toEqual([]);
+  });
+
+  it('записывают в сегодняшний, пока он принимает, и в завтрашний после', () => {
+    // Ночью и утром — в сегодняшний: запись открыта до самого закрытия.
+    expect(tourneyEntryDay(at(3))).toBe('2026-03-15');
+    expect(tourneyEntryDay(at(8))).toBe('2026-03-15');
+    expect(tourneyEntryDay(at(15))).toBe('2026-03-15');
+    // После закрытия сегодняшний уже не принимает — записывают на завтра.
+    expect(tourneyEntryDay(at(TOURNEY_CLOSE_HOUR))).toBe('2026-03-16');
+    expect(tourneyEntryDay(at(TOURNEY_RESULTS_HOUR))).toBe('2026-03-16');
+    // Конец месяца не ломает счёт дней.
+    expect(tourneyDayShift('2026-03-31', 1)).toBe('2026-04-01');
+    expect(tourneyDayShift('2026-01-01', -1)).toBe('2025-12-31');
   });
 });

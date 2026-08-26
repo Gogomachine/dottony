@@ -42,6 +42,7 @@ import type {
   AdminLogResponse,
   AdminReportsResponse,
   DuelServerMessage,
+  TourneyHistoryResponse,
   TourneyResponse,
   FriendsResponse,
   MeResponse,
@@ -1891,9 +1892,72 @@ describe('API', () => {
       await look(bob);
       expect(await purse()).toEqual(paid);
 
-      // После закрытия в турнир не входят и заходов не шлют.
-      expect((await enter(shy)).statusCode).toBe(409);
+      // После закрытия заходов больше не шлют.
       expect((await play(bob, seed, 2)).statusCode).toBe(409);
+
+      // А вот записаться можно — уже на завтра: сегодняшний закрыт, но
+      // деньги игрока никуда не делись, и ждать утра, чтобы их отдать,
+      // незачем.
+      const tomorrow = '2026-03-16';
+      // Взнос на завтра нужно чем-то платить: своих пятисот Робкому мало,
+      // и это не мелочь теста — так же ответит сервер и живому игроку.
+      expect((await enter(shy)).statusCode).toBe(402);
+      await app.inject({
+        method: 'POST',
+        url: '/api/service/set',
+        headers: { authorization: `Bearer ${shy}`, 'x-service-key': 'kluch-naladki' },
+        payload: { tokens: TOURNEY_ENTRY + 200 },
+      });
+      expect((await enter(shy)).statusCode).toBe(200);
+      const after = await look(shy);
+      // Смотрим по-прежнему сегодняшний день — записаны в завтрашний.
+      expect(after.day).toBe('2026-03-15');
+      expect(after.signup).toEqual({ day: tomorrow, entered: true });
+      // Второй раз в тот же завтрашний турнир не записывают.
+      expect((await enter(shy)).statusCode).toBe(409);
+      // Завтрашний взнос ушёл сразу — остались двести.
+      expect(await tokensOf(shy)).toBe(200);
+
+      // Своя история: день, место, выигрыш и котёл, из которого он вышел.
+      const historyOf = async (token: string): Promise<TourneyHistoryResponse> => {
+        const seen = await app.inject({
+          method: 'GET',
+          url: '/api/tourney/history',
+          headers: { authorization: `Bearer ${token}` },
+        });
+        return seen.json() as TourneyHistoryResponse;
+      };
+      const mineDays = await historyOf(ada);
+      // Новые сверху: завтрашняя запись Ады не касается, у неё один день.
+      expect(mineDays.days).toHaveLength(1);
+      const day = mineDays.days[0]!;
+      expect(day).toMatchObject({ day: '2026-03-15', entered: 6, pool, paid: TOURNEY_ENTRY });
+      expect(day.place).not.toBeNull();
+      // Робкий записан на завтра — этот день у него уже в истории, пустой.
+      const shyDays = await historyOf(shy);
+      expect(shyDays.days.map((row) => row.day)).toEqual([tomorrow, '2026-03-15']);
+      expect(shyDays.days[0]).toMatchObject({ rounds: 0, place: null, prize: null });
+      // Вчерашний день не играл, но и не выиграл: взнос потерян.
+      expect(shyDays.days[1]).toMatchObject({ rounds: 0, prize: 0 });
+
+      // Прошедший день открывается по своему ключу — итогами.
+      vi.setSystemTime(new Date(Date.UTC(2026, 2, 16, 12 - TOURNEY_TZ_HOURS, 0, 0)));
+      const past = await app.inject({
+        method: 'GET',
+        url: '/api/tourney?day=2026-03-15',
+        headers: { authorization: `Bearer ${ada}` },
+      });
+      const seenPast = past.json() as TourneyResponse;
+      expect(seenPast.day).toBe('2026-03-15');
+      expect(seenPast.phase).toBe('done');
+      expect(seenPast.board[0]!.place).toBe(1);
+      // Сегодняшний при этом свой: Робкий в нём уже записан, Ада — нет.
+      expect((await look(shy)).mine).not.toBeNull();
+      expect((await look(ada)).mine).toBeNull();
+      // Дня, которого ещё не было, не показываем вовсе: заводить турнир
+      // вперёд себя значило бы раздавать сид будущего дня.
+      const ahead = await app.inject({ method: 'GET', url: '/api/tourney?day=2026-04-01' });
+      expect(ahead.statusCode).toBe(400);
     } finally {
       await app.close();
       vi.useRealTimers();

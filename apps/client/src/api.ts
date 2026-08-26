@@ -19,6 +19,7 @@ import type {
   SprintLeaderboardResponse,
   SubmitOrderResponse,
   SubmitSprintResponse,
+  TourneyHistoryResponse,
   TourneyResponse,
 } from '@doton/protocol';
 
@@ -340,8 +341,14 @@ export function adminClearArt(userId: string, reason: string): Promise<unknown> 
  * Турнир дня целиком: расписание, котёл, своё участие и таблица. Смотреть
  * можно и без входа — это витрина, а не личное дело.
  */
-export function getTourney(): Promise<TourneyResponse> {
-  return request<TourneyResponse>('/api/tourney');
+export function getTourney(day?: string): Promise<TourneyResponse> {
+  // День называют только тогда, когда смотрят прошедший турнир из кабинета.
+  return request<TourneyResponse>(day === undefined ? '/api/tourney' : `/api/tourney?day=${day}`);
+}
+
+/** Свои прошедшие турниры: за какой день платил и чем он кончился. */
+export function tourneyHistory(): Promise<TourneyHistoryResponse> {
+  return request<TourneyHistoryResponse>('/api/tourney/history');
 }
 
 /** Взнос за вход. Жетоны списывает сервер — цену он знает сам. */

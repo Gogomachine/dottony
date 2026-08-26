@@ -63,6 +63,27 @@ export function tourneyDay(now: Date = new Date()): string {
   return local(now).toISOString().slice(0, 10);
 }
 
+/** Соседний день турнира: `+1` — завтрашний, `-1` — вчерашний. */
+export function tourneyDayShift(day: string, days: number): string {
+  const shifted = new Date(`${day}T00:00:00Z`);
+  shifted.setUTCDate(shifted.getUTCDate() + days);
+  return shifted.toISOString().slice(0, 10);
+}
+
+/**
+ * День, в который сейчас записывают.
+ *
+ * Пока сегодняшний турнир принимает участников — это сегодня, даже до
+ * девяти утра: записаться заранее и прийти к открытию честнее, чем сидеть
+ * и ждать, когда откроется дверь. После закрытия записывают уже на завтра:
+ * вход в сегодняшний закрыт, а деньги игрока никуда не делись.
+ */
+export function tourneyEntryDay(now: Date = new Date()): string {
+  const phase = tourneyPhase(now);
+  const day = tourneyDay(now);
+  return phase === 'before' || phase === 'open' ? day : tourneyDayShift(day, 1);
+}
+
 /** Час дня в поясе турнира — от него зависит всё расписание. */
 function hourOf(now: Date): number {
   return local(now).getUTCHours();

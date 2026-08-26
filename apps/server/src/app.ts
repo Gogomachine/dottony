@@ -32,6 +32,7 @@ import {
   type AdminLogResponse,
   type AdminReportsResponse,
   type DuelKind,
+  type TourneyHistoryResponse,
   type TourneyResponse,
   type AuthResponse,
   type BuyResponse,
@@ -60,6 +61,7 @@ import {
   TOURNEY_ENTRY,
   TOURNEY_ROUNDS,
   tourneyDay,
+  tourneyEntryDay,
   tourneyNext,
   tourneyPhase,
   tourneyPrizes,
@@ -747,19 +749,38 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
    * тем же ядром. Сид турнира клиент не присылает никогда: он общий, и
    * присланному верить нельзя.
    */
-  const tourneyState = async (userId: string | null): Promise<TourneyResponse> => {
+  const tourneyState = async (
+    userId: string | null,
+    /** Какой день показывать; по умолчанию сегодняшний. */
+    wanted?: string,
+  ): Promise<TourneyResponse> => {
     // Прежде чем показывать что-либо, добираем несчитанные дни: итоги
     // должны наступать сами, а не тогда, когда до сервера кто-то дошёл.
     await settleTourneys();
     const now = new Date();
-    const day = tourneyDay(now);
-    const phase = tourneyPhase(now);
+    const today = tourneyDay(now);
+    const day = wanted ?? today;
+    // У прошедшего дня своего расписания уже нет: он весь позади.
+    const phase = day === today ? tourneyPhase(now) : day < today ? 'done' : 'before';
     const [{ seed }, counts] = await Promise.all([store.tourneyOf(day), store.tourneyCount(day)]);
     const mine = userId === null ? null : await store.tourneyEntry(day, userId);
     const board = await store.tourneyBoard(day);
+    // Куда записывают прямо сейчас. Смотреть можно любой день, а записаться
+    // — только в тот, что ещё принимает: сегодняшний или завтрашний.
+    const signupDay = tourneyEntryDay(now);
+    const signup = {
+      day: signupDay,
+      entered:
+        userId === null
+          ? false
+          : signupDay === day
+            ? mine !== null
+            : (await store.tourneyEntry(signupDay, userId)) !== null,
+    };
     return {
       day,
       phase,
+      signup,
       nextAt: tourneyNext(now).at.toISOString(),
       entry: TOURNEY_ENTRY,
       rounds: TOURNEY_ROUNDS,
@@ -794,18 +815,48 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     };
   };
 
-  app.get('/api/tourney', async (request): Promise<TourneyResponse> => {
+  app.get('/api/tourney', async (request, reply) => {
     // Смотреть турнир можно и без входа: это витрина, а не личное дело.
     const user = await currentUser(request);
-    return tourneyState(user?.sub ?? null);
+    // Прошедший день смотрят по его ключу — так открываются итоги из
+    // кабинета. Будущий не показываем вовсе: заводить турнир вперёд себя
+    // значило бы раздавать сид дня, которого ещё не было.
+    const wanted = (request.query as { day?: string }).day;
+    if (wanted !== undefined) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(wanted) || wanted > tourneyDay(new Date())) {
+        return reply.code(400).send({ error: 'bad-day' });
+      }
+    }
+    return tourneyState(user?.sub ?? null, wanted);
   });
 
-  /** Взнос за вход. Пока турнир идёт — и только один раз за день. */
+  /** Своя история турниров: за какой день платил, чем кончилось. */
+  app.get('/api/tourney/history', async (request): Promise<TourneyHistoryResponse> => {
+    const user = await requireUser(request);
+    await settleTourneys();
+    const days = await store.tourneyHistory(user.sub, 30);
+    return {
+      days: days.map((row) => ({
+        day: row.day,
+        rounds: row.rounds,
+        score: row.score,
+        place: row.place,
+        prize: row.prize,
+        paid: row.paid,
+        entered: row.entered,
+        pool: row.pool,
+      })),
+    };
+  });
+
+  /**
+   * Взнос за вход — в тот турнир, который сейчас принимает: сегодняшний,
+   * пока он не закрылся, и завтрашний после закрытия. Записаться заранее
+   * можно и ночью: ждать девяти утра, чтобы отдать жетоны, незачем.
+   */
   app.post('/api/tourney/enter', async (request, reply) => {
     const user = await requireUser(request);
-    const now = new Date();
-    if (tourneyPhase(now) !== 'open') return reply.code(409).send({ error: 'closed' });
-    const day = tourneyDay(now);
+    const day = tourneyEntryDay(new Date());
     await store.tourneyOf(day);
     const outcome = await store.tourneyEnter(day, user.sub, TOURNEY_ENTRY);
     if (outcome === 'poor') return reply.code(402).send({ error: 'not-enough' });

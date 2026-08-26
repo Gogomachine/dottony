@@ -58,6 +58,8 @@ export {
   TOURNEY_CLOSE_HOUR,
   TOURNEY_RESULTS_HOUR,
   tourneyDay,
+  tourneyDayShift,
+  tourneyEntryDay,
   tourneyPhase,
   tourneyNext,
   prizeShares,
