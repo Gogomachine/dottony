@@ -567,6 +567,7 @@ function startTutorial(): void {
   overlay.hidden = true;
   duelSheet.hidden = true;
   rulesSheet.hidden = true;
+  tourneySheet.hidden = true;
   // Показ ведут цепочкой: у него свои ходы, и рисоваться они должны линией.
   // Способ хода вернёт startGame() в конце показа.
   cfg.features.tap = false;
@@ -2169,7 +2170,10 @@ el<HTMLButtonElement>('invite').addEventListener('click', () => {
  */
 function closeWindows(): boolean {
   let closed = false;
-  for (const sheet of [duelSheet, rulesSheet]) {
+  // Все окна прибора, кроме одного: изъятый прибор не закрывается ничем —
+  // клавишами из-под бана выхода нет, и это единственное окно, которое
+  // остаётся на экране, чем бы игрок ни нажал.
+  for (const sheet of [duelSheet, rulesSheet, tourneySheet]) {
     if (sheet.hidden) continue;
     sheet.hidden = true;
     closed = true;
@@ -2245,6 +2249,9 @@ el<HTMLDivElement>('key-menu').addEventListener('click', () => {
  */
 kindKey.addEventListener('click', () => {
   if (kindKey.hasAttribute('disabled')) return;
+  // Открытое окно сперва убираем: панель, которую клавиша откроет следом,
+  // иначе появится под ним — и нажатие выглядит несработавшим.
+  closeWindows();
   deviceKind = other(deviceKind);
   saveKind(deviceKind);
   applyKind();
@@ -2259,6 +2266,8 @@ kindKey.addEventListener('click', () => {
  */
 resetKey.addEventListener('click', () => {
   if (resetKey.hasAttribute('disabled')) return;
+  // Новый расклад показывают на чистом окуляре, а не под открытым окном.
+  closeWindows();
   menuEl.hidden = true;
   // На листе та же клавиша означает то же самое, что и в партии, — начать
   // заново: новый образец там, чистый лист здесь.
