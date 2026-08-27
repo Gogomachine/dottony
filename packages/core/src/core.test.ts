@@ -29,6 +29,7 @@ import {
   OWN_PRICE,
   STICKER_PRICE,
   isOwnMark,
+  isStickerId,
   markPrice,
   MARK_BIG,
   MARK_SLOTS,
@@ -908,6 +909,41 @@ describe('шильдики', () => {
     // Лишнее за край корпуса просто не помещается.
     expect(cleanMarks(free.slice(0, 5).map((mark) => mark.id))).toHaveLength(MARK_SLOTS);
     expect(cleanMarks([])).toEqual([null, null, null]);
+  });
+});
+
+describe('наклейки', () => {
+  it('у каждой свой рисунок, и номера не повторяются', () => {
+    const stickers = MARKS.filter((mark) => mark.kind === 'sticker');
+    expect(stickers.length).toBeGreaterThanOrEqual(24);
+    const files = new Set<string>();
+    const ids = new Set<string>();
+    for (const sticker of stickers) {
+      // Смайлы кончились: каждая наклейка — свой файл, иначе на чужом
+      // устройстве набор рисуется чужим шрифтом и разъезжается.
+      expect(sticker.art).toMatch(/^[a-z0-9-]+\.svg$/);
+      expect(files.has(sticker.art!)).toBe(false);
+      files.add(sticker.art!);
+      // Номер — то, чем игрок владеет: повтор означал бы, что купленное
+      // указывает на две разные картинки.
+      expect(ids.has(sticker.id)).toBe(false);
+      ids.add(sticker.id);
+      expect(isStickerId(sticker.id)).toBe(true);
+      expect(sticker.price).toBe(STICKER_PRICE);
+      // Запасной знак нужен на случай, когда картинка не доехала.
+      expect(sticker.glyph.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('номер наклейки узнаётся и тогда, когда её больше нет в каталоге', () => {
+    // По этому правилу прибор возвращает жетоны за снятые с производства.
+    expect(isStickerId('s0')).toBe(true);
+    expect(isStickerId('s999')).toBe(true);
+    expect(markById('s999')).toBeUndefined();
+    expect(isStickerId('e-run')).toBe(false);
+    expect(isStickerId('g-order')).toBe(false);
+    expect(isStickerId('own')).toBe(false);
+    expect(isStickerId('slot-2')).toBe(false);
   });
 });
 

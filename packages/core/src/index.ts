@@ -23,6 +23,7 @@ export {
   OWN_PRICE,
   OWN_MARK,
   isOwnMark,
+  isStickerId,
   SLOT_PRICES,
   slotItem,
   slotPrice,

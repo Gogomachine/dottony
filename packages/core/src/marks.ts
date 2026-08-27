@@ -112,30 +112,63 @@ export const STICKER_PRICE = 50;
  * продаются вовсе, а наклейка ничего о хозяине не утверждает, и за неё
  * можно брать жетоны, ничего не обещая взамен.
  *
- * Смайлы здесь временные — место занято до собственных картинок. Ни один
- * из них не читается как жест или знак принадлежности: на чужом экране всё
- * это должно быть просто картинкой, а не сообщением.
+ * Все двадцать четыре нарисованы для прибора: смайлы, стоявшие тут до них,
+ * были заглушкой — знак Юникода на чужом устройстве рисуется чужим
+ * шрифтом, и набор, собранный на одном телефоне, на другом разъезжался.
+ * Свои картинки едут в бандл и выглядят одинаково везде.
+ *
+ * Порядок — четыре набора по шесть: стихии, вещи, нечисть и она же, только
+ * не страшная. Номера от порядка не зависят и не меняются: по номеру игрок
+ * владеет купленным. Знак в `glyph` остался запасным — его видно, только
+ * если картинка не доехала.
+ *
+ * Рисунки лежат в `apps/client/public/marks/`, а рисуются пиксельными
+ * картами в `tools/marks/build.mjs`: наклейка на корпусе величиной с
+ * ноготь, и всё, что тоньше пикселя, в ней пропадает.
  */
 const STICKERS: readonly { id: string; glyph: string; art?: string }[] = [
-  // Образец формата: рисунок из папки, а не знак Юникода.
-  { id: 's46', glyph: '◎', art: 'example-dot.svg' },
-  { id: 's0', glyph: '🔭' }, { id: 's1', glyph: '🔬' }, { id: 's2', glyph: '⚗️' },
-  { id: 's3', glyph: '🧪' }, { id: 's4', glyph: '🧲' }, { id: 's5', glyph: '💡' },
-  { id: 's6', glyph: '🔋' }, { id: 's7', glyph: '📡' }, { id: 's8', glyph: '🛰️' },
-  { id: 's9', glyph: '⏱️' }, { id: 's10', glyph: '📈' }, { id: 's11', glyph: '🧭' },
-  { id: 's12', glyph: '⚙️' }, { id: 's13', glyph: '🔧' }, { id: 's14', glyph: '🪛' },
-  { id: 's15', glyph: '📐' }, { id: 's16', glyph: '📎' }, { id: 's17', glyph: '🔎' },
-  { id: 's18', glyph: '🎯' }, { id: 's19', glyph: '🎲' }, { id: 's20', glyph: '🧩' },
-  { id: 's21', glyph: '♟️' }, { id: 's22', glyph: '🎈' }, { id: 's23', glyph: '🍀' },
-  { id: 's24', glyph: '🌵' }, { id: 's25', glyph: '🐢' }, { id: 's26', glyph: '🐌' },
-  { id: 's27', glyph: '🦔' }, { id: 's28', glyph: '🦉' }, { id: 's29', glyph: '🐙' },
-  { id: 's30', glyph: '🍄' }, { id: 's31', glyph: '🌗' }, { id: 's32', glyph: '⭐' },
-  { id: 's33', glyph: '⚡️' }, { id: 's34', glyph: '🔥' }, { id: 's35', glyph: '❄️' },
-  { id: 's36', glyph: '🌊' }, { id: 's37', glyph: '🪐' }, { id: 's38', glyph: '☄️' },
-  { id: 's39', glyph: '🛸' }, { id: 's40', glyph: '🤖' }, { id: 's41', glyph: '👾' },
-  { id: 's42', glyph: '🧿' }, { id: 's43', glyph: '🎧' }, { id: 's44', glyph: '📻' },
-  { id: 's45', glyph: '☕️' },
+  // Стихии.
+  { id: 's0', glyph: '☀️', art: 'svet.svg' },
+  { id: 's1', glyph: '🌙', art: 'luna.svg' },
+  { id: 's2', glyph: '🔥', art: 'plamya.svg' },
+  { id: 's3', glyph: '⚡️', art: 'molniya.svg' },
+  { id: 's4', glyph: '🌀', art: 'voronka-siniaia.svg' },
+  { id: 's5', glyph: '💥', art: 'voronka-ognennaia.svg' },
+  // Вещи из чужого чемодана.
+  { id: 's6', glyph: '🪞', art: 'zerkalo.svg' },
+  { id: 's7', glyph: '⌛️', art: 'pesochnye-chasy.svg' },
+  { id: 's8', glyph: '💍', art: 'kolco.svg' },
+  { id: 's9', glyph: '🧭', art: 'kompas.svg' },
+  { id: 's10', glyph: '🎭', art: 'maska.svg' },
+  { id: 's11', glyph: '⛓️', art: 'cep.svg' },
+  // Кто водится в подземелье.
+  { id: 's12', glyph: '💀', art: 'cherep.svg' },
+  { id: 's13', glyph: '🦇', art: 'netopyr.svg' },
+  { id: 's14', glyph: '🐛', art: 'cherv.svg' },
+  { id: 's15', glyph: '👻', art: 'prizrak.svg' },
+  { id: 's16', glyph: '👹', art: 'demon.svg' },
+  { id: 's17', glyph: '👾', art: 'slizen.svg' },
+  // Та же нечисть, только не страшная.
+  { id: 's18', glyph: '💧', art: 'kaplia.svg' },
+  { id: 's19', glyph: '🐱', art: 'kot.svg' },
+  { id: 's20', glyph: '🫥', art: 'prizrachek.svg' },
+  { id: 's21', glyph: '🐣', art: 'ptenec.svg' },
+  { id: 's22', glyph: '🐸', art: 'liagushka.svg' },
+  { id: 's23', glyph: '🐌', art: 'ulitka.svg' },
 ];
+
+/**
+ * Наклейка ли это по номеру — даже если такой в каталоге больше нет.
+ *
+ * Нужно ровно затем, что каталог сменился целиком: наклейки, купленные при
+ * смайлах, из него исчезли, и по одному только `markById` их не отличить
+ * от мусора. Прибор возвращает за них жетоны (см. `refundGoneStickers` на
+ * сервере), а узнаёт их здесь — по тому же правилу, по которому и выдавал
+ * номера.
+ */
+export function isStickerId(id: string): boolean {
+  return /^s\d+$/.test(id);
+}
 
 /**
  * Отметки за игру. Их не выбирают — их получают, и в этом вся их цена:

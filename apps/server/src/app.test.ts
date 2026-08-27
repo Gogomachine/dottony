@@ -1017,6 +1017,31 @@ describe('parseStart', () => {
   });
 });
 
+describe('снятая с производства наклейка', () => {
+  it('стирается, а её цена возвращается в кошелёк', async () => {
+    const store = new Store({ url: ':memory:' });
+    try {
+      await store.migrate();
+      await store.createUser('u1', 'Ада', { kind: 'guest', externalId: 'u1' });
+      // Номер из прежнего каталога — таких наклеек больше нет вовсе.
+      await store.grantMark('u1', 's999');
+      // И одна настоящая: её трогать нельзя.
+      await store.grantMark('u1', 's0');
+      const before = await store.tokensOf('u1');
+
+      await store.migrate();
+      expect(await store.earnedMarks('u1')).toEqual(['s0']);
+      expect(await store.tokensOf('u1')).toBe(before + STICKER_PRICE);
+
+      // Второй раз за ту же наклейку не платим: строки уже нет.
+      await store.migrate();
+      expect(await store.tokensOf('u1')).toBe(before + STICKER_PRICE);
+    } finally {
+      store.close();
+    }
+  });
+});
+
 describe('привязка способов входа', () => {
   let store: Store;
 

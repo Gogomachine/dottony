@@ -6,8 +6,11 @@ import {
   isArt,
   isGoldMark,
   isOwnMark,
+  isStickerId,
+  markById,
   newRating,
   PLACEMENT_GAMES,
+  STICKER_PRICE,
   type Rating,
 } from '@doton/core';
 import type { BoardPeriod, DuelKind } from '@doton/protocol';
@@ -437,6 +440,39 @@ export class Store {
       `INSERT OR IGNORE INTO identities (kind, external_id, user_id)
        SELECT 'guest', id, id FROM users WHERE tg_id IS NULL`,
     );
+
+    await this.refundGoneStickers();
+  }
+
+  /**
+   * Возвращает жетоны за наклейки, которых больше нет в каталоге.
+   *
+   * Каталог наклеек сменился целиком — смайлы уступили место рисункам, — и
+   * купленные тогда номера просто перестали существовать. Молча оставить их
+   * в списке значило бы забрать у игрока жетоны ни за что: носить такую
+   * наклейку он всё равно не может, прибор её не знает. Поэтому снятая с
+   * производства наклейка стирается, а её цена возвращается в кошелёк.
+   *
+   * Дважды одному и тому же игроку это не заплатит: строка удаляется в том
+   * же проходе, и второй раз возвращать уже нечего.
+   */
+  private async refundGoneStickers(): Promise<void> {
+    const rows = await this.client.execute(
+      "SELECT user_id, mark_id FROM user_marks WHERE mark_id LIKE 's%'",
+    );
+    for (const row of rows.rows) {
+      const id = String(row.mark_id);
+      if (!isStickerId(id) || markById(id) !== undefined) continue;
+      const userId = String(row.user_id);
+      await this.client.execute({
+        sql: 'DELETE FROM user_marks WHERE user_id = ? AND mark_id = ?',
+        args: [userId, id],
+      });
+      await this.client.execute({
+        sql: 'UPDATE users SET tokens = tokens + ? WHERE id = ?',
+        args: [STICKER_PRICE, userId],
+      });
+    }
   }
 
   /** Выдаёт код тем, кто завёлся до появления кодов. */
