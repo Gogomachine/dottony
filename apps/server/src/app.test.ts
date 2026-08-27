@@ -1989,6 +1989,69 @@ describe('API', () => {
     }
   });
 
+  it('турнир: котёл раздаётся один раз, даже если заглянули двое разом', async () => {
+    // Раздачу запускает каждый взгляд на турнир, а в одиннадцать вечера
+    // туда заглядывают все сразу — два запуска подряд не должны заплатить
+    // дважды. Часы берём в свои руки по той же причине, что и выше.
+    const noon = new Date(Date.UTC(2026, 2, 15, 12 - TOURNEY_TZ_HOURS, 0, 0));
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(noon);
+    const app = await buildApp({
+      databaseUrl: ':memory:',
+      jwtSecret: 'test-jwt',
+      serviceKey: 'kluch-naladki',
+    });
+    try {
+      const guest = async (name: string): Promise<string> => {
+        const auth = await app.inject({ method: 'POST', url: '/api/auth/guest', payload: { name } });
+        const token = (auth.json() as { token: string }).token;
+        await app.inject({
+          method: 'POST',
+          url: '/api/service/set',
+          headers: { authorization: `Bearer ${token}`, 'x-service-key': 'kluch-naladki' },
+          payload: { tokens: TOURNEY_ENTRY + 100 },
+        });
+        return token;
+      };
+      const tokensOf = async (token: string): Promise<number> => {
+        const me = await app.inject({
+          method: 'GET',
+          url: '/api/me',
+          headers: { authorization: `Bearer ${token}` },
+        });
+        return (me.json() as MeResponse).tokens;
+      };
+
+      const ada = await guest('Ада');
+      const bob = await guest('Боб');
+      for (const token of [ada, bob]) {
+        const headers = { authorization: `Bearer ${token}` };
+        expect((await app.inject({ method: 'POST', url: '/api/tourney/enter', headers })).statusCode).toBe(200);
+        // Начатый заход делает игрока участником дележа.
+        expect(
+          (await app.inject({ method: 'POST', url: '/api/tourney/round/start', headers })).statusCode,
+        ).toBe(200);
+      }
+
+      vi.setSystemTime(new Date(Date.UTC(2026, 2, 15, 23 - TOURNEY_TZ_HOURS, 30, 0)));
+      await Promise.all([
+        app.inject({ method: 'GET', url: '/api/tourney', headers: { authorization: `Bearer ${ada}` } }),
+        app.inject({ method: 'GET', url: '/api/tourney', headers: { authorization: `Bearer ${bob}` } }),
+      ]);
+
+      // У каждого осталось по сотне после взноса; сверх этого — только котёл.
+      const purse = (await tokensOf(ada)) + (await tokensOf(bob));
+      expect(purse - 200).toBe(TOURNEY_ENTRY * 2);
+
+      // И третий взгляд ничего не добавляет.
+      await app.inject({ method: 'GET', url: '/api/tourney', headers: { authorization: `Bearer ${ada}` } });
+      expect((await tokensOf(ada)) + (await tokensOf(bob)) - 200).toBe(TOURNEY_ENTRY * 2);
+    } finally {
+      await app.close();
+      vi.useRealTimers();
+    }
+  });
+
   it('служба: посторонним дверей нет, служащему открыт пульт и журнал', async () => {
     const desk = await buildApp({
       databaseUrl: ':memory:',

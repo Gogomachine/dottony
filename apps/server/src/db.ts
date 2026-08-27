@@ -1763,15 +1763,23 @@ export class Store {
    * пометка последней — если оборвётся посередине, следующий запуск
    * посчитает тот же день заново, а не пропустит его.
    *
-   * Повторной раздачи при этом не будет: призы кладутся тем же числом, а
-   * начисление идёт по колонке `prize`, которую мы только что и записали.
+   * **Право заплатить даёт запись места, а не пометка дня.** Строка приза
+   * заполняется с условием «приза ещё нет», и жетоны идут только тому, кому
+   * эта запись действительно досталась. Без этого условия котёл раздавался
+   * дважды: раздачу запускает каждый взгляд на турнир, в одиннадцать вечера
+   * туда заглядывают разом, и оба запуска видели день непосчитанным — оба и
+   * платили. Пометка дня от этого не спасает: её ставят в конце, а деньги
+   * уходят раньше.
    */
   async tourneySettle(day: string, prizes: { userId: string; place: number; prize: number }[]): Promise<void> {
     for (const { userId, place, prize } of prizes) {
-      await this.client.execute({
-        sql: 'UPDATE tourney_entries SET place = ?, prize = ? WHERE day = ? AND user_id = ?',
+      const claimed = await this.client.execute({
+        sql: `UPDATE tourney_entries SET place = ?, prize = ?
+               WHERE day = ? AND user_id = ? AND prize IS NULL`,
         args: [place, prize, day, userId],
       });
+      // Приз уже записан — значит, за этот день игроку уже заплатили.
+      if (claimed.rowsAffected === 0) continue;
       if (prize > 0) {
         await this.client.execute({
           sql: 'UPDATE users SET tokens = tokens + ? WHERE id = ?',
