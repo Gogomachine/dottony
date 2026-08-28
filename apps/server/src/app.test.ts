@@ -18,6 +18,7 @@ import {
   ART_LEN,
   TOURNEY_ENTRY,
   TOURNEY_ROUNDS,
+  SHIFT_BONUS,
   TOURNEY_TZ_HOURS,
   OWN_MARK,
   OWN_PRICE,
@@ -42,6 +43,7 @@ import type {
   AdminLogResponse,
   AdminReportsResponse,
   DuelServerMessage,
+  SubmitSprintResponse,
   TourneyHistoryResponse,
   TourneyResponse,
   FriendsResponse,
@@ -1283,7 +1285,7 @@ describe('API', () => {
       payload: { seed, moves },
     });
     expect(submit.statusCode).toBe(200);
-    expect(submit.json()).toEqual({ score, best: score, record: true, rank: 1 });
+    expect(submit.json()).toEqual({ score, best: score, record: true, rank: 1, shift: SHIFT_BONUS });
 
     const me = await app.inject({
       method: 'GET',
@@ -1398,7 +1400,7 @@ describe('API', () => {
       payload: { seed, moves },
     });
     expect(sent.statusCode).toBe(200);
-    expect(sent.json()).toEqual({ score, orders, best: score, record: true, rank: 1 });
+    expect(sent.json()).toEqual({ score, orders, best: score, record: true, rank: 1, shift: SHIFT_BONUS });
 
     const me = await app.inject({
       method: 'GET',
@@ -1528,10 +1530,13 @@ describe('API', () => {
       payload: { seed: 12345, moves: honest.moves },
     });
     expect(sprint.statusCode).toBe(200);
-    expect(await tokensOf()).toBe(1);
+    // Жетон за заход и надбавка за смену: заход был первым за день.
+    expect((sprint.json() as SubmitSprintResponse).shift).toBe(SHIFT_BONUS);
+    expect(await tokensOf()).toBe(SHIFT_BONUS + 1);
 
     // Второй заход подряд честен по счёту, но пришёл раньше, чем заход мог
-    // закончиться, — жетон за него не дают. Счёт при этом засчитан.
+    // закончиться, — жетон за него не дают. Смену тоже: она одна на день.
+    // Счёт при этом засчитан.
     const run = seedWithOrders(1);
     const order = await app.inject({
       method: 'POST',
@@ -1541,7 +1546,7 @@ describe('API', () => {
     });
     expect(order.statusCode).toBe(200);
     expect((order.json() as { record: boolean }).record).toBe(true);
-    expect(await tokensOf()).toBe(1);
+    expect(await tokensOf()).toBe(SHIFT_BONUS + 1);
   });
 
   /**
@@ -1924,15 +1929,19 @@ describe('API', () => {
       // деньги игрока никуда не делись, и ждать утра, чтобы их отдать,
       // незачем.
       const tomorrow = '2026-03-16';
-      // Взнос на завтра нужно чем-то платить: своих пятисот Робкому мало,
+      // Взнос на завтра нужно чем-то платить: пустому кошельку отказывают,
       // и это не мелочь теста — так же ответит сервер и живому игроку.
+      const shyPurse = async (tokens: number): Promise<void> => {
+        await app.inject({
+          method: 'POST',
+          url: '/api/service/set',
+          headers: { authorization: `Bearer ${shy}`, 'x-service-key': 'kluch-naladki' },
+          payload: { tokens },
+        });
+      };
+      await shyPurse(TOURNEY_ENTRY - 1);
       expect((await enter(shy)).statusCode).toBe(402);
-      await app.inject({
-        method: 'POST',
-        url: '/api/service/set',
-        headers: { authorization: `Bearer ${shy}`, 'x-service-key': 'kluch-naladki' },
-        payload: { tokens: TOURNEY_ENTRY + 200 },
-      });
+      await shyPurse(TOURNEY_ENTRY + 200);
       expect((await enter(shy)).statusCode).toBe(200);
       const after = await look(shy);
       // Смотрим по-прежнему сегодняшний день — записаны в завтрашний.
@@ -1983,6 +1992,52 @@ describe('API', () => {
       // вперёд себя значило бы раздавать сид будущего дня.
       const ahead = await app.inject({ method: 'GET', url: '/api/tourney?day=2026-04-01' });
       expect(ahead.statusCode).toBe(400);
+    } finally {
+      await app.close();
+      vi.useRealTimers();
+    }
+  });
+
+  it('смена: первый заход дня приносит надбавку, второй — нет', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(Date.UTC(2026, 2, 15, 12 - TOURNEY_TZ_HOURS, 0, 0)));
+    const app = await buildApp({ databaseUrl: ':memory:', jwtSecret: 'test-jwt' });
+    try {
+      const auth = await app.inject({ method: 'POST', url: '/api/auth/guest', payload: { name: 'Ада' } });
+      const token = (auth.json() as { token: string }).token;
+      const headers = { authorization: `Bearer ${token}` };
+      const tokensOf = async (): Promise<number> => {
+        const me = await app.inject({ method: 'GET', url: '/api/me', headers });
+        return (me.json() as MeResponse).tokens;
+      };
+      const play = async (seed: number): Promise<SubmitSprintResponse> => {
+        const run = playHonestRun(seed, 4);
+        const sent = await app.inject({
+          method: 'POST',
+          url: '/api/sprint',
+          headers,
+          payload: { seed, moves: run.moves },
+        });
+        expect(sent.statusCode).toBe(200);
+        return sent.json() as SubmitSprintResponse;
+      };
+
+      // Первый заход дня: жетон за заход плюс надбавка за смену.
+      const first = await play(1);
+      expect(first.shift).toBe(SHIFT_BONUS);
+      expect(await tokensOf()).toBe(SHIFT_BONUS + 1);
+
+      // Второй в тот же день надбавки не приносит (и жетона тоже: не прошёл
+      // зазор между заходами — за этим следит свой счётчик).
+      const second = await play(2);
+      expect(second.shift).toBeUndefined();
+      expect(await tokensOf()).toBe(SHIFT_BONUS + 1);
+
+      // Назавтра смена снова положена.
+      vi.setSystemTime(new Date(Date.UTC(2026, 2, 16, 12 - TOURNEY_TZ_HOURS, 0, 0)));
+      const next = await play(3);
+      expect(next.shift).toBe(SHIFT_BONUS);
+      expect(await tokensOf()).toBe(SHIFT_BONUS * 2 + 1);
     } finally {
       await app.close();
       vi.useRealTimers();
@@ -3356,7 +3411,9 @@ describe('рейтинг за дуэль', () => {
         url: '/api/me',
         headers: { authorization: `Bearer ${token}` },
       });
-      expect((me.json() as { tokens: number }).tokens).toBe(1);
+      // Жетон за матч плюс надбавка за смену: для обоих это первое
+      // доигранное за день.
+      expect((me.json() as { tokens: number }).tokens).toBe(SHIFT_BONUS + 1);
     }
   });
 

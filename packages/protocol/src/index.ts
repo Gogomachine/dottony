@@ -354,8 +354,17 @@ export interface AuthResponse {
   user: { id: string; name: string };
 }
 
+/**
+ * Надбавка за первый заход дня, если она пришлась на этот заход. Поле
+ * необязательное: во все остальные заходы его нет вовсе, и слать ноль
+ * значило бы каждый раз говорить о том, чего не случилось.
+ */
+export interface ShiftPaid {
+  shift?: number;
+}
+
 /** Ответ на присланный спринт: что насчитало ядро и куда это ставит игрока. */
-export interface SubmitSprintResponse {
+export interface SubmitSprintResponse extends ShiftPaid {
   /** Счёт этого захода — по пересчёту сервера. */
   score: number;
   /** Личный рекорд после захода. */
@@ -394,7 +403,7 @@ export interface SprintLeaderboardResponse {
 }
 
 /** Ответ на присланный заход: что насчитало ядро и куда это ставит игрока. */
-export interface SubmitOrderResponse {
+export interface SubmitOrderResponse extends ShiftPaid {
   /** Счёт захода — по пересчёту сервера. */
   score: number;
   /** Сколько заказов в нём закрыто. */

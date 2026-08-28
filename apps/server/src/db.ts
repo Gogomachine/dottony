@@ -387,6 +387,9 @@ export class Store {
     await this.addColumnIfMissing('users', 'art', 'TEXT');
     // Бан: до какого времени и за что. Пустой срок при непустой причине —
     // это «навсегда»; обе колонки пусты — прибор при игроке.
+    // День последней смены: за первый заход дня прибор доплачивает, и
+    // отметка нужна, чтобы доплатить один раз, а не за каждый заход.
+    await this.addColumnIfMissing('users', 'shift_day', 'TEXT');
     // Когда заход турнира начат. Время конца писалось поверх времени
     // начала, и заход становился бессрочным: сид выдан утром, журнал можно
     // прислать вечером. Колонка отдельная — по ней решают, уложился ли
@@ -1553,6 +1556,23 @@ export class Store {
       args: [id, `-${gapSeconds} seconds`],
     });
     return result.rowsAffected > 0;
+  }
+
+  /**
+   * Надбавка за первый заход дня. Платится один раз в день — и решает это
+   * сама запись: условие «день смены не сегодняшний» стоит в том же
+   * запросе, что и начисление. Двумя запросами (прочитать, потом
+   * заплатить) два захода, доигранных в один миг, получили бы её дважды.
+   *
+   * true — заплатили сейчас; false — сегодня уже платили.
+   */
+  async payShift(userId: string, day: string, amount: number): Promise<boolean> {
+    const paid = await this.client.execute({
+      sql: `UPDATE users SET tokens = tokens + ?, shift_day = ?
+             WHERE id = ? AND (shift_day IS NULL OR shift_day <> ?)`,
+      args: [amount, day, userId, day],
+    });
+    return paid.rowsAffected > 0;
   }
 
   // ---------- Турнир ----------

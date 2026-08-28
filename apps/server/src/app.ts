@@ -61,6 +61,7 @@ import {
   TOURNEY_ENTRY,
   TOURNEY_ROUNDS,
   TOURNEY_ROUND_GRACE,
+  SHIFT_BONUS,
   SPRINT_SECONDS,
   tourneyDay,
   tourneyEntryDay,
@@ -614,8 +615,12 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
    * доиграл, а не за то, что выиграл: проигравшему заход стоил того же
    * времени, и брать с него дважды незачем.
    */
-  const payToken = async (userId: string): Promise<void> => {
+  const payToken = async (userId: string): Promise<{ shift: number }> => {
     await store.grantToken(userId, TOKEN_GAP_SECONDS);
+    // Смена: первый заход дня приносит надбавку. День берём турнирный —
+    // две вещи, которые игрок делает раз в день, начинаются вместе.
+    const paid = await store.payShift(userId, tourneyDay(new Date()), SHIFT_BONUS);
+    return { shift: paid ? SHIFT_BONUS : 0 };
   };
 
   /**
@@ -1333,7 +1338,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       parsed.data.seed,
       JSON.stringify(parsed.data.moves),
     );
-    await payToken(user.sub);
+    const { shift } = await payToken(user.sub);
     // Первое место дня — отметка на корпус. Считаем по дневной таблице:
     // вечная слишком неподвижна, чтобы за неё что-то выдавать.
     if ((await store.sprintRank(user.sub, 'day')) === 1) {
@@ -1344,6 +1349,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       best: saved.best,
       record: saved.improved,
       rank: (await store.sprintRank(user.sub)) ?? 1,
+      ...(shift > 0 ? { shift } : {}),
     };
     return response;
   });
@@ -1400,7 +1406,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       parsed.data.seed,
       JSON.stringify(parsed.data.moves),
     );
-    await payToken(user.sub);
+    const { shift } = await payToken(user.sub);
     if ((await store.orderRank(user.sub, 'day')) === 1) {
       await store.grantMark(user.sub, 'e-order');
     }
@@ -1413,6 +1419,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       best: saved.best,
       record: saved.improved,
       rank: (await store.orderRank(user.sub)) ?? 1,
+      ...(shift > 0 ? { shift } : {}),
     };
     return response;
   });

@@ -629,6 +629,18 @@ function guestName(): string {
  * Конец захода цепочек: отдаём его на проверку и показываем место. Счёт на
  * экране — свой, но в таблицу идёт только пересчитанный сервером.
  */
+/**
+ * Строка под счётом захода. Смена в неё дописывается отдельным хвостом:
+ * надбавка за первый заход дня приходит один раз в сутки, и сказать о ней
+ * надо ровно тогда, а не заводить ради этого своё окно.
+ */
+function runNote(result: { record: boolean; rank: number; best: number; shift?: number }): string {
+  const place = result.record
+    ? `Рекорд · ${result.rank}-е место`
+    : `${result.rank}-е место · рекорд ${groupDigits(result.best)}`;
+  return result.shift ? `${place} · смена +${result.shift} ж` : place;
+}
+
 async function finishSprint(run: { seed: number; moves: MoveLog[] }, score: number): Promise<void> {
   // Заход турнира уходит в зачёт дня, а не в таблицу рекордов: это другой
   // счёт и другая дверь.
@@ -651,10 +663,7 @@ async function finishSprint(run: { seed: number; moves: MoveLog[] }, score: numb
   }
 
   try {
-    const result = await submitSprint(run.seed, run.moves);
-    resultSubEl.textContent = result.record
-      ? `Рекорд · ${result.rank}-е место`
-      : `${result.rank}-е место · рекорд ${groupDigits(result.best)}`;
+    resultSubEl.textContent = runNote(await submitSprint(run.seed, run.moves));
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
       resetAuth();
@@ -1217,10 +1226,7 @@ async function finishOrder(run: { seed: number; moves: OrderMove[]; full: boolea
   }
 
   try {
-    const result = await submitOrder(run.seed, run.moves);
-    resultSubEl.textContent = result.record
-      ? `Рекорд · ${result.rank}-е место`
-      : `${result.rank}-е место · рекорд ${groupDigits(result.best)}`;
+    resultSubEl.textContent = runNote(await submitOrder(run.seed, run.moves));
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
       resetAuth();
