@@ -54,6 +54,7 @@ export { SAMPLES, nextSample, sampleAt, samplesValid } from './samples.js';
 export {
   TOURNEY_ENTRY,
   TOURNEY_ROUNDS,
+  TOURNEY_ROUND_GRACE,
   TOURNEY_TZ_HOURS,
   TOURNEY_OPEN_HOUR,
   TOURNEY_CLOSE_HOUR,

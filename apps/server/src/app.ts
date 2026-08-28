@@ -60,6 +60,8 @@ import {
   isOwnMark,
   TOURNEY_ENTRY,
   TOURNEY_ROUNDS,
+  TOURNEY_ROUND_GRACE,
+  SPRINT_SECONDS,
   tourneyDay,
   tourneyEntryDay,
   tourneyNext,
@@ -901,6 +903,20 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     const day = tourneyDay(now);
     const entry = await store.tourneyEntry(day, user.sub);
     if (entry === null) return reply.code(403).send({ error: 'not-in' });
+
+    /*
+     * Часы захода — серверные. Секунды внутри журнала присылает клиент, и
+     * по ним заход всегда «уложился в три минуты», сколько бы времени на
+     * него ни ушло на самом деле: сид выдан утром, журнал можно прислать
+     * вечером — с решателем в соседнем окне. Проверяем по метке начала.
+     *
+     * Опоздавший заход не пропадает бесследно: раунд был потрачен при
+     * старте и остаётся в зачёте нулём — ровно как брошенный.
+     */
+    const age = await store.tourneyRoundAge(day, user.sub);
+    if (age !== null && age > SPRINT_SECONDS + TOURNEY_ROUND_GRACE) {
+      return reply.code(409).send({ error: 'too-late' });
+    }
 
     const { seed } = await store.tourneyOf(day);
     const replay = replaySprint(seed, parsed.data.moves);

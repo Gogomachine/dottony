@@ -681,8 +681,13 @@ async function finishTourneyRound(moves: MoveLog[], score: number): Promise<void
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) resetAuth();
     // Молчать нельзя: заход сыгран, а в зачёт не попал — игрок должен
-    // видеть, что дело в отправке, а не в его счёте.
-    resultSubEl.textContent = 'Заход не дошёл до турнира';
+    // видеть, что дело в отправке, а не в его счёте. И отдельно — про
+    // время: этот отказ не поломка связи, а правило, и звучать он обязан
+    // как правило, иначе игрок будет пробовать снова.
+    resultSubEl.textContent =
+      error instanceof ApiError && error.code === 'too-late'
+        ? 'Заход шёл дольше трёх минут — в зачёт не идёт'
+        : 'Заход не дошёл до турнира';
   }
 }
 

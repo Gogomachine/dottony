@@ -160,6 +160,15 @@ export interface StoreOptions {
   authToken?: string;
 }
 
+/**
+ * Метка времени в том виде, в каком её пишет сама база (`datetime('now')`):
+ * «ГГГГ-ММ-ДД ЧЧ:ММ:СС» по Гринвичу. Нужна там, где время ставит сервер, а
+ * читают его тем же разбором, что и все прочие метки.
+ */
+function stamp(now: Date = new Date()): string {
+  return now.toISOString().replace('T', ' ').slice(0, 19);
+}
+
 export class Store {
   private readonly client: Client;
 
@@ -378,6 +387,11 @@ export class Store {
     await this.addColumnIfMissing('users', 'art', 'TEXT');
     // Бан: до какого времени и за что. Пустой срок при непустой причине —
     // это «навсегда»; обе колонки пусты — прибор при игроке.
+    // Когда заход турнира начат. Время конца писалось поверх времени
+    // начала, и заход становился бессрочным: сид выдан утром, журнал можно
+    // прислать вечером. Колонка отдельная — по ней решают, уложился ли
+    // игрок в три минуты по-настоящему, а не по своим же числам в журнале.
+    await this.addColumnIfMissing('tourney_rounds', 'started_at', 'TEXT');
     await this.addColumnIfMissing('users', 'banned_until', 'TEXT');
     await this.addColumnIfMissing('users', 'banned_forever', 'INTEGER NOT NULL DEFAULT 0');
     await this.addColumnIfMissing('users', 'ban_reason', 'TEXT');
@@ -1619,9 +1633,12 @@ export class Store {
    */
   async tourneyStart(day: string, userId: string, round: number): Promise<boolean> {
     const started = await this.client.execute({
-      sql: `INSERT INTO tourney_rounds (day, user_id, round, score, moves)
-            VALUES (?, ?, ?, 0, '') ON CONFLICT DO NOTHING`,
-      args: [day, userId, round],
+      // Время начала ставит сервер, а не база: по нему потом решают, уложился
+      // ли игрок в отведённые минуты, и сравнивать надо с теми же часами.
+      // База может жить на другой машине — её `datetime('now')` тут чужой.
+      sql: `INSERT INTO tourney_rounds (day, user_id, round, score, moves, started_at)
+            VALUES (?, ?, ?, 0, '', ?) ON CONFLICT DO NOTHING`,
+      args: [day, userId, round, stamp()],
     });
     if (started.rowsAffected === 0) return false;
     await this.countTourney(day, userId);
@@ -1635,13 +1652,36 @@ export class Store {
    */
   async tourneyFinish(day: string, userId: string, score: number, moves: string): Promise<boolean> {
     const saved = await this.client.execute({
+      // Ровно в последний начатый, а не «в любой незаконченный». Без номера
+      // это условие подходило сразу нескольким строкам, и один сыгранный
+      // заход дописывался во все брошенные: начал три подряд, сыграл один —
+      // и очки шли в зачёт трижды.
       sql: `UPDATE tourney_rounds SET score = ?, moves = ?, played_at = datetime('now')
-             WHERE day = ? AND user_id = ? AND moves = ''`,
-      args: [score, moves, day, userId],
+             WHERE day = ? AND user_id = ? AND moves = ''
+               AND round = (SELECT MAX(round) FROM tourney_rounds
+                             WHERE day = ? AND user_id = ? AND moves = '')`,
+      args: [score, moves, day, userId, day, userId],
     });
     if (saved.rowsAffected === 0) return false;
     await this.countTourney(day, userId);
     return true;
+  }
+
+  /**
+   * Сколько секунд идёт последний начатый заход; null — начатых нет или
+   * заход из тех времён, когда время начала не записывали.
+   */
+  async tourneyRoundAge(day: string, userId: string): Promise<number | null> {
+    const rows = await this.client.execute({
+      sql: `SELECT started_at FROM tourney_rounds
+             WHERE day = ? AND user_id = ? AND moves = '' AND started_at IS NOT NULL
+             ORDER BY round DESC LIMIT 1`,
+      args: [day, userId],
+    });
+    const raw = rows.rows[0]?.started_at;
+    if (typeof raw !== 'string') return null;
+    const at = Date.parse(`${raw.replace(' ', 'T')}Z`);
+    return Number.isNaN(at) ? null : (Date.now() - at) / 1000;
   }
 
   /** Счета сыгранных заходов по порядку — их видно в своей карточке турнира. */

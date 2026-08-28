@@ -1989,6 +1989,114 @@ describe('API', () => {
     }
   });
 
+  it('турнир: счёт захода не попадает в остальные начатые', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(Date.UTC(2026, 2, 15, 12 - TOURNEY_TZ_HOURS, 0, 0)));
+    const app = await buildApp({
+      databaseUrl: ':memory:',
+      jwtSecret: 'test-jwt',
+      serviceKey: 'kluch-naladki',
+    });
+    try {
+      const auth = await app.inject({ method: 'POST', url: '/api/auth/guest', payload: { name: 'Ада' } });
+      const token = (auth.json() as { token: string }).token;
+      const headers = { authorization: `Bearer ${token}` };
+      await app.inject({
+        method: 'POST',
+        url: '/api/service/set',
+        headers: { ...headers, 'x-service-key': 'kluch-naladki' },
+        payload: { tokens: TOURNEY_ENTRY },
+      });
+      expect((await app.inject({ method: 'POST', url: '/api/tourney/enter', headers })).statusCode).toBe(200);
+
+      // Все три захода начаты разом и брошены — так проще всего проверить,
+      // что дописывание счёта не задевает соседние строки.
+      let seed = 0;
+      for (let round = 1; round <= TOURNEY_ROUNDS; round++) {
+        const started = await app.inject({ method: 'POST', url: '/api/tourney/round/start', headers });
+        expect(started.statusCode).toBe(200);
+        seed = (started.json() as { seed: number }).seed;
+      }
+
+      const run = playHonestRun(seed, 12);
+      const sent = await app.inject({
+        method: 'POST',
+        url: '/api/tourney/round',
+        headers,
+        payload: { moves: run.moves },
+      });
+      expect(sent.statusCode).toBe(200);
+
+      const seen = await app.inject({ method: 'GET', url: '/api/tourney', headers });
+      const mine = (seen.json() as TourneyResponse).mine!;
+      // Сыгран один заход — очки только у него, и в зачёте они же.
+      expect(mine.scores.filter((score) => score > 0)).toHaveLength(1);
+      expect(mine.score).toBe(Math.max(...mine.scores));
+    } finally {
+      await app.close();
+      vi.useRealTimers();
+    }
+  });
+
+  it('турнир: заход, присланный назавтра, не берут — часы у сервера свои', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(Date.UTC(2026, 2, 15, 12 - TOURNEY_TZ_HOURS, 0, 0)));
+    const app = await buildApp({
+      databaseUrl: ':memory:',
+      jwtSecret: 'test-jwt',
+      serviceKey: 'kluch-naladki',
+    });
+    try {
+      const auth = await app.inject({ method: 'POST', url: '/api/auth/guest', payload: { name: 'Ада' } });
+      const token = (auth.json() as { token: string }).token;
+      const headers = { authorization: `Bearer ${token}` };
+      await app.inject({
+        method: 'POST',
+        url: '/api/service/set',
+        headers: { ...headers, 'x-service-key': 'kluch-naladki' },
+        payload: { tokens: TOURNEY_ENTRY },
+      });
+      await app.inject({ method: 'POST', url: '/api/tourney/enter', headers });
+
+      const started = await app.inject({ method: 'POST', url: '/api/tourney/round/start', headers });
+      const { seed } = started.json() as { seed: number };
+      const run = playHonestRun(seed, 12);
+
+      // Часы прибора идут: между «начал» и «прислал» прошло полчаса.
+      vi.setSystemTime(new Date(Date.UTC(2026, 2, 15, 12 - TOURNEY_TZ_HOURS, 30, 0)));
+      const late = await app.inject({
+        method: 'POST',
+        url: '/api/tourney/round',
+        headers,
+        payload: { moves: run.moves },
+      });
+      expect(late.statusCode).toBe(409);
+      expect(late.json()).toMatchObject({ error: 'too-late' });
+
+      // Раунд потрачен при старте и остаётся нулём — как брошенный.
+      const seen = await app.inject({ method: 'GET', url: '/api/tourney', headers });
+      const mine = (seen.json() as TourneyResponse).mine!;
+      expect(mine.rounds).toBe(1);
+      expect(mine.score).toBe(0);
+
+      // А заход, сыгранный за отведённое время, идёт в зачёт как обычно.
+      const next = await app.inject({ method: 'POST', url: '/api/tourney/round/start', headers });
+      expect(next.statusCode).toBe(200);
+      vi.setSystemTime(new Date(Date.UTC(2026, 2, 15, 12 - TOURNEY_TZ_HOURS, 32, 0)));
+      const sent = await app.inject({
+        method: 'POST',
+        url: '/api/tourney/round',
+        headers,
+        payload: { moves: run.moves },
+      });
+      expect(sent.statusCode).toBe(200);
+      expect((sent.json() as TourneyResponse).mine!.score).toBeGreaterThan(0);
+    } finally {
+      await app.close();
+      vi.useRealTimers();
+    }
+  });
+
   it('турнир: котёл раздаётся один раз, даже если заглянули двое разом', async () => {
     // Раздачу запускает каждый взгляд на турнир, а в одиннадцать вечера
     // туда заглядывают все сразу — два запуска подряд не должны заплатить
