@@ -8,6 +8,7 @@ import type { FastifyInstance } from 'fastify';
 import {
   applyMove,
   cellAt,
+  claimFrom,
   createBoard,
   phaseColorAt,
   seedRng,
@@ -34,6 +35,7 @@ import {
   DEFAULT_CONFIG,
   type Board,
   type Cell,
+  type Claim,
   type Color,
   type OrderRun,
 } from '@doton/core';
@@ -41,6 +43,7 @@ import type {
   AdminCard,
   AdminFindResponse,
   AdminLogResponse,
+  AdminNoticesResponse,
   AdminReportsResponse,
   DuelServerMessage,
   SubmitSprintResponse,
@@ -137,6 +140,58 @@ function findLongestChain(board: Board): Cell[] {
     }
   }
   return best;
+}
+
+/**
+ * Просидеть заход по часам прибора: подводит поддельные часы вперёд ровно
+ * настолько, сколько заход о себе говорит.
+ *
+ * Без этого честный журнал приезжает быстрее, чем он игрался, и сервер
+ * отвечает `too-fast` — тем же ответом, что и решателю, присылающему
+ * посчитанное поле мгновенно. Часы турнира держат заход с двух сторон, и
+ * тесту приходится жить по ним же.
+ */
+function sit(moves: readonly MoveLog[]): void {
+  const last = moves.reduce((max, move) => Math.max(max, move.t), 0);
+  vi.setSystemTime(new Date(Date.now() + (last + 1) * 1000));
+}
+
+/**
+ * Заход с заданным почерком — им проверяется сторож решателя.
+ *
+ * `best` — брать самую длинную цепочку на поле: так играет перебор, рука её
+ * не видит. `gap` — промежуток до следующего хода: постоянный означает
+ * метроном, гуляющий — руку.
+ *
+ * Заявки на цвет ведутся ровно так же, как их ведёт сервер в `replaySprint`:
+ * иначе цвет фазы разошёлся бы и честный журнал приехал бы «незаконным».
+ */
+function playRun(
+  seed: number,
+  movesCount: number,
+  best: boolean,
+  gap: (index: number) => number,
+): { moves: MoveLog[]; score: number } {
+  let board = createBoard(seedRng(seed), DEFAULT_CONFIG);
+  const moves: MoveLog[] = [];
+  const claims: Claim[] = [];
+  let score = 0;
+  let t = 0;
+  for (let i = 0; i < movesCount; i++) {
+    const path = best ? findLongestChain(board) : findAnyChain(board);
+    // Десятые доли: секунды журнала приходят от клиента такими же, а точный
+    // шаг важен — по разбросу промежутков и узнают метроном.
+    t = Math.round((t + gap(i)) * 10) / 10;
+    const phase = phaseColorAt(seed, t, DEFAULT_CONFIG, claims);
+    const result = applyMove(board, path, DEFAULT_CONFIG, phase);
+    if (typeof result === 'string') throw new Error(result);
+    board = result.board;
+    score += result.points;
+    const claim = claimFrom(result.color, path.length, t, DEFAULT_CONFIG);
+    if (claim) claims.push(claim);
+    moves.push({ path, t });
+  }
+  return { moves, score };
 }
 
 /**
@@ -280,7 +335,9 @@ describe('replaySprint', () => {
 
   it('насчитывает те же очки, что и честная игра', () => {
     const { moves, score } = playHonestRun(seed, 5);
-    expect(replaySprint(seed, moves)).toEqual({ score });
+    // Пересчёт возвращает не только счёт, но и почерк захода; здесь важен
+    // счёт — острота и число ходов проверяются там, где судят почерк.
+    expect(replaySprint(seed, moves)).toMatchObject({ score });
   });
 
   it('отклоняет невозможный ход', () => {
@@ -1830,11 +1887,13 @@ describe('API', () => {
           headers: { authorization: `Bearer ${token}` },
         });
         if (started.statusCode !== 200) return started;
+        const log = playHonestRun(seed, moves).moves;
+        sit(log);
         return app.inject({
           method: 'POST',
           url: '/api/tourney/round',
           headers: { authorization: `Bearer ${token}` },
-          payload: { moves: playHonestRun(seed, moves).moves },
+          payload: { moves: log },
         });
       };
 
@@ -2074,6 +2133,7 @@ describe('API', () => {
       }
 
       const run = playHonestRun(seed, 12);
+      sit(run.moves);
       const sent = await app.inject({
         method: 'POST',
         url: '/api/tourney/round',
@@ -2146,6 +2206,149 @@ describe('API', () => {
       });
       expect(sent.statusCode).toBe(200);
       expect((sent.json() as TourneyResponse).mine!.score).toBeGreaterThan(0);
+    } finally {
+      await app.close();
+      vi.useRealTimers();
+    }
+  });
+
+  it('турнир: заход быстрее заявленного времени не берут', async () => {
+    // Решателю нужно ровно это: получить сид, посчитать поле на досуге и
+    // прислать готовый журнал с красиво расставленными секундами. Часы
+    // сервера держат заход и снизу: три минуты игры за миг не играются.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(Date.UTC(2026, 2, 15, 12 - TOURNEY_TZ_HOURS, 0, 0)));
+    const app = await buildApp({
+      databaseUrl: ':memory:',
+      jwtSecret: 'test-jwt',
+      serviceKey: 'kluch-naladki',
+    });
+    try {
+      const auth = await app.inject({ method: 'POST', url: '/api/auth/guest', payload: { name: 'Ада' } });
+      const token = (auth.json() as { token: string }).token;
+      const headers = { authorization: `Bearer ${token}` };
+      await app.inject({
+        method: 'POST',
+        url: '/api/service/set',
+        headers: { ...headers, 'x-service-key': 'kluch-naladki' },
+        payload: { tokens: TOURNEY_ENTRY },
+      });
+      await app.inject({ method: 'POST', url: '/api/tourney/enter', headers });
+
+      const started = await app.inject({ method: 'POST', url: '/api/tourney/round/start', headers });
+      const { seed } = started.json() as { seed: number };
+      // Журнал говорит о полутора минутах игры, а прислан в тот же миг.
+      const run = playRun(seed, 12, false, () => 7);
+      const rushed = await app.inject({
+        method: 'POST',
+        url: '/api/tourney/round',
+        headers,
+        payload: { moves: run.moves },
+      });
+      expect(rushed.statusCode).toBe(409);
+      expect(rushed.json()).toMatchObject({ error: 'too-fast' });
+
+      // Тот же журнал, просиженный по-настоящему, идёт в зачёт.
+      vi.setSystemTime(new Date(Date.UTC(2026, 2, 15, 12 - TOURNEY_TZ_HOURS, 1, 30)));
+      const sent = await app.inject({
+        method: 'POST',
+        url: '/api/tourney/round',
+        headers,
+        payload: { moves: run.moves },
+      });
+      expect(sent.statusCode).toBe(200);
+      expect((sent.json() as TourneyResponse).mine!.score).toBeGreaterThan(0);
+    } finally {
+      await app.close();
+      vi.useRealTimers();
+    }
+  });
+
+  it('турнир: заход решателя оставляет след, а живая рука — нет', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(Date.UTC(2026, 2, 15, 12 - TOURNEY_TZ_HOURS, 0, 0)));
+    const app = await buildApp({
+      databaseUrl: ':memory:',
+      jwtSecret: 'test-jwt',
+      serviceKey: 'kluch-naladki',
+      telegramBotToken: BOT_TOKEN,
+      adminTelegramIds: ['777'],
+    });
+    try {
+      const boss = await app.inject({
+        method: 'POST',
+        url: '/api/auth/telegram',
+        payload: { initData: signedInitData({ id: 777, first_name: 'Служащий' }) },
+      });
+      const desks = { authorization: `Bearer ${(boss.json() as { token: string }).token}` };
+
+      /** Игрок с оплаченным входом в сегодняшний турнир. */
+      const player = async (name: string): Promise<Record<string, string>> => {
+        const auth = await app.inject({ method: 'POST', url: '/api/auth/guest', payload: { name } });
+        const headers = { authorization: `Bearer ${(auth.json() as { token: string }).token}` };
+        await app.inject({
+          method: 'POST',
+          url: '/api/service/set',
+          headers: { ...headers, 'x-service-key': 'kluch-naladki' },
+          payload: { tokens: TOURNEY_ENTRY },
+        });
+        expect((await app.inject({ method: 'POST', url: '/api/tourney/enter', headers })).statusCode).toBe(200);
+        return headers;
+      };
+
+      /** Заход целиком: старт, отсидка положенного времени и журнал. */
+      const round = async (
+        headers: Record<string, string>,
+        at: number,
+        make: (seed: number) => MoveLog[],
+      ): Promise<number> => {
+        vi.setSystemTime(new Date(Date.UTC(2026, 2, 15, 12 - TOURNEY_TZ_HOURS, at, 0)));
+        const started = await app.inject({ method: 'POST', url: '/api/tourney/round/start', headers });
+        expect(started.statusCode).toBe(200);
+        const moves = make((started.json() as { seed: number }).seed);
+        // Заход просижен: журнал приходит позже, чем говорит его последняя метка.
+        vi.setSystemTime(new Date(Date.UTC(2026, 2, 15, 12 - TOURNEY_TZ_HOURS, at + 2, 0)));
+        const sent = await app.inject({
+          method: 'POST',
+          url: '/api/tourney/round',
+          headers,
+          payload: { moves },
+        });
+        return sent.statusCode;
+      };
+
+      const solver = await player('Перебор');
+      const hand = await player('Рука');
+
+      // Перебор: каждый ход — самая длинная цепочка на поле, ходы метрономом.
+      expect(await round(solver, 0, (seed) => playRun(seed, 14, true, () => 4).moves)).toBe(200);
+      // Рука: первая попавшаяся тройка и промежутки, которые гуляют втрое.
+      const human = [1.4, 3.2, 0.9, 2.7, 5.1, 1.1, 2.2];
+      expect(
+        await round(hand, 10, (seed) => playRun(seed, 14, false, (i) => human[i % human.length]!).moves),
+      ).toBe(200);
+
+      const seen = await app.inject({ method: 'GET', url: '/api/admin/notices', headers: desks });
+      const notices = (seen.json() as AdminNoticesResponse).notices;
+      // Замечен один — и это не тот, кто играл рукой.
+      expect(notices).toHaveLength(1);
+      const only = notices[0]!;
+      expect(only.name).toBe('Перебор');
+      expect(only.place).toBe('турнир');
+      expect(only.count).toBe(1);
+      // Обе мерки сработали, и обе названы словами: служащий читает их сам.
+      expect(only.detail).toContain('острота');
+      expect(only.detail).toContain('ровный темп');
+      expect(only.score).toBeGreaterThan(0);
+
+      // Заход при этом засчитан: прибор замечает, но не отменяет.
+      const board = await app.inject({ method: 'GET', url: '/api/tourney', headers: solver });
+      expect((board.json() as TourneyResponse).mine!.score).toBe(only.score);
+
+      // Постороннему этой двери не существует, как и всему пульту.
+      expect(
+        (await app.inject({ method: 'GET', url: '/api/admin/notices', headers: hand })).statusCode,
+      ).toBe(404);
     } finally {
       await app.close();
       vi.useRealTimers();
@@ -3708,7 +3911,7 @@ describe('заявка на цвет в одиночном заходе', () => 
     const { seed, moves, claimed, plain } = claimRun();
     // Заявка подняла ход в фазе: сид дал бы другой цвет и меньше очков.
     expect(claimed).toBeGreaterThan(plain);
-    expect(replaySprint(seed, moves)).toEqual({ score: claimed });
+    expect(replaySprint(seed, moves)).toMatchObject({ score: claimed });
   });
 
 });

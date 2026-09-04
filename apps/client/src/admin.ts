@@ -9,6 +9,7 @@ import {
   adminFind,
   adminLog,
   adminName,
+  adminNotices,
   adminTokens,
   adminUnban,
   ApiError,
@@ -44,6 +45,9 @@ const findCardEl = el<HTMLDivElement>('find-card');
 const reportsCardEl = el<HTMLDivElement>('reports-card');
 const reportsEl = el<HTMLDivElement>('reports');
 const reportsNoteEl = el<HTMLSpanElement>('reports-note');
+const noticesCardEl = el<HTMLDivElement>('notices-card');
+const noticesEl = el<HTMLDivElement>('notices');
+const noticesNoteEl = el<HTMLSpanElement>('notices-note');
 const foundEl = el<HTMLTableElement>('found');
 const findNoteEl = el<HTMLSpanElement>('find-note');
 const playerEl = el<HTMLDivElement>('player');
@@ -118,9 +122,10 @@ async function open(): Promise<void> {
   }
   shutEl.hidden = true;
   reportsCardEl.hidden = false;
+  noticesCardEl.hidden = false;
   findCardEl.hidden = false;
   logCardEl.hidden = false;
-  await Promise.all([showReports(), showLog()]);
+  await Promise.all([showReports(), showNotices(), showLog()]);
 }
 
 /**
@@ -184,6 +189,58 @@ async function showReports(): Promise<void> {
     }
   } catch {
     reportsNoteEl.textContent = 'Очередь не открылась.';
+  }
+}
+
+/**
+ * Замеченное прибором: заходы, не похожие на человеческие.
+ *
+ * Строка называет игрока, место (турнир или рекорд), счёт и словами то, что
+ * заметили. Отдельным числом — сколько раз прибор видел этого человека:
+ * один раз ничего не значит, десять — уже почерк, и именно счётчик, а не
+ * отдельная строка, решает, стоит ли открывать карточку.
+ *
+ * Кнопки «разобрано» здесь нет: жалобу закрывают, потому что её кто-то
+ * подал, а измеренное закрывать не от кого. Служащий смотрит карточку и,
+ * если решит, изымает прибор — это и будет записью в журнале.
+ */
+async function showNotices(): Promise<void> {
+  try {
+    const { notices } = await adminNotices();
+    noticesEl.innerHTML = '';
+    noticesNoteEl.textContent =
+      notices.length === 0
+        ? 'Пусто. Прибор смотрит на заходы турнира и на новые рекорды цепочек.'
+        : 'Это не приговор: сильная игра и перебор различаются числом, а не природой. Смотри карточку.';
+    for (const notice of notices) {
+      const row = document.createElement('div');
+      row.className = 'report';
+
+      const who = document.createElement('div');
+      who.className = 'who';
+      const name = document.createElement('b');
+      name.textContent = notice.name;
+      who.appendChild(name);
+      const facts = document.createElement('div');
+      facts.className = 'note';
+      facts.textContent = `${notice.place} · ${notice.score} · ${notice.detail} · ${moment(notice.at)}`;
+      who.appendChild(facts);
+      row.appendChild(who);
+
+      const count = document.createElement('span');
+      count.className = 'count';
+      count.textContent = `×${notice.count}`;
+      row.appendChild(count);
+
+      const card = document.createElement('button');
+      card.textContent = 'Карточка';
+      card.addEventListener('click', () => void showPlayer(notice.userId));
+      row.appendChild(card);
+
+      noticesEl.appendChild(row);
+    }
+  } catch {
+    noticesNoteEl.textContent = 'Список не открылся.';
   }
 }
 

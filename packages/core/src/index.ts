@@ -52,10 +52,12 @@ export {
 export type { ArtCell } from './art.js';
 export { SAMPLES, nextSample, sampleAt, samplesValid } from './samples.js';
 export { SHIFT_BONUS } from './tokens.js';
+export { CHAIN_SEARCH_BUDGET, longestChain, paceSpread } from './judge.js';
 export {
   TOURNEY_ENTRY,
   TOURNEY_ROUNDS,
   TOURNEY_ROUND_GRACE,
+  TOURNEY_ROUND_SKEW,
   TOURNEY_TZ_HOURS,
   TOURNEY_OPEN_HOUR,
   TOURNEY_CLOSE_HOUR,

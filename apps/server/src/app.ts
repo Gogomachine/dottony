@@ -30,6 +30,7 @@ import {
   type AdminFindResponse,
   type BanInfo,
   type AdminLogResponse,
+  type AdminNoticesResponse,
   type AdminReportsResponse,
   type DuelKind,
   type TourneyHistoryResponse,
@@ -61,6 +62,7 @@ import {
   TOURNEY_ENTRY,
   TOURNEY_ROUNDS,
   TOURNEY_ROUND_GRACE,
+  TOURNEY_ROUND_SKEW,
   SHIFT_BONUS,
   SPRINT_SECONDS,
   tourneyDay,
@@ -96,6 +98,7 @@ import {
 import { Bot, makeLinkToken, parseStart, type BotUpdate } from './bot.js';
 import { orderTempo, replayOrder } from './order.js';
 import { replaySprint } from './sprint.js';
+import { judgeRun } from './judge.js';
 import { Store, type BoardPeriod } from './db.js';
 import {
   INVITE_LIMIT,
@@ -624,6 +627,24 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   };
 
   /**
+   * Осматривает сыгранный заход и, если тот не похож на человеческий,
+   * оставляет след для службы. Ничего не запрещает и не отменяет: решает
+   * человек, а прибор только замечает — ошибиться тут дороже, чем
+   * пропустить.
+   */
+  const notice = async (
+    userId: string,
+    place: string,
+    replay: { score: number; sharp: number; moves: number },
+    moves: MoveLog[],
+  ): Promise<void> => {
+    const noticed = judgeRun(replay, moves);
+    if (noticed.length === 0) return;
+    await store.addNotice(userId, place, noticed.join(' · '), replay.score);
+    app.log.warn({ userId, place, noticed, score: replay.score }, 'run looks solved');
+  };
+
+  /**
    * Что игроку сейчас положено носить: выданное навсегда плюс золото, пока
    * он держит вечную таблицу. Второе живёт не в базе, а в самой таблице,
    * поэтому спрашивается заново каждый раз.
@@ -922,6 +943,17 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     if (age !== null && age > SPRINT_SECONDS + TOURNEY_ROUND_GRACE) {
       return reply.code(409).send({ error: 'too-late' });
     }
+    /*
+     * И снизу: заход не может прийти раньше, чем прошло заявленное им
+     * время. Три минуты игры за двадцать секунд не играются — а решателю
+     * нужно ровно это: посчитать поле и прислать готовый журнал с
+     * выставленными секундами. Обойти вычислением нельзя, только просидеть
+     * эти минуты по-настоящему.
+     */
+    const claimed = parsed.data.moves.reduce((last, move) => Math.max(last, move.t), 0);
+    if (age !== null && age + TOURNEY_ROUND_SKEW < claimed) {
+      return reply.code(409).send({ error: 'too-fast' });
+    }
 
     const { seed } = await store.tourneyOf(day);
     const replay = replaySprint(seed, parsed.data.moves);
@@ -934,6 +966,11 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     );
     // Незаконченного захода нет: либо не начинали, либо он уже дописан.
     if (!saved) return reply.code(409).send({ error: 'not-started' });
+
+    // Заход засчитан — и тут же осмотрен. Ставка в турнире жетонная, и
+    // именно сюда пришёл бы решатель; заход при этом не отклоняется, прибор
+    // только оставляет след для службы.
+    await notice(user.sub, 'турнир', replay, parsed.data.moves);
     return tourneyState(user.sub);
   });
 
@@ -1197,6 +1234,21 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return { cleared: count };
   });
 
+  /**
+   * Что заметил сам прибор: заходы, не похожие на человеческие.
+   *
+   * Отдельно от жалоб, и это важно. Жалоба — мнение игрока, её надо
+   * проверять; здесь же лежит измеренное, но измеренное косвенно: сильная
+   * игра и перебор отличаются числом, а не природой. Поэтому список ничего
+   * не предлагает сделать — служащий смотрит карточку и решает сам.
+   */
+  app.get('/api/admin/notices', async (request, reply) => {
+    const user = await servant(request, reply);
+    if (!user) return reply;
+    const response: AdminNoticesResponse = { notices: await store.notices() };
+    return response;
+  });
+
   /** Журнал: кто, кого, когда и почему. Новые записи сверху. */
   app.get('/api/admin/log', async (request, reply) => {
     const user = await servant(request, reply);
@@ -1338,6 +1390,9 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       parsed.data.seed,
       JSON.stringify(parsed.data.moves),
     );
+    // Смотрим только на рекорды: проходной заход в таблицу не идёт, и
+    // забивать им журнал службы незачем.
+    if (saved.improved) await notice(user.sub, 'рекорд', replay, parsed.data.moves);
     const { shift } = await payToken(user.sub);
     // Первое место дня — отметка на корпус. Считаем по дневной таблице:
     // вечная слишком неподвижна, чтобы за неё что-то выдавать.

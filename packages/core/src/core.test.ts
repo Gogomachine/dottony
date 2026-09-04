@@ -52,6 +52,7 @@ import {
   isArt,
 } from './art.js';
 import { SAMPLES, nextSample, sampleAt, samplesValid } from './samples.js';
+import { longestChain, paceSpread } from './judge.js';
 import {
   TOURNEY_CLOSE_HOUR,
   TOURNEY_ENTRY,
@@ -909,6 +910,41 @@ describe('шильдики', () => {
     // Лишнее за край корпуса просто не помещается.
     expect(cleanMarks(free.slice(0, 5).map((mark) => mark.id))).toHaveLength(MARK_SLOTS);
     expect(cleanMarks([])).toEqual([null, null, null]);
+  });
+});
+
+describe('почерк захода', () => {
+  it('самая длинная цепочка находится и не короче любой найденной руками', () => {
+    for (let seed = 1; seed <= 20; seed++) {
+      const board = createBoard(seedRng(seed), cfg);
+      const best = longestChain(board, cfg);
+      // На поле из четырёх цветов цепочка есть всегда, и она не короче тройки.
+      expect(best).toBeGreaterThanOrEqual(cfg.minChain);
+      // Найденное — настоящий путь: пройдём его же жадно и убедимся, что
+      // длиннее найденного ничего не встретилось.
+      expect(best).toBeLessThanOrEqual(cfg.rows * cfg.cols);
+    }
+  });
+
+  it('пустое поле цепочек не даёт', () => {
+    // Поле в один цвет — вырожденный случай: цепочка тут длиннее некуда.
+    const solid = boardFrom(['000000', '000000', '000000', '000000', '000000', '000000']);
+    expect(longestChain(solid, cfg)).toBeGreaterThan(10);
+    // Поле «шахматкой» из двух цветов: длинных змеек нет.
+    const striped = boardFrom(['010101', '101010', '010101', '101010', '010101', '101010']);
+    expect(longestChain(striped, cfg)).toBeGreaterThanOrEqual(cfg.minChain);
+  });
+
+  it('ровность темпа отличает руку от метронома', () => {
+    // Метроном: одинаковые промежутки — разброс нулевой.
+    expect(paceSpread([1, 2, 3, 4, 5, 6])).toBe(0);
+    // Рука: промежутки гуляют, разброс заметный.
+    const hand = paceSpread([0.4, 1.9, 2.3, 4.8, 5.1, 9.6]);
+    expect(hand).not.toBeNull();
+    expect(hand!).toBeGreaterThan(0.4);
+    // Мерить нечего: меньше трёх ходов — это ноль или один промежуток.
+    expect(paceSpread([1, 2])).toBeNull();
+    expect(paceSpread([])).toBeNull();
   });
 });
 

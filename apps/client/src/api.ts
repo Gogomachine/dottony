@@ -3,6 +3,7 @@ import type {
   BanInfo,
   AdminFindResponse,
   AdminLogResponse,
+  AdminNoticesResponse,
   AdminReportsResponse,
   AuthResponse,
   BoardPeriod,
@@ -384,6 +385,16 @@ export function report(code: string): Promise<{ ok: boolean }> {
 
 export function adminReports(): Promise<AdminReportsResponse> {
   return request<AdminReportsResponse>('/api/admin/reports');
+}
+
+/**
+ * Что заметил сам прибор. Отдельно от жалоб намеренно: жалоба — мнение
+ * игрока, а это измеренное, но измеренное косвенно. Разбирать их одним
+ * списком значило бы уравнять «на него пожаловались трое» и «у него ровный
+ * темп», а это очень разные поводы посмотреть карточку.
+ */
+export function adminNotices(): Promise<AdminNoticesResponse> {
+  return request<AdminNoticesResponse>('/api/admin/notices');
 }
 
 export function adminClearReports(userId: string, reason: string): Promise<unknown> {

@@ -138,6 +138,18 @@ export interface AdminReportRow {
   ban?: { until: string | null; reason: string };
 }
 
+/** Строка списка «что заметил прибор». */
+export interface AdminNoticeRow {
+  userId: string;
+  name: string;
+  place: string;
+  detail: string;
+  score: number;
+  at: string;
+  /** Сколько раз прибор замечал этого игрока: один раз — ещё не почерк. */
+  count: number;
+}
+
 /** Запись журнала службы. */
 export interface AdminLogRow {
   at: string;
@@ -305,6 +317,29 @@ export class Store {
         `CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_open
            ON reports (from_user, target_user) WHERE handled_at IS NULL`,
         `CREATE INDEX IF NOT EXISTS idx_reports_target ON reports (target_user)`,
+        /*
+         * Что прибор заметил сам.
+         *
+         * Это не жалоба: жалоба приходит от человека и живёт в `reports`, а
+         * здесь — измерение. Держим отдельно нарочно: у жалобы есть тот, кто
+         * её подал, и выдумывать «игрока по имени Прибор» ради внешнего
+         * ключа значило бы завести в базе несуществующего человека.
+         *
+         * Записи не разбираются и не закрываются: это не очередь дел, а
+         * след. Служащий смотрит на него и решает сам — прибор никого не
+         * наказывает, потому что ошибиться тут дороже, чем пропустить.
+         */
+        `CREATE TABLE IF NOT EXISTS notices (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           at TEXT NOT NULL DEFAULT (datetime('now')),
+           user_id TEXT NOT NULL REFERENCES users(id),
+           /* Где замечено: заход рекорда или турнирный. */
+           place TEXT NOT NULL,
+           /* Чем выдал себя заход — словами, теми же, что видит служащий. */
+           detail TEXT NOT NULL,
+           score INTEGER NOT NULL
+         )`,
+        `CREATE INDEX IF NOT EXISTS idx_notices_at ON notices (at DESC)`,
         // Турнир дня. Ключ — сам день в поясе турнира: другого у него нет,
         // и двух турниров в один день не бывает. Сид выдаётся при первом
         // обращении и дальше не меняется — он общий для всех участников.
@@ -1985,6 +2020,41 @@ export class Store {
             ON CONFLICT DO NOTHING`,
       args: [fromUser, targetUser],
     });
+  }
+
+  /**
+   * Записывает замеченное прибором. Ничего не решает и никого не наказывает —
+   * кладёт след, по которому служащий посмотрит заход и человека.
+   */
+  async addNotice(userId: string, place: string, detail: string, score: number): Promise<void> {
+    await this.client.execute({
+      sql: 'INSERT INTO notices (user_id, place, detail, score) VALUES (?, ?, ?, ?)',
+      args: [userId, place, detail, score],
+    });
+  }
+
+  /**
+   * Замеченное, новое сверху: по строке на случай плюс счётчик, сколько раз
+   * прибор видел этого игрока. Один раз — совпадение; десять — почерк.
+   */
+  async notices(limit = 50): Promise<AdminNoticeRow[]> {
+    const rows = await this.client.execute({
+      sql: `SELECT n.user_id, n.place, n.detail, n.score, n.at, u.name,
+                   (SELECT COUNT(*) FROM notices m WHERE m.user_id = n.user_id) AS seen
+              FROM notices n JOIN users u ON u.id = n.user_id
+             ORDER BY n.at DESC, n.id DESC
+             LIMIT ?`,
+      args: [limit],
+    });
+    return rows.rows.map((row) => ({
+      userId: String(row.user_id),
+      name: String(row.name),
+      place: String(row.place),
+      detail: String(row.detail),
+      score: Number(row.score),
+      at: String(row.at),
+      count: Number(row.seen),
+    }));
   }
 
   /** Неразобранные жалобы, сгруппированные по тому, на кого жалуются. */
