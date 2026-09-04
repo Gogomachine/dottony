@@ -23,6 +23,8 @@ import type {
   TourneyResponse,
 } from '@doton/protocol';
 
+import { dropStore, readStore, writeStore } from './store';
+
 /**
  * Тонкий клиент API. Без VITE_API_URL игра живёт офлайн: партии играются,
  * но рекорды никуда не уходят и таблиц нет.
@@ -47,7 +49,7 @@ export class ApiError extends Error {
 }
 
 function token(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
+  return readStore(TOKEN_KEY);
 }
 
 /**
@@ -192,7 +194,7 @@ export function openInTelegram(url: string): boolean {
 }
 
 export function savedName(): string | null {
-  return localStorage.getItem(NAME_KEY);
+  return readStore(NAME_KEY);
 }
 
 /**
@@ -213,13 +215,13 @@ export async function ensureAuth(getGuestName: () => string): Promise<void> {
         body: JSON.stringify({ name: getGuestName() }),
       });
 
-  localStorage.setItem(TOKEN_KEY, auth.token);
-  localStorage.setItem(NAME_KEY, auth.user.name);
+  writeStore(TOKEN_KEY, auth.token);
+  writeStore(NAME_KEY, auth.user.name);
 }
 
 /** Сброс токена — на случай протухшего JWT: следующий ensureAuth создаст новый. */
 export function resetAuth(): void {
-  localStorage.removeItem(TOKEN_KEY);
+  dropStore(TOKEN_KEY);
 }
 
 /**
@@ -245,8 +247,8 @@ export async function getMe(): Promise<MeResponse> {
   // карточкой. Забрать его надо здесь — иначе игрок останется под старым
   // именем до следующего входа.
   if (me.token !== undefined) {
-    localStorage.setItem(TOKEN_KEY, me.token);
-    localStorage.setItem(NAME_KEY, me.name);
+    writeStore(TOKEN_KEY, me.token);
+    writeStore(NAME_KEY, me.name);
   }
   // Своя карточка — единственная дверь, открытая наказанному: остальные
   // отвечают отказом. Через неё игра и узнаёт про изъятый прибор, если ещё
@@ -521,8 +523,8 @@ export async function rename(name: string): Promise<string> {
     method: 'POST',
     body: JSON.stringify({ name }),
   });
-  localStorage.setItem(TOKEN_KEY, auth.token);
-  localStorage.setItem(NAME_KEY, auth.user.name);
+  writeStore(TOKEN_KEY, auth.token);
+  writeStore(NAME_KEY, auth.user.name);
   return auth.user.name;
 }
 

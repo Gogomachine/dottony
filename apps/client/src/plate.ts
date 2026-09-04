@@ -10,6 +10,7 @@ import {
   MARK_SLOTS,
   type Mark,
 } from '@doton/core';
+import { dropStore, readStore, writeStore } from './store';
 
 /**
  * Шильдики на корпусе: выбор игрока и его отрисовка.
@@ -25,11 +26,12 @@ const ART_KEY = 'doton.own-art.v1';
 
 export function loadPlate(): (string | null)[] {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = readStore(KEY);
     const parsed: unknown = raw === null ? [] : JSON.parse(raw);
     return cleanMarks(Array.isArray(parsed) ? (parsed as (string | null)[]) : []);
   } catch {
-    // Приватный режим или мусор в хранилище — корпус просто пустой.
+    // Мусор в записи — корпус просто пустой. За само хранилище отвечает
+    // память прибора: она не бросает, что бы браузер ни запретил.
     return cleanMarks([]);
   }
 }
@@ -40,21 +42,13 @@ export function loadPlate(): (string | null)[] {
  * при каждом запуске.
  */
 export function loadFrame(): string | null {
-  try {
-    const saved = localStorage.getItem(FRAME_KEY);
-    return saved !== null && isFrame(saved) ? saved : null;
-  } catch {
-    return null;
-  }
+  const saved = readStore(FRAME_KEY);
+  return saved !== null && isFrame(saved) ? saved : null;
 }
 
 export function saveFrame(frame: string | null): void {
-  try {
-    if (frame === null) localStorage.removeItem(FRAME_KEY);
-    else localStorage.setItem(FRAME_KEY, frame);
-  } catch {
-    // Не сохранилось — на сервере всё равно останется.
-  }
+  if (frame === null) dropStore(FRAME_KEY);
+  else writeStore(FRAME_KEY, frame);
 }
 
 /**
@@ -65,29 +59,17 @@ export function saveFrame(frame: string | null): void {
  * поставил.
  */
 export function loadArt(): string | null {
-  try {
-    const saved = localStorage.getItem(ART_KEY);
-    return saved !== null && isArt(saved) ? saved : null;
-  } catch {
-    return null;
-  }
+  const saved = readStore(ART_KEY);
+  return saved !== null && isArt(saved) ? saved : null;
 }
 
 export function saveArt(art: string | null): void {
-  try {
-    if (art === null) localStorage.removeItem(ART_KEY);
-    else localStorage.setItem(ART_KEY, art);
-  } catch {
-    // Не сохранилось — на сервере всё равно останется.
-  }
+  if (art === null) dropStore(ART_KEY);
+  else writeStore(ART_KEY, art);
 }
 
 export function savePlate(marks: (string | null)[]): void {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(cleanMarks(marks)));
-  } catch {
-    // Не сохранилось — на сервере всё равно останется.
-  }
+  writeStore(KEY, JSON.stringify(cleanMarks(marks)));
 }
 
 /**

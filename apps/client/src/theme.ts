@@ -1,3 +1,5 @@
+import { readStore, writeStore } from './store';
+
 /**
  * Цвета окуляра. Стекло прибора всегда чёрное — светлеет и темнеет только
  * корпус, а он рисуется CSS-переменными. Поэтому у канваса одна палитра на
@@ -26,14 +28,14 @@ const SOUND_KEY = 'doton-sound';
 const KIND_KEY = 'doton-duel-kind';
 const DEVICE_KIND_KEY = 'doton-kind';
 export function loadThemeName(): ThemeName {
-  const saved = localStorage.getItem(THEME_KEY);
+  const saved = readStore(THEME_KEY);
   if (saved === 'draft' || saved === 'graphite') return saved;
   return matchMedia('(prefers-color-scheme: dark)').matches ? 'graphite' : 'draft';
 }
 
 export function applyTheme(name: ThemeName): void {
   document.documentElement.dataset.theme = name;
-  localStorage.setItem(THEME_KEY, name);
+  writeStore(THEME_KEY, name);
 }
 
 /**
@@ -41,11 +43,11 @@ export function applyTheme(name: ThemeName): void {
  * запоминается: включать его каждый запуск было бы издевательством.
  */
 export function loadMarks(): boolean {
-  return localStorage.getItem(MARKS_KEY) === 'on';
+  return readStore(MARKS_KEY) === 'on';
 }
 
 export function saveMarks(on: boolean): void {
-  localStorage.setItem(MARKS_KEY, on ? 'on' : 'off');
+  writeStore(MARKS_KEY, on ? 'on' : 'off');
 }
 
 /**
@@ -53,11 +55,11 @@ export function saveMarks(on: boolean): void {
  * прибора. Выключенный запоминается — в метро его выключают один раз.
  */
 export function loadSound(): boolean {
-  return localStorage.getItem(SOUND_KEY) !== 'off';
+  return readStore(SOUND_KEY) !== 'off';
 }
 
 export function saveSound(on: boolean): void {
-  localStorage.setItem(SOUND_KEY, on ? 'on' : 'off');
+  writeStore(SOUND_KEY, on ? 'on' : 'off');
 }
 
 /**
@@ -70,10 +72,10 @@ export function saveSound(on: boolean): void {
  * переключатель встанет в привычное положение, а не сбросится.
  */
 export function loadKind(): 'chain' | 'order' {
-  const saved = localStorage.getItem(DEVICE_KIND_KEY) ?? localStorage.getItem(KIND_KEY);
+  const saved = readStore(DEVICE_KIND_KEY) ?? readStore(KIND_KEY);
   return saved === 'order' ? 'order' : 'chain';
 }
 
 export function saveKind(kind: 'chain' | 'order'): void {
-  localStorage.setItem(DEVICE_KIND_KEY, kind);
+  writeStore(DEVICE_KIND_KEY, kind);
 }

@@ -56,6 +56,7 @@ import {
   ApiError,
 } from './api';
 import { Cabinet } from './cabinet';
+import { dropStore, readStore, writeStore } from './store';
 import {
   renderRounds,
   tourneyAction,
@@ -599,21 +600,19 @@ function stopTutorial(): void {
 
 /** Обучение показывают один раз: дальше оно живёт в панели управления. */
 const TUTORIAL_KEY = 'doton.tutorial.v1';
+/**
+ * Образец под листом. Ключ стоит здесь, рядом с остальными: заводя игру,
+ * прибор читает его раньше, чем доходит до самого листа, — а объявленная
+ * ниже константа в этот миг ещё не существует, и игра падала на ровном месте.
+ */
+const SAMPLE_KEY = 'doton.paper-sample.v1';
 
 function seenTutorial(): void {
-  try {
-    localStorage.setItem(TUTORIAL_KEY, '1');
-  } catch {
-    // Приватный режим — просто покажем обучение ещё раз.
-  }
+  writeStore(TUTORIAL_KEY, '1');
 }
 
 function firstVisit(): boolean {
-  try {
-    return localStorage.getItem(TUTORIAL_KEY) === null;
-  } catch {
-    return false;
-  }
+  return readStore(TUTORIAL_KEY) === null;
 }
 
 // ---------- Цепочки: заход и рекорд ----------
@@ -1827,23 +1826,15 @@ function showSample(index: number | null): void {
 
 /** Какой образец лежал под листом в прошлый раз. */
 function loadSample(): number | null {
-  try {
-    const saved = localStorage.getItem('doton.paper-sample.v1');
-    if (saved === null) return null;
-    const index = Number(saved);
-    return sampleAt(index) === null ? null : index;
-  } catch {
-    return null;
-  }
+  const saved = readStore(SAMPLE_KEY);
+  if (saved === null) return null;
+  const index = Number(saved);
+  return sampleAt(index) === null ? null : index;
 }
 
 function saveSample(index: number | null): void {
-  try {
-    if (index === null) localStorage.removeItem('doton.paper-sample.v1');
-    else localStorage.setItem('doton.paper-sample.v1', String(index));
-  } catch {
-    // Приватный режим — образец живёт до конца сеанса.
-  }
+  if (index === null) dropStore(SAMPLE_KEY);
+  else writeStore(SAMPLE_KEY, String(index));
 }
 
 /**
