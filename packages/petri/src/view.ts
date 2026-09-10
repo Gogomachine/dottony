@@ -1,7 +1,7 @@
-import type { Dial, Dials } from './dials.js';
+import type { Dials } from './dials.js';
 import type { Creature } from './creature.js';
 import type { DayLog, Mood } from './care.js';
-import type { Hint } from './species.js';
+import type { CareDial, Hint } from './species.js';
 
 /**
  * Что прибор показывает игроку.
@@ -36,8 +36,17 @@ export interface IncubatorView {
   goodDays: number;
   grow: number;
   lostAt: string | null;
-  /** Стрелки у тумблеров: сторону называют только издали. */
-  hints: Record<Dial, Hint> | null;
+  /**
+   * Стрелки у тумблеров ухода: сторону называют только издали. Тумблеров
+   * этих два — питательная среда после вылупления уходит с корпуса.
+   */
+  hints: Record<CareDial, Hint> | null;
+  /**
+   * Когда точка вылупится. Прибор показывает это часами: полсуток — не
+   * «когда-нибудь», а сегодня вечером или завтра утром, и человек вправе
+   * знать, когда возвращаться.
+   */
+  hatchAt: string | null;
 }
 
 /** Вся лаборатория одним ответом: три стекла, кошелёк и что было ночью. */

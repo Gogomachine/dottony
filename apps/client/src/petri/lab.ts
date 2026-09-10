@@ -54,6 +54,13 @@ const DIAL_NAME: Record<Dial, string> = {
  * Что говорит стрелка. Сторону — да, число — никогда: «теплее» это совет, а
  * «поставь 640» — ответ, после которого ухаживать больше не за чем.
  */
+/** Цвет ручки: тумблер узнают рукой, не читая подпись. */
+const DIAL_COLOR: Record<Dial, string> = {
+  temp: '#c8503a',
+  humidity: '#3f86c9',
+  medium: '#86a93f',
+};
+
 const HINT_NAME: Record<Hint, string> = {
   less: '◀ убавить',
   more: 'прибавить ▶',
@@ -75,14 +82,16 @@ const MOOD_NAME: Record<string, string> = {
 };
 
 /**
- * Куда прибор кладёт существо в чашке.
+ * Где существо сидит под стеклом.
  *
- * Жёлтый прилеплен к стенке — это его поведение, а не украшение: без
- * привязки к краю мутация «жёлтый пополз, как красный» не читалась бы
- * вовсе. Цикл движения принадлежит поведению, поэтому и место тут выбирает
- * оно, а не тело.
+ * Стекло квадратное, и у него есть пол и стенки. Жёлтый прилеплен к
+ * стенке — это его поведение, а не украшение: без привязки к краю мутация
+ * «жёлтый пополз, как красный» не читалась бы вовсе. Точка не прилеплена
+ * ни к чему: она просто лежит на дне, прилипать — это уже поведение, а
+ * поведение появляется вместе с телом.
  */
-const CLING_ANGLE = 215;
+const WALL = { x: 12, y: 58, turn: 90 };
+const FLOOR = { x: 50, y: 92, turn: 0 };
 
 /** Куда смотрит существо в маленьком стекле: там оно просто стоит. */
 function portrait(creature: Creature): SVGSVGElement {
@@ -189,6 +198,24 @@ export class Lab {
     }
   }
 
+  /**
+   * Что стоит в поле «рост». У точки это часы до вылупления: полсуток —
+   * не «когда-нибудь», а сегодня вечером или завтра утром, и человек
+   * вправе знать, когда возвращаться.
+   */
+  private growth(inc: LabView['incubator']): string {
+    const creature = inc.creature;
+    if (creature === null) return '—';
+    if (inc.lostAt !== null) return 'утрачена';
+    if (creature.stage === 3) return 'взрослая';
+    if (creature.stage === 2) return `${inc.goodDays}/${inc.grow}`;
+    if (inc.hatchAt === null) return 'точка';
+    const left = Date.parse(inc.hatchAt) - Date.now();
+    if (left <= 0) return 'вот-вот';
+    const hours = Math.floor(left / 3600_000);
+    return hours >= 1 ? `${hours} ч` : `${Math.max(1, Math.round(left / 60_000))} мин`;
+  }
+
   /** Строка в экранчик, всё остальное в строке — как есть. */
   private tell(line: string): void {
     const view = this.view;
@@ -196,14 +223,7 @@ export class Lab {
     this.on.panel({
       line,
       day: view === null || view === undefined ? '—' : view.day.slice(8) + '.' + view.day.slice(5, 7),
-      grow:
-        inc?.creature == null
-          ? '—'
-          : inc.creature.stage === 3
-            ? 'взрослая'
-            : inc.creature.stage === 1
-              ? 'точка'
-              : `${inc.goodDays}/${inc.grow}`,
+      grow: inc === undefined || inc === null ? '—' : this.growth(inc),
       tokens: view?.tokens ?? 0,
     });
   }
@@ -253,9 +273,18 @@ export class Lab {
         : `Посев — ${view.seedCost} ж · у тебя ${view.tokens}`;
     el<HTMLButtonElement>('lab-seed').disabled = view.seedCost > view.tokens;
 
-    // Кормят только вылупившихся: точке еда не нужна, взрослая
-    // законсервирована.
-    this.feedKey.disabled = !alive || creature?.stage !== 2;
+    /*
+     * Третье гнездо: пока в стекле точка — тумблер питательной среды, после
+     * вылупления — кормёжка. Это одно и то же место на приборе: среда
+     * выбирает отростки будущей формы и на этом кончается, а еду дают уже
+     * тому, кто вылупился.
+     */
+    const feeding = alive && creature !== null && creature.stage >= 2;
+    const medium = this.dialsEl.querySelector<HTMLElement>('.dial[data-dial="medium"]');
+    if (medium) medium.hidden = feeding;
+    this.feedKey.hidden = !feeding;
+    // Взрослая форма законсервирована: кормить её незачем.
+    this.feedKey.disabled = creature?.stage !== 2;
 
     this.drawDish(alive ? creature : null);
     this.renderDials();
@@ -278,7 +307,8 @@ export class Lab {
       return;
     }
     if (creature.stage === 1) {
-      this.tell('Точка · форму выберут тумблеры');
+      // Точке нужен замес, а не уход: три тумблера и полсуток покоя.
+      this.tell('Точка · замешай среду и жди');
       return;
     }
     if (creature.stage === 3) {
@@ -311,17 +341,17 @@ export class Lab {
     this.body = null;
     this.eyes = [];
     this.shape = null;
-    // Волосяная сетка стекла — та же, что в окуляре игры: прибор один.
+    // Пол препарата: по нему видно, где низ, и на нём стоят те, кто не
+    // прилипает к стенке.
     this.glass.appendChild(
-      svgNode('circle', { cx: 50, cy: 50, r: 47.5, fill: 'none', stroke: 'rgba(255,255,255,0.07)' }),
+      svgNode('line', { x1: 4, y1: 94, x2: 96, y2: 94, stroke: 'rgba(255,255,255,0.10)', 'stroke-width': 0.7 }),
     );
     if (creature === null) return;
 
-    // Чашка круглая, и всё, что в ней, обрезается её стенкой. Без этого
-    // прилепившийся к краю вылезал за стекло на корпус — а за стеклом
-    // культуре делать нечего.
-    const clip = svgNode('clipPath', { id: 'petri-dish' });
-    clip.appendChild(svgNode('circle', { cx: 50, cy: 50, r: 47 }));
+    // Всё, что под стеклом, обрезается его краем: за стеклом культуре
+    // делать нечего.
+    const clip = svgNode('clipPath', { id: 'petri-glass' });
+    clip.appendChild(svgNode('rect', { x: 1, y: 1, width: 98, height: 98, rx: 6 }));
     this.glass.appendChild(clip);
 
     const shape = bodyOf(creature);
@@ -331,38 +361,44 @@ export class Lab {
      *
      * Вписывание раздуло бы точку до размера взрослого — и «взрослая форма
      * крупнее на сорок процентов», главное, что видно в третьей стадии,
-     * перестало бы быть видно вовсе. Чашка показывает настоящий размер.
+     * перестало бы быть видно вовсе. Стекло показывает настоящий размер.
      */
-    const scale = 0.46;
-    // Точка ещё никуда не прилепилась: она просто лежит на дне. Прилепиться
-    // к стенке — это уже поведение, а поведение появляется с телом.
-    const angle = creature.stage === 1 ? 180 : CLING_ANGLE;
-    const rad = (angle * Math.PI) / 180;
-    const at = { x: 50 + Math.sin(rad) * 44, y: 50 - Math.cos(rad) * 44 };
-    this.angle = angle;
+    const scale = 0.5;
+    const spot = creature.stage === 1 ? FLOOR : WALL;
+    const at = { x: spot.x, y: spot.y };
+    this.angle = spot.turn;
 
     const group = svgNode('g');
     group.setAttribute(
       'transform',
-      `translate(${at.x} ${at.y}) rotate(${angle - 180}) scale(${scale}) translate(${-shape.anchor.x} ${-shape.anchor.y})`,
+      `translate(${at.x} ${at.y}) rotate(${spot.turn}) scale(${scale}) translate(${-shape.anchor.x} ${-shape.anchor.y})`,
     );
+    /*
+     * Глаза живут **вне** повёрнутого тела.
+     *
+     * Прилепившийся к стенке развёрнут поперёк, и вместе с телом заваливалась
+     * бы пара глаз — а это читается не как «висит на стенке», а как «лежит
+     * на боку». Глаза смотрят в мир: их ставят по мировым координатам того
+     * места, где они на теле, и держат ровно. Моргание — свой слой, а не
+     * перерисовка тела.
+     */
+    const face = svgNode('g');
     for (const drawn of drawBody(shape, skin)) {
       const node = svgNode(drawn.tag, drawn.attrs);
-      // Глаза складываем отдельными узлами: моргание — свой слой, а не
-      // перерисовка тела.
       if (drawn.attrs.fill === '#FFFFFF') {
         const lid = svgNode('g');
         lid.appendChild(node);
         this.eyes.push(lid);
-        group.appendChild(lid);
+        face.appendChild(lid);
         continue;
       }
       const last = this.eyes[this.eyes.length - 1];
       if (last !== undefined && last.childNodes.length === 1) last.appendChild(node);
       else group.appendChild(node);
     }
-    const inside = svgNode('g', { 'clip-path': 'url(#petri-dish)' });
+    const inside = svgNode('g', { 'clip-path': 'url(#petri-glass)' });
     inside.appendChild(group);
+    inside.appendChild(face);
     this.glass.appendChild(inside);
     this.body = group;
     this.shape = shape;
@@ -370,8 +406,8 @@ export class Lab {
   }
 
   private place: { at: { x: number; y: number }; scale: number } = { at: { x: 50, y: 50 }, scale: 1 };
-  /** Под каким углом тело сидит в чашке: это выбирает поведение, а не тело. */
-  private angle = CLING_ANGLE;
+  /** Под каким углом тело сидит под стеклом: это выбирает поведение, а не тело. */
+  private angle = 0;
 
   /**
    * Один цикл анимации: покачивание с затуханием и моргание отдельным слоем.
@@ -391,22 +427,49 @@ export class Lab {
     const sway = Math.sin(now * 1.1 * pace) * 3.2 + Math.sin(now * 0.37 * pace) * 1.4;
     body.setAttribute(
       'transform',
-      `translate(${this.place.at.x} ${this.place.at.y}) rotate(${this.angle - 180 + sway}) scale(${this.place.scale}) translate(${-shape.anchor.x} ${-shape.anchor.y})`,
+      `translate(${this.place.at.x} ${this.place.at.y}) rotate(${this.angle + sway}) scale(${this.place.scale}) translate(${-shape.anchor.x} ${-shape.anchor.y})`,
     );
 
     const id = this.view?.incubator.creature?.id ?? '';
     const period = 3.1 + (id.charCodeAt(0) % 7) * 0.43;
     const phase = (now * pace) % period;
     const shut = phase < 0.14 ? 1 - phase / 0.14 : 1;
+    // Куда уехала точка тела при нынешнем повороте — по этому и ставим глаз.
+    const rad = ((this.angle + sway) * Math.PI) / 180;
+    const k = this.place.scale;
+    const world = (x: number, y: number): { x: number; y: number } => {
+      const dx = (x - shape.anchor.x) * k;
+      const dy = (y - shape.anchor.y) * k;
+      return {
+        x: this.place.at.x + dx * Math.cos(rad) - dy * Math.sin(rad),
+        y: this.place.at.y + dx * Math.sin(rad) + dy * Math.cos(rad),
+      };
+    };
+    /*
+     * Пара глаз держится ровно, а не вдоль тела.
+     *
+     * Место лица берём с тела — это его середина глаз, повёрнутая вместе с
+     * ним, — а вот саму пару разводим по мировым осям, без поворота. Иначе
+     * прилепившийся к стенке смотрит одним глазом вверх, другим вниз, и
+     * читается это как «лежит на боку», а не «висит на стенке».
+     */
+    const spots = shape.parts.filter((part) => part.kind === 'eye');
+    if (spots.length === 0) return;
+    const mid = {
+      x: spots.reduce((sum, part) => sum + part.x, 0) / spots.length,
+      y: spots.reduce((sum, part) => sum + part.y, 0) / spots.length,
+    };
+    const face = world(mid.x, mid.y);
     for (const [index, eye] of this.eyes.entries()) {
       // Второй глаз моргает чуть иначе: рассинхрон — это характер, а у
       // мутантов ещё и признак.
       const own = index === 1 ? Math.min(1, shut + 0.08) : shut;
-      const centre = shape.parts.filter((part) => part.kind === 'eye')[index];
+      const centre = spots[index];
       if (centre === undefined) continue;
+      const at = { x: face.x + (centre.x - mid.x) * k, y: face.y + (centre.y - mid.y) * k };
       eye.setAttribute(
         'transform',
-        `translate(${centre.x} ${centre.y}) scale(1 ${own.toFixed(3)}) translate(${-centre.x} ${-centre.y})`,
+        `translate(${at.x.toFixed(2)} ${at.y.toFixed(2)}) scale(${k.toFixed(3)} ${(k * own).toFixed(3)}) translate(${-centre.x} ${-centre.y})`,
       );
     }
   };
@@ -419,17 +482,24 @@ export class Lab {
       const box = document.createElement('div');
       box.className = 'dial';
       box.dataset.dial = dial;
+      // Ручка своего цвета: три одинаковые чёрные шайбы игрок различал бы
+      // только по подписи, а тумблер узнают рукой, не читая.
       box.innerHTML =
-        `<svg viewBox="0 0 60 60">` +
-        `<circle cx="30" cy="30" r="26" fill="#26231f" stroke="rgba(255,255,255,0.12)" />` +
-        `<circle cx="30" cy="30" r="20" fill="#1a1815" />` +
-        `<line class="mark" x1="30" y1="30" x2="30" y2="12" stroke="#e8e2d6" stroke-width="3" stroke-linecap="round" />` +
+        `<svg viewBox="0 0 64 64">` +
+        `<circle cx="32" cy="32" r="27" fill="var(--case-2)" stroke="var(--edge)" />` +
+        `<circle cx="32" cy="32" r="21" fill="${DIAL_COLOR[dial]}" />` +
+        // Засечки краёв шкалы: без них «до упора» не отличить от «почти».
+        `<path d="M 12 47 L 15 44 M 52 47 L 49 44" stroke="var(--silk-2)" stroke-width="1.6" fill="none" />` +
+        `<line class="mark" x1="32" y1="32" x2="32" y2="14" stroke="#f4f1ea" stroke-width="3.2" stroke-linecap="round" />` +
         `</svg>` +
         `<span class="cap">${DIAL_NAME[dial]}</span>` +
         `<span class="hint"></span>`;
       this.dialsEl.appendChild(box);
       this.grip(box, dial);
     }
+    // Кормёжка живёт в том же гнезде, что и питательная среда: тумблер не
+    // прячется, а сменяется — своё дело среда сделала при вылуплении.
+    this.dialsEl.appendChild(this.feedKey);
   }
 
   /**
@@ -496,7 +566,9 @@ export class Lab {
       const mark = box.querySelector<SVGLineElement>('.mark');
       mark?.setAttribute('transform', `rotate(${angle} 30 30)`);
       const hint = box.querySelector<HTMLElement>('.hint');
-      const said = view.incubator.hints?.[dial];
+      // Стрелка бывает только у тумблеров ухода: питательной средой после
+      // вылупления никто не управляет, и советовать по ней нечего.
+      const said = dial === 'medium' ? undefined : view.incubator.hints?.[dial];
       if (hint) {
         hint.textContent = said === undefined ? '' : HINT_NAME[said];
         hint.className = `hint ${said ?? ''}`;

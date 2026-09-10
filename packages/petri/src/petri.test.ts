@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CARE_DIALS,
   DIALS,
+  HATCH_HOURS,
   SCALE,
   advance,
   axesOf,
@@ -41,8 +43,15 @@ import {
   type Species,
 } from './index.js';
 
+/**
+ * Часы теста: девять утра в лаборатории. Полсуток от них — тот же день,
+ * а не полночь, и вылупление не приходится проверять на границе.
+ */
+const START = new Date('2026-03-15T06:00:00Z');
+const at = (hours: number): Date => new Date(START.getTime() + hours * 3600_000);
+
 /** Точка, только что посеянная: формы у неё ещё нет. */
-function seeded(species: Species, day = '2026-03-15'): Incubator {
+function seeded(species: Species, day = labDay(START)): Incubator {
   const creature: Creature = {
     id: 'c1',
     generation: 1,
@@ -55,7 +64,7 @@ function seeded(species: Species, day = '2026-03-15'): Incubator {
     stage: 1,
     parents: null,
     bredAt: null,
-    createdAt: `${day}T09:00:00Z`,
+    createdAt: START.toISOString(),
   };
   return {
     seed: 4242,
@@ -80,24 +89,28 @@ function recipe(species: Species): Dials {
 }
 
 /**
- * Вылупить нужную форму: выставить рецепт и досидеть сутки. Форму выбирают
- * тумблеры в миг вылупления, поэтому «посеял и перемотал» дало бы ту форму,
- * которую подсказал случайный сброс, а не ту, что нужна тесту.
+ * Вылупить нужную форму: выставить рецепт и выждать положенные часы. Форму
+ * выбирают тумблеры в миг вылупления, поэтому «посеял и перемотал» дало бы
+ * ту форму, которую подсказал случайный сброс, а не ту, что нужна тесту.
  */
 function hatched(species: Species): Incubator {
   const start = setDials(seeded(species), recipe(species));
-  return advance(start, labDayShift(start.day, 1)).inc;
+  return advance(start, at(HATCH_HOURS)).inc;
 }
 
-/** Тумблеры ровно в комфорт этого вида — так ухаживает знающий игрок. */
+/**
+ * Тумблеры ровно в комфорт этого вида — так ухаживает знающий игрок.
+ * Питательная среда в уходе не участвует: после вылупления её тумблера на
+ * корпусе нет вовсе, и ставим её как попало нарочно.
+ */
 function comfy(species: Species): Dials {
   const comfort = comfortOf(species);
-  return { temp: comfort.temp.at, humidity: comfort.humidity.at, medium: comfort.medium.at };
+  return { temp: comfort.temp.at, humidity: comfort.humidity.at, medium: 0 };
 }
 
 /** Один день ухода: выставил среду, покормил — и сутки кончились. */
-function tended(inc: Incubator, species: Species): Incubator {
-  return advance(feed(setDials(inc, comfy(species))), labDayShift(inc.day, 1)).inc;
+function tended(inc: Incubator, species: Species, hours: number): Incubator {
+  return advance(feed(setDials(inc, comfy(species))), at(hours)).inc;
 }
 
 const YELLOW: Species = { color: 'yellow', axes: { temp: 1, humidity: 1, medium: 1 } };
@@ -162,13 +175,16 @@ describe('комфорт', () => {
     expect(hintFor(YELLOW, 'temp', at + span * (HINT_REACH + 2))).toBe('less');
   });
 
-  it('среда хороша, только когда хороши все три тумблера', () => {
+  it('среда хороша по обоим тумблерам ухода, а третий её не касается', () => {
     const comfort = comfortOf(YELLOW);
     expect(envFits(YELLOW, comfy(YELLOW))).toBe(true);
-    for (const dial of DIALS) {
+    for (const dial of CARE_DIALS) {
       const off = { ...comfy(YELLOW), [dial]: comfort[dial].at + comfort[dial].span + 1 };
       expect(envFits(YELLOW, off as Dials)).toBe(false);
     }
+    // Питательная среда своё дело сделала при вылуплении: крутить её после
+    // некуда — тумблера нет, — и на уход она не влияет никак.
+    expect(envFits(YELLOW, { ...comfy(YELLOW), medium: SCALE })).toBe(true);
   });
 });
 
@@ -207,34 +223,68 @@ describe('суточный сброс', () => {
 });
 
 describe('рост и уход', () => {
-  it('точка вылупляется за сутки, и тумблеры ей не указ', () => {
-    // Тумблеры своё дело уже сделали: они выбрали форму, а не условия.
-    const inc = seeded(YELLOW);
+  /** Конец k-х суток ухода в часах от начала: сутки кончаются в полночь. */
+  const careDay = (k: number): number => 16 + 24 * k;
+
+  /** Тумблеры заведомо мимо комфорта — чтобы сутки были небрежными наверняка. */
+  const wrong = (species: Species): Dials => {
+    const comfort = comfortOf(species);
+    return {
+      temp: comfort.temp.at > SCALE / 2 ? 0 : SCALE,
+      humidity: comfort.humidity.at > SCALE / 2 ? 0 : SCALE,
+      medium: 0,
+    };
+  };
+
+  it('точка вылупляется за полсуток, а не за сутки', () => {
+    // Первая стадия — не уход, а рецепт: игрок выставил тумблеры и ждёт,
+    // что из них выйдет. Брать за это ожидание целые сутки не за что.
+    const inc = setDials(seeded(YELLOW), recipe(YELLOW));
     expect(dayVerdict(inc)).toBe('point');
-    const after = advance(inc, labDayShift(inc.day, 1)).inc;
+    expect(advance(inc, at(HATCH_HOURS - 1)).inc.creature?.stage).toBe(1);
+    const after = advance(inc, at(HATCH_HOURS)).inc;
     expect(after.creature?.stage).toBe(2);
+    expect(after.creature?.axes).toEqual(YELLOW.axes);
     expect(after.lostAt).toBeNull();
+    // Рецепт израсходован: тумблеры сброшены, и начинается уход.
+    expect(after.dials).toBeNull();
+    expect(after.feeds).toBe(0);
+  });
+
+  it('точке тумблеры не сбрасывают: они и есть рецепт', () => {
+    // Полсуток почти всегда перешагивают полночь. Если бы сброс трогал
+    // точку, форму выбирал бы прибор, а не человек: поставил вечером —
+    // получил утром неизвестно что.
+    const born = at(8);
+    const seed = seeded(YELLOW);
+    const late = {
+      ...seed,
+      creature: { ...seed.creature!, createdAt: born.toISOString() },
+      dials: recipe(YELLOW),
+    };
+    const after = advance(late, at(8 + HATCH_HOURS + 1)).inc;
+    expect(after.creature?.stage).toBe(2);
+    expect(after.creature?.axes).toEqual(YELLOW.axes);
   });
 
   it('взрослая форма приходит за хорошие сутки, а не за календарные', () => {
     let inc = hatched(YELLOW);
     expect(inc.creature?.stage).toBe(2);
-    for (let i = 0; i < GROW_DAYS; i++) inc = tended(inc, YELLOW);
+    for (let i = 0; i < GROW_DAYS; i++) inc = tended(inc, YELLOW, careDay(i));
     expect(inc.creature?.stage).toBe(3);
   });
 
   it('небрежные сутки в зачёт роста не идут', () => {
     let inc = hatched(YELLOW);
-    // Кормили, но среду не выставили — сутки потрачены зря.
-    inc = advance(feed(inc), labDayShift(inc.day, 1)).inc;
+    // Кормили, но среду выставили мимо — сутки потрачены зря.
+    inc = advance(feed(setDials(inc, wrong(YELLOW))), at(careDay(0))).inc;
     expect(inc.creature?.stage).toBe(2);
     expect(inc.goodDays).toBe(0);
     expect(inc.neglect).toBe(1);
   });
 
   it('перекорм так же плох, как голод', () => {
-    let inc = hatched(YELLOW);
-    inc = setDials(inc, comfy(YELLOW));
+    const inc = setDials(hatched(YELLOW), comfy(YELLOW));
     expect(dayVerdict(feed(inc))).toBe('good');
     expect(dayVerdict(feed(feed(inc)))).toBe('stuffed');
     expect(dayVerdict(inc)).toBe('hungry');
@@ -244,55 +294,50 @@ describe('рост и уход', () => {
 
   it('гибель наступает на третьи сутки небрежения, а не на первые', () => {
     // Тумблеры сбрасываются сами: смерть за один пропущенный день значила бы
-    // потерю недели выращивания по причинам, не относящимся к игре.
-    const start = hatched(YELLOW);
-    const day = start.day;
-    for (let skipped = 1; skipped < NEGLECT_DEATH; skipped++) {
-      const gone = advance(start, labDayShift(day, skipped)).inc;
-      expect(gone.lostAt).toBeNull();
+    // потерю выращивания по причинам, не относящимся к игре.
+    const start = setDials(hatched(YELLOW), wrong(YELLOW));
+    for (let skipped = 0; skipped < NEGLECT_DEATH - 1; skipped++) {
+      expect(advance(start, at(careDay(skipped))).inc.lostAt).toBeNull();
     }
-    const dead = advance(start, labDayShift(day, NEGLECT_DEATH));
+    const dead = advance(start, at(careDay(NEGLECT_DEATH - 1)));
     expect(dead.inc.lostAt).not.toBeNull();
     expect(dead.log.some((entry) => entry.lost)).toBe(true);
-    // Досчитали до сегодня, даже оборвавшись на гибели.
-    expect(dead.inc.day).toBe(labDayShift(day, NEGLECT_DEATH));
+    expect(dead.inc.day).toBe(labDay(at(careDay(NEGLECT_DEATH - 1))));
   });
 
   it('хорошие сутки отводят от гибели', () => {
-    let inc = hatched(YELLOW);
-    inc = advance(inc, labDayShift(inc.day, 1)).inc;
+    let inc = advance(setDials(hatched(YELLOW), wrong(YELLOW)), at(careDay(0))).inc;
     expect(inc.neglect).toBe(1);
-    inc = tended(inc, YELLOW);
+    inc = tended(inc, YELLOW, careDay(1));
     expect(inc.neglect).toBe(0);
   });
 
   it('первый питомец не погибает: на нём учатся', () => {
     const start = { ...hatched(YELLOW), immortal: true };
-    const long = advance(start, labDayShift(start.day, 30)).inc;
+    const long = advance(start, at(careDay(29))).inc;
     expect(long.lostAt).toBeNull();
     expect(long.creature?.stage).toBe(2);
   });
 
   it('прибор не живёт назад и не считает те же сутки дважды', () => {
     const inc = hatched(YELLOW);
-    expect(advance(inc, '2026-03-15').inc).toEqual(inc);
-    expect(advance(inc, inc.day).log).toHaveLength(0);
+    expect(advance(inc, START).inc).toEqual(inc);
+    expect(advance(inc, at(HATCH_HOURS)).log).toHaveLength(0);
   });
 
   it('новые сутки сбрасывают и тумблеры, и кормёжку', () => {
-    let inc = hatched(YELLOW);
-    inc = feed(setDials(inc, comfy(YELLOW)));
+    let inc = feed(setDials(hatched(YELLOW), comfy(YELLOW)));
     expect(inc.dials).not.toBeNull();
-    inc = advance(inc, labDayShift(inc.day, 1)).inc;
+    inc = advance(inc, at(careDay(0))).inc;
     expect(inc.dials).toBeNull();
     expect(inc.feeds).toBe(0);
   });
 
   it('взрослая форма законсервирована: сутки ей ничего не делают', () => {
     let inc = hatched(YELLOW);
-    for (let i = 0; i < GROW_DAYS; i++) inc = tended(inc, YELLOW);
+    for (let i = 0; i < GROW_DAYS; i++) inc = tended(inc, YELLOW, careDay(i));
     expect(inc.creature?.stage).toBe(3);
-    const later = advance(inc, labDayShift(inc.day, 20)).inc;
+    const later = advance(inc, at(careDay(GROW_DAYS + 20))).inc;
     expect(later.lostAt).toBeNull();
     expect(later.creature?.stage).toBe(3);
   });
@@ -303,7 +348,7 @@ describe('рост и уход', () => {
     const day = hatched(YELLOW);
     expect(moodOf(feed(setDials(day, { ...comfy(YELLOW), temp: 0 })))).toBe('cold');
     expect(moodOf(feed(setDials(day, { ...comfy(YELLOW), humidity: SCALE })))).toBe('wet');
-    // Холод виден раньше состава среды: говорить сразу обо всём — значит не
+    // Холод виден раньше сырости: говорить сразу обо всём — значит не
     // сказать ничего.
     expect(moodOf(feed(setDials(day, { temp: 0, humidity: SCALE, medium: 0 })))).toBe('cold');
   });

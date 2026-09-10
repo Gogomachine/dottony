@@ -26,6 +26,7 @@ export type { Dial, Dials, Zone } from './dials.js';
 
 export {
   COLORS,
+  CARE_DIALS,
   BEHAVIOUR_LADDER,
   BEHAVIOUR_OF,
   COMFORT_SPAN,
@@ -39,7 +40,7 @@ export {
   HINT_REACH,
   formOdds,
 } from './species.js';
-export type { Axes, Behaviour, Color, Comfort, Hint, Species } from './species.js';
+export type { Axes, Behaviour, CareDial, Color, Comfort, Hint, Species } from './species.js';
 
 export { BODY_ANOMALIES, COLOR_MUTATIONS, speciesOf, behaviourOf, mutationCount } from './creature.js';
 export type { BehaviourMutation, BodyAnomaly, ColorMutation, Creature, Stage } from './creature.js';
@@ -58,11 +59,13 @@ export type { BreedOptions, BreedResult, Slot } from './lab.js';
 
 export {
   LAB_TZ_HOURS,
+  HATCH_HOURS,
   GROW_DAYS,
   NEGLECT_DEATH,
   labDay,
   labDayShift,
   labDaysBetween,
+  labDayEnd,
   dialsOf,
   alive,
   dayVerdict,

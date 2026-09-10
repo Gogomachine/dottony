@@ -56,7 +56,8 @@ import type {
   OrderMove,
 } from '@doton/protocol';
 import {
-  DIALS,
+  CARE_DIALS,
+  HATCH_HOURS,
   LAB_TZ_HOURS,
   SEED_PRICE,
   comfortOf,
@@ -4142,10 +4143,14 @@ describe('PETRIDOT', () => {
     medium: zoneMiddle('medium', species.axes.medium),
   });
 
-  /** Тумблеры в комфорт существа — так за ним ухаживает знающий игрок. */
+  /**
+   * Тумблеры в комфорт существа — так за ним ухаживает знающий игрок.
+   * Питательная среда в уходе не участвует: после вылупления её тумблера на
+   * корпусе нет, и ставим её как попало нарочно.
+   */
   const comfyFor = (creature: Creature): Dials => {
     const comfort = comfortOf(speciesOf(creature)!);
-    return { temp: comfort.temp.at, humidity: comfort.humidity.at, medium: comfort.medium.at };
+    return { temp: comfort.temp.at, humidity: comfort.humidity.at, medium: 0 };
   };
 
   /** Вырастить в инкубаторе взрослую форму: посев, вылупление и уход. */
@@ -4215,6 +4220,45 @@ describe('PETRIDOT', () => {
     }
   });
 
+  it('лаборатория: точка лежит полсуток и говорит, когда вылупится', async () => {
+    // Первая стадия — не уход, а рецепт: выставил тумблеры и ждёшь. Прибор
+    // при этом называет час, а не «когда-нибудь»: полсуток это сегодня
+    // вечером или завтра утром, и человек вправе знать, когда возвращаться.
+    const desk = await bench();
+    try {
+      vi.setSystemTime(noonAt(15));
+      await desk.act('seed');
+      const fresh = await desk.look();
+      expect(fresh.incubator.creature?.stage).toBe(1);
+      expect(fresh.incubator.hatchAt).not.toBeNull();
+      expect(Date.parse(fresh.incubator.hatchAt!) - Date.now()).toBe(HATCH_HOURS * 3600_000);
+      // Стрелок у точки нет: ей тумблеры выбирают форму, а не условия.
+      expect(fresh.incubator.hints).toBeNull();
+
+      const want: Species = { color: 'yellow', axes: { temp: 2, humidity: 0, medium: 2 } };
+      await desk.act('dials', recipeOf(want));
+
+      // За час до срока — всё ещё точка.
+      vi.setSystemTime(new Date(noonAt(15).getTime() + (HATCH_HOURS - 1) * 3600_000));
+      expect((await desk.look()).incubator.creature?.stage).toBe(1);
+
+      // И через полсуток — вылупилась ровно тем, что замешали.
+      vi.setSystemTime(new Date(noonAt(15).getTime() + HATCH_HOURS * 3600_000));
+      const grown = await desk.look();
+      expect(grown.incubator.creature?.stage).toBe(2);
+      expect(grown.incubator.creature?.axes).toEqual(want.axes);
+      expect(grown.incubator.hatchAt).toBeNull();
+      // Рецепт израсходован: тумблеры сброшены, кормёжка начата с нуля.
+      expect(grown.incubator.set).toBe(false);
+      expect(grown.incubator.feeds).toBe(0);
+      // И стрелки теперь есть — но только у двух тумблеров ухода.
+      expect(Object.keys(grown.incubator.hints ?? {}).sort()).toEqual(['humidity', 'temp']);
+    } finally {
+      await desk.app.close();
+      vi.useRealTimers();
+    }
+  });
+
   it('лаборатория: комфорт остаётся на сервере', async () => {
     // Пришли его клиенту — и вся игра в уход кончится в тот вечер, когда
     // кто-нибудь откроет ответ сервера.
@@ -4225,7 +4269,7 @@ describe('PETRIDOT', () => {
       const view = await desk.look();
       const said = JSON.stringify(view);
       const comfort = comfortOf(speciesOf(view.incubator.creature!)!);
-      for (const dial of DIALS) {
+      for (const dial of CARE_DIALS) {
         expect(said).not.toContain(String(comfort[dial].at));
       }
       // Стрелка при этом есть — она называет сторону, а не число.

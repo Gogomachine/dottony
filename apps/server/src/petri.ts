@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import {
-  DIALS,
+  CARE_DIALS,
   GROW_DAYS,
+  HATCH_HOURS,
   NEGLECT_DEATH,
   advance,
   breed,
@@ -19,7 +20,7 @@ import {
   setDials,
   speciesOf,
   type Creature,
-  type Dial,
+  type CareDial,
   type Dials,
   type Hint,
   type DayLog,
@@ -134,7 +135,7 @@ export async function openLab(store: Store, userId: string, now = new Date()): P
     lostAt: inside?.lostAt ?? null,
   };
 
-  const moved = advance(before, today);
+  const moved = advance(before, now);
   const after = moved.inc;
   if (moved.log.length > 0) {
     await store.petriSaveLab(userId, {
@@ -181,14 +182,20 @@ export function labView(lab: Lab, tokens: number): LabView {
   const inc = lab.inc;
   const creature = inc.creature;
   const species = creature === null ? null : speciesOf(creature);
-  let hints: Record<Dial, Hint> | null = null;
+  let hints: Record<CareDial, Hint> | null = null;
   // Стрелки — только у того, кто уже вылупился: точке среда безразлична,
   // ей тумблеры выбирают форму, а не условия.
   if (species !== null && creature?.stage === 2 && inc.lostAt === null) {
     const dials = dialsOf(inc);
-    hints = {} as Record<Dial, Hint>;
-    for (const dial of DIALS) hints[dial] = hintFor(species, dial, dials[dial]);
+    hints = {} as Record<CareDial, Hint>;
+    for (const dial of CARE_DIALS) hints[dial] = hintFor(species, dial, dials[dial]);
   }
+  // Когда вылупится: полсуток от посева. Часы у прибора свои, и считать их
+  // клиенту не по чему — сказать должен сервер.
+  const hatchAt =
+    creature !== null && creature.stage === 1 && inc.lostAt === null
+      ? new Date(Date.parse(creature.createdAt) + HATCH_HOURS * 3600_000).toISOString()
+      : null;
   return {
     day: inc.day,
     incubator: {
@@ -204,6 +211,7 @@ export function labView(lab: Lab, tokens: number): LabView {
       grow: GROW_DAYS,
       lostAt: inc.lostAt,
       hints,
+      hatchAt,
     },
     slots: lab.slots,
     collection: lab.collection,
@@ -270,9 +278,11 @@ export async function seedLab(
   await store.petriAdd(userId, toWire(creature), INC);
   // Новая точка начинает свои сутки с чистого листа: чужая кормёжка и чужие
   // тумблеры ей не наследуются.
+  // Новая точка начинает с чистого замеса: чужие тумблеры ей не
+  // наследуются, и рецепт человек выставляет сам.
   await store.petriSaveLab(userId, {
     day: lab.inc.day,
-    dials: lab.inc.dials === null ? null : JSON.stringify(lab.inc.dials),
+    dials: null,
     feeds: 0,
     neglect: 0,
     goodDays: 0,

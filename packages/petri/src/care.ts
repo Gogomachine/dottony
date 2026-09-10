@@ -1,6 +1,6 @@
 import { TOURNEY_TZ_HOURS } from '@doton/core';
-import { DIALS, cleanDials, resetDials, type Dial, type Dials } from './dials.js';
-import { axesOf, comfortOf, dialFits, envFits } from './species.js';
+import { cleanDials, resetDials, type Dials } from './dials.js';
+import { CARE_DIALS, axesOf, comfortOf, dialFits, envFits, type CareDial } from './species.js';
 import { speciesOf, type Creature, type Stage } from './creature.js';
 
 /**
@@ -30,6 +30,11 @@ export function labDay(now: Date = new Date()): string {
   return local(now).toISOString().slice(0, 10);
 }
 
+/** Когда эти лабораторные сутки кончатся — по настоящим часам. */
+export function labDayEnd(day: string): Date {
+  return new Date(Date.parse(`${day}T00:00:00Z`) + 86_400_000 - LAB_TZ_HOURS * 3600_000);
+}
+
 /** Соседний день: `+1` — завтрашний, `-1` — вчерашний. */
 export function labDayShift(day: string, days: number): string {
   const shifted = new Date(`${day}T00:00:00Z`);
@@ -44,6 +49,20 @@ export function labDaysBetween(from: string, to: string): number {
   if (Number.isNaN(a) || Number.isNaN(b)) return 0;
   return Math.round((b - a) / 86_400_000);
 }
+
+/**
+ * Сколько часов точка лежит точкой.
+ *
+ * Полсуток, а не сутки: первая стадия — это не уход, а рецепт. Игрок
+ * выставил три тумблера и ждёт, что из них выйдет; растягивать ожидание
+ * первого своего существа на целые сутки значило бы взять с новичка день
+ * ни за что. Двенадцать часов дают то самое «поставил вечером — утром
+ * посмотрел», ради которого прибор и открывают.
+ *
+ * Часы тут настоящие, а не лабораторные сутки: полсуток не ложатся на
+ * границу дня никак.
+ */
+export const HATCH_HOURS = 12;
 
 /**
  * Сколько хороших суток на второй стадии до взрослой формы.
@@ -79,7 +98,12 @@ export interface Incubator {
   seed: number;
   /** Кто растёт. Пусто — стекло чистое, нужен посев. */
   creature: Creature | null;
-  /** Что выставил игрок сегодня. `null` — не трогал, тумблеры как сбросило. */
+  /**
+   * Что выставил игрок. У точки это **рецепт**: из него выйдет форма, и
+   * суточный сброс его не трогает — иначе прибор перемешивал бы замес,
+   * который человек уже сделал. У вылупившегося это уход, и сбрасывается
+   * он каждые сутки.
+   */
   dials: Dials | null;
   /** День, до которого прибор уже досчитан. */
   day: string;
@@ -110,7 +134,7 @@ export type DayVerdict =
   | 'wrong-env';
 
 /** Что видно на существе прямо сейчас — по одному признаку за раз. */
-export type Mood = 'fine' | 'cold' | 'hot' | 'dry' | 'wet' | 'thin' | 'rich' | 'hungry' | 'stuffed';
+export type Mood = 'fine' | 'cold' | 'hot' | 'dry' | 'wet' | 'hungry' | 'stuffed';
 
 /** Положения тумблеров: выставленные игроком или те, что дал сброс. */
 export function dialsOf(inc: Incubator): Dials {
@@ -155,14 +179,13 @@ export function moodOf(inc: Incubator): Mood {
   if (inc.feeds === 0) return 'hungry';
   const comfort = comfortOf(species);
   const dials = dialsOf(inc);
-  // Порядок опроса — он же порядок важности: холод виден раньше, чем состав
-  // среды, и говорить сразу обо всём значит не сказать ничего.
-  const said: Record<Dial, [Mood, Mood]> = {
+  // Порядок опроса — он же порядок важности: холод виден раньше сырости, и
+  // говорить сразу обо всём значит не сказать ничего.
+  const said: Record<CareDial, [Mood, Mood]> = {
     temp: ['cold', 'hot'],
     humidity: ['dry', 'wet'],
-    medium: ['thin', 'rich'],
   };
-  for (const dial of DIALS) {
+  for (const dial of CARE_DIALS) {
     if (dialFits(comfort[dial], dials[dial])) continue;
     const pair = said[dial];
     return dials[dial] < comfort[dial].at ? pair[0] : pair[1];
@@ -202,47 +225,66 @@ export interface DayLog {
  * тумблеров за любые прошлые сутки (см. `resetDials`), поэтому пропущенные
  * дни считаются задним числом ровно так же, как считались бы вживую.
  */
-export function advance(inc: Incubator, today: string): { inc: Incubator; log: DayLog[] } {
+export function advance(inc: Incubator, now: Date): { inc: Incubator; log: DayLog[] } {
   const log: DayLog[] = [];
   let state: Incubator = { ...inc };
+  const today = labDay(now);
+
+  /**
+   * Вылупление: форму выбирают тумблеры в этот самый миг.
+   *
+   * Рецепт израсходован — тумблеры сбрасываются и кормёжка обнуляется:
+   * дальше это уже не замес, а уход, и мерки у него другие. Третий тумблер
+   * с этого момента и вовсе уходит с корпуса, уступая место кормёжке.
+   */
+  const hatch = (): void => {
+    const creature = state.creature;
+    if (creature === null) return;
+    state = {
+      ...state,
+      creature: { ...creature, stage: 2, axes: axesOf(dialsOf(state)) },
+      dials: null,
+      feeds: 0,
+      goodDays: 0,
+      neglect: 0,
+    };
+  };
+
+  /** Пора ли вылупляться к этому мигу. */
+  const ripe = (at: Date): boolean => {
+    const creature = state.creature;
+    if (creature === null || creature.stage !== 1 || state.lostAt !== null) return false;
+    const born = Date.parse(creature.createdAt);
+    return !Number.isNaN(born) && at.getTime() - born >= HATCH_HOURS * 3600_000;
+  };
+
   // Часы могли уйти назад (перевод времени, чужая машина) — тогда считать
   // нечего: назад прибор не живёт.
   let passed = labDaysBetween(state.day, today);
-  if (passed <= 0) return { inc: state, log };
   // Потолок на случай очень давнего возвращения: гибель наступает на третьи
   // сутки, и дальше считать нечего, но цикл обязан кончаться и без неё.
-  passed = Math.min(passed, 400);
+  passed = Math.max(0, Math.min(passed, 400));
 
   for (let i = 0; i < passed; i++) {
     const day = state.day;
-    const verdict = dayVerdict(state);
-    let grew: Stage | null = null;
+    // Вылупление внутри этих суток: тогда они не судятся как уход. Точка
+    // часть дня была точкой, и спрашивать с неё кормёжку не за что.
+    const hatched = ripe(labDayEnd(day));
+    if (hatched) hatch();
+    const verdict = hatched ? 'point' : dayVerdict(state);
+    let grew: Stage | null = hatched ? 2 : null;
     let lost = false;
     const creature = state.creature;
 
-    if (creature !== null && state.lostAt === null) {
-      if (verdict === 'point') {
-        /*
-         * Точка живёт ровно сутки — и в конце этих суток тумблеры решают,
-         * какая из 27 форм вылупится. Форма берётся с них **в этот миг**, а
-         * не при посеве: вся первая стадия только в том и состоит, что игрок
-         * выставляет среду, и записывать форму заранее значило бы решить за
-         * него до того, как он повернул хоть один тумблер.
-         */
-        state = {
-          ...state,
-          creature: { ...creature, stage: 2, axes: axesOf(dialsOf(state)) },
-          goodDays: 0,
-        };
-        grew = 2;
-      } else if (verdict === 'good') {
+    if (creature !== null && state.lostAt === null && !hatched) {
+      if (verdict === 'good') {
         const goodDays = state.goodDays + 1;
         state = { ...state, goodDays, neglect: Math.max(0, state.neglect - 1) };
         if (goodDays >= GROW_DAYS) {
           state = { ...state, creature: { ...creature, stage: 3 } };
           grew = 3;
         }
-      } else if (verdict !== 'stable') {
+      } else if (verdict !== 'stable' && verdict !== 'point') {
         const neglect = state.neglect + 1;
         state = { ...state, neglect };
         if (neglect >= NEGLECT_DEATH && !state.immortal) {
@@ -253,8 +295,15 @@ export function advance(inc: Incubator, today: string): { inc: Incubator; log: D
     }
 
     // Новые сутки: тумблеры сбрасываются сами, кормёжка обнуляется. Это и
-    // есть та ежедневная рутина, ради которой прибор открывают.
-    state = { ...state, day: labDayShift(day, 1), dials: null, feeds: 0 };
+    // есть та ежедневная рутина, ради которой прибор открывают. Точке сброс
+    // не грозит: её тумблеры — рецепт, а не уход.
+    const point = state.creature?.stage === 1;
+    state = {
+      ...state,
+      day: labDayShift(day, 1),
+      dials: point ? state.dials : null,
+      feeds: point ? state.feeds : 0,
+    };
     log.push({ day, verdict, grew, lost });
     if (lost) break;
   }
@@ -262,6 +311,12 @@ export function advance(inc: Incubator, today: string): { inc: Incubator; log: D
   // Если оборвались на гибели, до сегодня всё равно надо дойти: мёртвому
   // стеклу сутки ничего не делают.
   state = { ...state, day: today };
+  // И наконец — вылупление в текущих, ещё не кончившихся сутках: человек
+  // должен увидеть форму в тот час, когда она появилась, а не в полночь.
+  if (ripe(now)) {
+    hatch();
+    log.push({ day: today, verdict: 'point', grew: 2, lost: false });
+  }
   return { inc: state, log };
 }
 

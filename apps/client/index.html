@@ -1056,18 +1056,18 @@
     /*
       PETRIDOT: лаборатория в окуляре.
 
-      Чашка занимает верх, тумблеры — низ. Порядок не декоративный: палец
-      держит телефон снизу, и то, что крутят каждый день, обязано быть под
-      ним, а то, на что смотрят, — выше пальца, а не под ним.
+      Она занимает окуляр целиком и красится корпусом, а не стеклом: под
+      покровным стеклом лежит препарат, а тумблеры стоят на приборе рядом с
+      ним — как на настоящем инкубаторе, а не внутри него.
     */
     .lab {
       position: absolute;
       inset: 0;
       display: flex;
       flex-direction: column;
-      gap: 10px;
-      padding: 14px 12px 16px;
-      background: var(--scope);
+      gap: 12px;
+      padding: 12px;
+      background: var(--case);
       z-index: 4;
     }
     .lab[hidden] { display: none; }
@@ -1079,13 +1079,17 @@
       align-items: center;
       justify-content: center;
     }
-    /* Само стекло: круглое, тёмное, с бликом по краю — как в приборе. */
+    /*
+      Стекло квадратное: у препарата есть пол и стенки, вдоль которых
+      существо и ходит. На круглой чашке прилипший к стенке висел бы по
+      касательной, и «пополз по краю» стало бы не отличить от «висит».
+    */
     #lab-glass {
-      width: min(100%, 62vh);
+      width: min(100%, 60vh);
       aspect-ratio: 1 / 1;
-      border-radius: 50%;
-      background: radial-gradient(circle at 34% 28%, #1b1f1d 0%, #0c0e0d 62%, #070808 100%);
-      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07), inset 0 8px 26px rgba(0, 0, 0, 0.7);
+      border-radius: 10px;
+      background: var(--scope);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06), inset 0 6px 22px rgba(0, 0, 0, 0.6);
       display: block;
     }
     .dish-empty {
@@ -1103,42 +1107,61 @@
       text-transform: uppercase;
       color: var(--scope-dim);
     }
-    .dish-empty b { font-size: 13px; color: #f0ece3; }
+    .dish-empty b { font-size: 13px; color: var(--scope-ink); }
     .dish-empty button { padding: 10px 18px; }
     .dish-empty[hidden] { display: none; }
 
-    /* Три тумблера в ряд: температура, влажность, среда — сверху вниз корпуса. */
-    .dials { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    /* Панель прибора: три гнезда в ряд и полка стёкол под ними. */
+    .panel { display: flex; flex-direction: column; gap: 8px; }
+    .dials { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; align-items: start; }
     .dial {
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 4px;
+      gap: 3px;
       touch-action: none;
       user-select: none;
       cursor: ew-resize;
     }
-    .dial svg { width: 100%; max-width: 74px; display: block; }
-    /* Подписи на стекле — цветом стекла, а не корпуса: на чёрном шелкография корпуса тонет. */
+    .dial[hidden] { display: none; }
+    .dial svg { width: 100%; max-width: 76px; display: block; }
     .dial .cap {
       font-family: var(--mono);
-      font-size: 9px;
-      letter-spacing: 0.14em;
+      font-size: 8px;
+      letter-spacing: 0.12em;
       text-transform: uppercase;
-      color: var(--scope-dim);
+      color: var(--silk-2);
+      text-align: center;
     }
     /* Стрелка подсказки: называет сторону, но никогда — число. */
-    .dial .hint { font-family: var(--mono); font-size: 10px; color: var(--acc); min-height: 12px; }
-    .dial .hint.fits { color: #7fd7a0; }
-    .dial .hint.near { color: var(--silk); }
+    .dial .hint { font-family: var(--mono); font-size: 9px; color: var(--acc); min-height: 11px; }
+    .dial .hint.fits { color: #2f8f74; }
+    .dial .hint.near { color: var(--silk-2); }
 
-    .lab-keys { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-    .lab-keys button { padding: 11px 8px; }
+    /*
+      Кормёжка встаёт на место третьего тумблера — того же размера и в том
+      же гнезде: питательная среда своё дело сделала, и её место занимает
+      еда, а не пустота.
+    */
+    .feed {
+      grid-column: 3;
+      align-self: center;
+      width: 100%;
+      max-width: 76px;
+      aspect-ratio: 1 / 1;
+      border-radius: 50%;
+      padding: 0;
+      font-size: 10px;
+      line-height: 1.15;
+      justify-self: center;
+    }
+    .feed[hidden] { display: none; }
+    .glasses { width: 100%; padding: 9px 8px; }
 
     /* Стёкла хранения и коллекция — в своём окне. */
     .lab-slots { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .lab-glass {
-      background: #0c0e0d;
+      background: var(--scope);
       border-radius: 12px;
       padding: 8px;
       display: flex;
@@ -1159,7 +1182,7 @@
     .lab-glass button { width: 100%; padding: 7px 4px; font-size: 10px; }
     .lab-shelf-head { margin-top: 14px; }
     .lab-shelf { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-    .lab-shelf figure { margin: 0; background: #0c0e0d; border-radius: 10px; padding: 5px; }
+    .lab-shelf figure { margin: 0; background: var(--scope); border-radius: 10px; padding: 5px; }
     .lab-shelf svg { width: 100%; aspect-ratio: 1 / 1; display: block; }
     .lab-shelf figcaption {
       font-family: var(--mono);
@@ -1952,9 +1975,12 @@
       <div class="chain" id="chain-count">Цепь 0</div>
 
       <!--
-        Лаборатория: чашка Петри под стеклом и три тумблера среды.
-        Занимает окуляр целиком — прибор в этом режиме показывает не поле, а
-        культуру, и делить окуляр между ними было бы нечестно к обоим.
+        Лаборатория: культура под квадратным стеклом и панель тумблеров.
+
+        Стекло квадратное, а не круглое: это лабораторный препарат под
+        покровным стеклом, и существу нужны пол и стенки — прилипший к
+        стенке жёлтый на круглой чашке висел бы по касательной, а по
+        квадрату он ходит вдоль настоящего края.
       -->
       <div class="lab" id="lab" hidden>
         <div class="dish" id="lab-dish">
@@ -1965,10 +1991,16 @@
             <button class="acc" id="lab-seed">Посеять</button>
           </div>
         </div>
-        <div class="dials" id="lab-dials"></div>
-        <div class="lab-keys">
-          <button id="lab-feed">Кормить</button>
-          <button id="lab-glasses">Стёкла</button>
+        <!--
+          Панель управления: три гнезда. Третье занимает питательная среда,
+          пока в стекле точка, и кормёжка — когда она вылупилась. Тумблер
+          не прячется, а именно **сменяется**: своё дело среда сделала —
+          выбрала отростки, — и дальше еду дают, а не растворяют.
+        -->
+        <div class="panel">
+          <div class="dials" id="lab-dials"></div>
+          <button class="feed" id="lab-feed" hidden>Покормить</button>
+          <button class="glasses" id="lab-glasses">Стёкла</button>
         </div>
       </div>
 

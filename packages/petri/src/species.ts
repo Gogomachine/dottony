@@ -82,6 +82,19 @@ export function speciesOfColor(color: Color): Species[] {
 }
 
 /**
+ * Тумблеры, которыми ухаживают.
+ *
+ * Их два, а не три. Питательная среда своё дело делает один раз — она
+ * выбирает отростки будущей формы, — и после вылупления уходит с корпуса
+ * совсем, уступив место кормёжке: еду вылупившемуся дают, а не растворяют
+ * в среде. Держать её тумблером и дальше значило бы просить игрока
+ * поддерживать то, чем он больше не управляет.
+ */
+export type CareDial = 'temp' | 'humidity';
+
+export const CARE_DIALS: readonly CareDial[] = ['temp', 'humidity'];
+
+/**
  * Комфортный диапазон по одному тумблеру: середина и допуск в делениях.
  *
  * Попал в `[at - span, at + span]` — существу хорошо.
@@ -94,8 +107,8 @@ export interface Comfort {
 /**
  * Ширина комфортного окна, в делениях в каждую сторону.
  *
- * Восемьдесят из тысячи — примерно шестая часть шкалы на все три тумблера
- * сразу: попасть наугад втроём выходит примерно раз из двухсот, а попасть
+ * Восемьдесят из тысячи — примерно шестая часть шкалы на каждый из двух
+ * тумблеров: попасть наугад обоими выходит примерно раз из сорока, а попасть
  * зная — с первого раза. Именно эта разница и делает знание ценным.
  */
 export const COMFORT_SPAN = 80;
@@ -112,10 +125,10 @@ export const COMFORT_SPAN = 80;
  * нужно. Рецепт («какие тумблеры дают эту форму») и уход («что эта форма
  * любит») — две разные тайны, и обе открываются опытом.
  */
-export function comfortOf(species: Species): Record<Dial, Comfort> {
+export function comfortOf(species: Species): Record<CareDial, Comfort> {
   let state = seedRng(seedOf(speciesId(species), 0x9e3779b9));
-  const comfort = {} as Record<Dial, Comfort>;
-  for (const dial of DIALS) {
+  const comfort = {} as Record<CareDial, Comfort>;
+  for (const dial of CARE_DIALS) {
     // Середина не подходит к самому краю шкалы: тумблер, который надо
     // выкрутить до упора, читается как поломка, а не как уход.
     const room = SCALE - 2 * (COMFORT_SPAN + 40);
@@ -131,10 +144,10 @@ export function dialFits(comfort: Comfort, value: number): boolean {
   return Math.abs(value - comfort.at) <= comfort.span;
 }
 
-/** Хорошо ли ему по всем трём разом — только это и считается уходом. */
+/** Хорошо ли ему по обоим тумблерам разом — только это и считается уходом. */
 export function envFits(species: Species, dials: Dials): boolean {
   const comfort = comfortOf(species);
-  return DIALS.every((dial) => dialFits(comfort[dial], dials[dial]));
+  return CARE_DIALS.every((dial) => dialFits(comfort[dial], dials[dial]));
 }
 
 /** Что прибор говорит про этот тумблер. */
@@ -168,7 +181,7 @@ export const HINT_REACH = 2;
  * Чисел прибор не называет никогда: «теплее» — совет, «поставь 640» —
  * ответ, после которого ухаживать больше не за чем.
  */
-export function hintFor(species: Species, dial: Dial, value: number): Hint {
+export function hintFor(species: Species, dial: CareDial, value: number): Hint {
   const comfort = comfortOf(species)[dial];
   if (dialFits(comfort, value)) return 'fits';
   const away = Math.abs(value - comfort.at);
