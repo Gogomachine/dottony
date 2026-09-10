@@ -34,6 +34,13 @@ import {
   getConfig,
   getOrderBoard,
   getInvites,
+  getLab,
+  labBreed,
+  labDials,
+  labFeed,
+  labSeed,
+  labShelf,
+  labStore,
   dropInvite,
   getRatingBoard,
   getReplay,
@@ -72,6 +79,7 @@ import { Session, DUEL_FALLBACK, SPRINT_SECONDS, type Mode } from './game/sessio
 import { Paper, PAPER_MIN, PAPER_PAINTS, PAPER_SIZE, type PaperCell } from './game/paper';
 import { Sound } from './game/sound';
 import { Tutorial } from './tutorial';
+import { Lab } from './petri/lab';
 import { brandLockup } from './brand';
 import { emblemSvg } from './emblem';
 import {
@@ -87,6 +95,7 @@ import {
 import {
   applyTheme,
   loadKind,
+  type DeviceMode,
   loadMarks,
   loadSound,
   loadThemeName,
@@ -196,14 +205,14 @@ applyTheme(themeName);
  * всё: какой одиночный режим включён, какое меню открывается, на чём идёт
  * дуэль и какого цвета акцент. Двух механик в приборе одновременно нет.
  */
-let deviceKind: DuelKind = loadKind();
+let deviceKind: DeviceMode = loadKind();
 /**
  * Одиночный режим механики. Номер режима остался прежним — `sprint` и
  * `order`: по нему сервер принимает заходы, и переименование подписей его не
  * касается. Игроку эти режимы называются механикой: «Цепочки» и «Тап».
  */
 const SOLO: Record<DuelKind, Mode> = { chain: 'sprint', order: 'order' };
-let mode: Mode = SOLO[deviceKind];
+let mode: Mode = SOLO[deviceKind === 'lab' ? 'chain' : deviceKind];
 
 /**
  * Голос прибора. Контекст рождается только с первого касания экрана —
@@ -580,7 +589,7 @@ function startTutorial(): void {
   miniCache = '';
   updateKeys();
   // Обучение показывает ту механику, в которой стоит прибор.
-  tutorial.start(deviceKind);
+  tutorial.start(gameKind());
 }
 
 /** Возврат к прибору: показ кончился или его закрыли кнопкой. */
@@ -595,7 +604,7 @@ function stopTutorial(): void {
   // Обучение не тронуло партию, но поле показывало чужое — начинаем заново.
   startGame();
   session.resume();
-  openMenu();
+  if (deviceKind !== 'lab') openMenu();
 }
 
 /** Обучение показывают один раз: дальше оно живёт в панели управления. */
@@ -2018,7 +2027,25 @@ function setMode(next: Mode): void {
  * его так же, как саму механику: отдельные имена вроде «спринта» приходилось
  * держать в голове рядом с механикой, ничего к ней не добавляя.
  */
-const KIND_NAME: Record<DuelKind, string> = { chain: 'Цепочки', order: 'Тап' };
+const KIND_NAME: Record<DeviceMode, string> = { chain: 'Цепочки', order: 'Тап', lab: 'Лаб' };
+
+/**
+ * Переключатель ходит по кругу: цепочки → тап → лаб → цепочки.
+ *
+ * Третье положение — не механика, а второй прибор той же компании, и живёт
+ * оно на той же клавише нарочно: приборов у игрока один корпус, и «во что я
+ * сейчас играю» должно спрашиваться в одном месте, а не в двух.
+ */
+const KIND_RING: readonly DeviceMode[] = ['chain', 'order', 'lab'];
+
+/**
+ * На какой механике играть, когда спрашивают дуэль или турнир. Лаборатория
+ * механикой не бывает: там нечем драться, и подставлять её туда, где ждут
+ * «чем играем», значило бы врать вызывающей стороне.
+ */
+function gameKind(): DuelKind {
+  return deviceKind === 'lab' ? 'chain' : deviceKind;
+}
 /** Длительность дуэли по механике — для подписей; часы всё равно ставит сервер. */
 const KIND_DUEL_TIME: Record<DuelKind, string> = { chain: '1:30', order: '3:00' };
 
@@ -2043,8 +2070,8 @@ function updateKeys(): void {
   resetKey.title = session.over ? 'Повторить' : session.started ? 'Сброс' : 'Новый образец';
 }
 
-function other(kind: DuelKind): DuelKind {
-  return kind === 'chain' ? 'order' : 'chain';
+function other(kind: DeviceMode): DeviceMode {
+  return KIND_RING[(KIND_RING.indexOf(kind) + 1) % KIND_RING.length]!;
 }
 
 /**
@@ -2060,13 +2087,22 @@ function applyKind(): void {
   for (const [go, kind] of [
     ['sprint', 'chain'],
     ['order', 'order'],
+    ['lab', 'lab'],
   ] as const) {
     const row = document.querySelector<HTMLElement>(`#menu-list li[data-go="${go}"]`);
     if (row) row.hidden = deviceKind !== kind;
   }
-  el<HTMLSpanElement>('duel-when').textContent = KIND_DUEL_TIME[deviceKind];
+  // В лаборатории игровых пунктов нет вовсе: она не механика прибора, а
+  // второе устройство, и звать из неё дуэль значило бы гонять игрока по
+  // кругу через переключатель.
+  for (const go of ['draw', 'tourney', 'duel']) {
+    const row = document.querySelector<HTMLElement>(`#menu-list li[data-go="${go}"]`);
+    if (row) row.hidden = deviceKind === 'lab';
+  }
+  lab.toggle(deviceKind === 'lab');
+  el<HTMLSpanElement>('duel-when').textContent = KIND_DUEL_TIME[gameKind()];
   el<HTMLElement>('duel-kind-note').textContent =
-    `${KIND_NAME[deviceKind]} · ${KIND_DUEL_TIME[deviceKind]}`;
+    `${KIND_NAME[gameKind()]} · ${KIND_DUEL_TIME[gameKind()]}`;
   updateKeys();
 }
 
@@ -2090,6 +2126,12 @@ const MENU_ACTIONS: Record<string, () => void> = {
   },
   draw: () => {
     startDrawing();
+  },
+  // Лаборатория уже открыта — переключатель привёл в неё. Пункт есть, чтобы
+  // в панели было видно, где стоит прибор, и чтобы из неё можно было выйти
+  // обратно к чашке одним нажатием.
+  lab: () => {
+    menuEl.hidden = true;
   },
   rules: () => {
     rulesSheet.hidden = false;
@@ -2159,7 +2201,7 @@ el<HTMLButtonElement>('duel-cancel').addEventListener('click', () => {
 el<HTMLButtonElement>('duel-quick').addEventListener('click', () => {
   duelSheet.hidden = true;
   menuEl.hidden = true;
-  void startDuel(undefined, deviceKind);
+  void startDuel(undefined, gameKind());
 });
 
 // Позвать друга — значит выбрать его в списке: кода никто не диктует, а
@@ -2181,6 +2223,10 @@ function closeWindows(): boolean {
   // Все окна прибора, кроме одного: изъятый прибор не закрывается ничем —
   // клавишами из-под бана выхода нет, и это единственное окно, которое
   // остаётся на экране, чем бы игрок ни нажал.
+  if (lab.sheetOpen) {
+    lab.closeSheet();
+    closed = true;
+  }
   for (const sheet of [duelSheet, rulesSheet, tourneySheet]) {
     if (sheet.hidden) continue;
     sheet.hidden = true;
@@ -2263,6 +2309,14 @@ kindKey.addEventListener('click', () => {
   deviceKind = other(deviceKind);
   saveKind(deviceKind);
   applyKind();
+  // В лаборатории «начать» нечего: там всё уже идёт своим ходом, и панель
+  // поверх чашки только закрывала бы её.
+  if (deviceKind === 'lab') {
+    // Начатый заход обрывается так же, как между механиками: две вещи в
+    // одном стекле не живут, и досчитывать нечего.
+    setMode(mode);
+    return;
+  }
   setMode(SOLO[deviceKind]);
   openMenu();
 });
@@ -2309,6 +2363,53 @@ function fromCabinet<A extends unknown[]>(open: (...args: A) => void): (...args:
   };
 }
 
+/**
+ * Лаборатория PETRIDOT — третье положение переключателя.
+ *
+ * Каждое действие идёт через сервер: там и часы, и комфорт, и результат
+ * скрещивания. Вход обеспечиваем сами — лаборатория живёт за аккаунтом, как
+ * и всё, что помнит прибор.
+ */
+const withAuth =
+  <T,>(what: () => Promise<T>) =>
+  async (): Promise<T> => {
+    await ensureAuth(guestName);
+    return what();
+  };
+
+const lab = new Lab({
+  load: withAuth(() => getLab()),
+  seed: withAuth(() => labSeed()),
+  feed: withAuth(() => labFeed()),
+  store: withAuth(() => labStore()),
+  breed: withAuth(() => labBreed()),
+  dials: async (dials) => {
+    await ensureAuth(guestName);
+    return labDials(dials);
+  },
+  shelf: async (id) => {
+    await ensureAuth(guestName);
+    return labShelf(id);
+  },
+  /*
+   * Приборная строка у лаборатории та же, что у игры, — просто про другое:
+   * день, рост и жетоны вместо потенциала, запаса и часов. Заводить ей
+   * вторую строку значило бы двигать корпус при каждом переключении.
+   */
+  panel: (state) => {
+    scoreLabelEl.textContent = 'День';
+    scoreEl.textContent = state.day;
+    vsFieldEl.hidden = false;
+    vsNameEl.textContent = 'Рост';
+    vsScoreEl.textContent = state.grow;
+    timeLabelEl.textContent = 'Жетоны';
+    timeEl.textContent = String(state.tokens);
+    miniTextEl.textContent = state.line;
+    miniCdEl.textContent = '';
+    miniBarEl.style.width = '0%';
+  },
+});
+
 const cabinet = new Cabinet({
   onReplay: (duelId) => void startReplay(duelId),
   onRatingBoard: fromCabinet((kind: 'chain' | 'order') => void showRatingBoard(kind)),
@@ -2344,7 +2445,7 @@ const cabinet = new Cabinet({
 async function inviteToRoom(friendCode: string): Promise<void> {
   const room = makeRoomCode();
   showRoomCode(false);
-  await startDuel(room, deviceKind);
+  await startDuel(room, gameKind());
   try {
     const { where } = await inviteFriend(friendCode, room);
     // Говорим, куда именно позвали: «в игре» и «в Telegram» — разные
@@ -2480,6 +2581,17 @@ function frame(now: number): void {
   const dt = Math.min((now - lastTime) / 1000, 0.05);
   lastTime = now;
 
+  /*
+   * Лаборатория забирает окуляр целиком, и партии под ней нет вовсе:
+   * второй прибор — это не режим игры в точки. Кадр ей не нужен — у чашки
+   * свой цикл, — а рисовать поле под закрытым стеклом значит греть телефон
+   * впустую и перебивать приборную строку чужими числами.
+   */
+  if (lab.open) {
+    requestAnimationFrame(frame);
+    return;
+  }
+
   // Обучение забирает кадр целиком: у него своё поле, свои часы и свой
   // палец, а партия под ним стоит.
   if (tutorial.active) {
@@ -2566,9 +2678,11 @@ if (invited !== null) {
   // Первый запуск встречает показом, а не пустой панелью: правила проще
   // увидеть, чем прочитать. Дальше обучение живёт пунктом меню.
   startTutorial();
-} else {
+} else if (deviceKind !== 'lab') {
   openMenu();
 }
+// В лаборатории панель при запуске не поднимается: начинать там нечего —
+// культура растёт сама, и первое, что человек должен увидеть, это чашка.
 el<HTMLSpanElement>('brand').innerHTML = brandLockup(88);
 el<HTMLSpanElement>('menu-brand').innerHTML = brandLockup(96);
 renderer.setMarks(loadMarks());

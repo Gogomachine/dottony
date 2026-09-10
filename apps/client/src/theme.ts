@@ -71,11 +71,21 @@ export function saveSound(on: boolean): void {
  * Старый ключ читается на один раз: у тех, кто уже выбирал механику дуэли,
  * переключатель встанет в привычное положение, а не сбросится.
  */
-export function loadKind(): 'chain' | 'order' {
+/**
+ * Во что прибор поставлен: две механики игры и лаборатория.
+ *
+ * Лаборатория — не механика дуэли и никогда ею не станет, поэтому тип тут
+ * свой, а не `DuelKind`: там, где спрашивают «на чём драться», третьего
+ * значения быть не должно вовсе.
+ */
+export type DeviceMode = 'chain' | 'order' | 'lab';
+
+export function loadKind(): DeviceMode {
   const saved = readStore(DEVICE_KIND_KEY) ?? readStore(KIND_KEY);
-  return saved === 'order' ? 'order' : 'chain';
+  if (saved === 'order') return 'order';
+  return saved === 'lab' ? 'lab' : 'chain';
 }
 
-export function saveKind(kind: 'chain' | 'order'): void {
+export function saveKind(kind: DeviceMode): void {
   writeStore(DEVICE_KIND_KEY, kind);
 }

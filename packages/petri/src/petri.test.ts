@@ -4,6 +4,7 @@ import {
   SCALE,
   advance,
   axesOf,
+  bodyOf,
   bodyOfSpecies,
   boundsOf,
   viewBoxOf,
@@ -514,5 +515,39 @@ describe('посев', () => {
     expect(seedCost(0)).toBe(0);
     expect(seedCost(1)).toBe(SEED_PRICE);
     expect(seedCost(9)).toBe(SEED_PRICE);
+  });
+});
+
+describe('аномалии тела', () => {
+  const withAnomaly = (anomaly: Creature['bodyAnomaly'], stage: 1 | 2 = 2): Creature =>
+    adult('m', { bodyAnomaly: anomaly, stage, axes: stage === 1 ? null : { temp: 1, humidity: 1, medium: 1 } });
+  const eyes = (creature: Creature): number =>
+    bodyOf(creature).parts.filter((part) => part.kind === 'eye').length;
+
+  it('видны на теле, а не только в базе', () => {
+    // Мутация, которой не видно, — это запись в базе, а не мутация. Первое
+    // же обещанное скрещивание выдаёт её новому игроку, и он обязан её
+    // увидеть.
+    expect(eyes(withAnomaly(null))).toBe(2);
+    expect(eyes(withAnomaly('one-eye'))).toBe(1);
+    expect(eyes(withAnomaly('third-eye'))).toBe(3);
+    expect(eyes(withAnomaly('stalk-eyes'))).toBe(2);
+    // Глаза на стебельках — это ещё и стебельки: без них они просто уехали.
+    const stalks = (creature: Creature): number =>
+      bodyOf(creature).parts.filter((part) => part.kind === 'stalk').length;
+    expect(stalks(withAnomaly('stalk-eyes'))).toBeGreaterThan(stalks(withAnomaly(null)));
+  });
+
+  it('видны уже у точки: они достаются по родству, а не растут', () => {
+    expect(eyes(withAnomaly('third-eye', 1))).toBe(3);
+    expect(eyes(withAnomaly(null, 1))).toBe(2);
+  });
+
+  it('кривые отростки растут вкривь', () => {
+    const straight = bodyOf(withAnomaly(null));
+    const crooked = bodyOf(withAnomaly('crooked'));
+    const angles = (shape: { parts: { kind: string }[] }): string =>
+      JSON.stringify(shape.parts.filter((part) => part.kind === 'stalk'));
+    expect(angles(crooked)).not.toBe(angles(straight));
   });
 });

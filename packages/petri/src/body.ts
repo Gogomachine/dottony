@@ -1,4 +1,4 @@
-import type { Creature } from './creature.js';
+import type { BodyAnomaly, Creature } from './creature.js';
 import type { Species } from './species.js';
 import type { Zone } from './dials.js';
 import { speciesOf } from './creature.js';
@@ -83,7 +83,7 @@ function silhouette(humidity: Zone): { w: number; h: number; bulb: number } {
  * конечности). Пока прибор сеет только жёлтых, и рисовать впрок то, чего в
  * игре нет, значит рисовать вслепую.
  */
-function yellowBody(species: Species, grown: boolean): BodyShape {
+function yellowBody(species: Species, grown: boolean, anomaly: BodyAnomaly | null = null): BodyShape {
   const { temp, humidity, medium } = species.axes;
   const shape = silhouette(humidity);
   const parts: Part[] = [];
@@ -184,10 +184,13 @@ function yellowBody(species: Species, grown: boolean): BodyShape {
             { angle: -4, len: 26 },
             { angle: 30, len: 18 },
           ];
-  for (const stalk of stalks) {
+  for (const [index, stalk] of stalks.entries()) {
     // Взрослая форма: отростки длиннее и ветвятся — это и есть «прокачанный»
     // вид, а не просто увеличенный.
     const len = stalk.len * (grown ? 1.35 : 1);
+    // Кривые отростки: те же усики, но растут вкривь — аномалия видна даже
+    // на голом теле, где отростков всего один.
+    if (anomaly === 'crooked') stalk.angle += index % 2 === 0 ? 26 : -22;
     parts.push({
       kind: 'stalk',
       x: crown.x,
@@ -220,12 +223,12 @@ function yellowBody(species: Species, grown: boolean): BodyShape {
     parts.push({ kind: 'ellipse', x: ANCHOR.x + shape.w * 0.24, y: bulbY + bulbHeight * 0.05, rx: 3, ry: 3, role: 'accent' });
   }
 
-  // Глаза: всегда две белые точки со зрачком. Никаких ртов и лиц — вся
-  // личность в тайминге моргания, а не в мимике.
+  // Глаза: две белые точки со зрачком. Никаких ртов и лиц — вся личность в
+  // тайминге моргания, а не в мимике. Отклонения от двух глаз — это уже
+  // третий слот мутации, и других отклонений у лица не бывает.
   const eyeGap = Math.min(shape.w * 0.3, 11);
   const eyeR = shape.w > 34 ? 6 : 5.2;
-  parts.push({ kind: 'eye', x: ANCHOR.x - eyeGap, y: headY, r: eyeR });
-  parts.push({ kind: 'eye', x: ANCHOR.x + eyeGap, y: headY, r: eyeR });
+  parts.push(...eyesFor(anomaly, ANCHOR.x, headY, eyeGap, eyeR, { x: crown.x, y: crown.y }));
 
   return {
     parts,
@@ -237,14 +240,70 @@ function yellowBody(species: Species, grown: boolean): BodyShape {
   };
 }
 
+/**
+ * Глаза по аномалии тела.
+ *
+ * Слот аномалии — всегда про глаза или отростки, и рисовать его надо здесь,
+ * а не «когда-нибудь потом»: мутация, которой не видно, не мутация, а запись
+ * в базе. Первое же обещанное скрещивание выдаёт её новому игроку — и он
+ * обязан её увидеть.
+ */
+function eyesFor(
+  anomaly: BodyAnomaly | null,
+  cx: number,
+  y: number,
+  gap: number,
+  r: number,
+  crown: Point,
+): Part[] {
+  if (anomaly === 'one-eye') {
+    return [{ kind: 'eye', x: cx, y, r: r * 1.35 }];
+  }
+  if (anomaly === 'third-eye') {
+    return [
+      { kind: 'eye', x: cx - gap, y, r },
+      { kind: 'eye', x: cx + gap, y, r },
+      // Третий — выше и меньше: два глаза остаются лицом, а третий читается
+      // как лишний, а не как перестроенное лицо.
+      { kind: 'eye', x: cx, y: y - r * 2, r: r * 0.7 },
+    ];
+  }
+  if (anomaly === 'stalk-eyes') {
+    // Глаза уезжают на стебельки над головой — тело при этом то же самое.
+    const parts: Part[] = [];
+    for (const side of [-1, 1]) {
+      const angle = side * 16;
+      const tip = step(crown, angle, 16);
+      parts.push({
+        kind: 'stalk',
+        x: crown.x,
+        y: crown.y,
+        angle,
+        len: 16,
+        w: 2.6,
+        tip: 0,
+        role: 'body',
+      });
+      parts.push({ kind: 'eye', x: tip.x, y: tip.y, r: r * 0.85 });
+    }
+    return parts;
+  }
+  return [
+    { kind: 'eye', x: cx - gap, y, r },
+    { kind: 'eye', x: cx + gap, y, r },
+  ];
+}
+
 /** Точка первой стадии: тот же окрас, те же глаза — и всё. */
-function pointBody(): BodyShape {
+function pointBody(anomaly: BodyAnomaly | null = null): BodyShape {
   const y = ANCHOR.y - 14;
   return {
     parts: [
       { kind: 'ellipse', x: ANCHOR.x, y, rx: 12, ry: 12, role: 'body' },
-      { kind: 'eye', x: ANCHOR.x - 4.6, y: y - 1, r: 4.2 },
-      { kind: 'eye', x: ANCHOR.x + 4.6, y: y - 1, r: 4.2 },
+      // Аномалия видна уже у точки: она достаётся по родству, а не растёт
+      // вместе с телом, и прятать её до второй стадии значило бы отнимать у
+      // игрока ровно тот миг, ради которого он скрещивал.
+      ...eyesFor(anomaly, ANCHOR.x, y - 1, 4.6, 4.2, { x: ANCHOR.x, y: y - 12 }),
     ],
     anchor: ANCHOR,
     head: { x: ANCHOR.x, y: y - 12 },
@@ -347,9 +406,9 @@ export function viewBoxOf(shape: BodyShape, pad = 6): string {
 export function bodyOf(creature: Creature): BodyShape {
   const species = speciesOf(creature);
   // Точка — это точка: пока форма не выбрана, рисовать нечего, кроме глаз.
-  if (creature.stage === 1 || species === null) return pointBody();
+  if (creature.stage === 1 || species === null) return pointBody(creature.bodyAnomaly);
   const grown = creature.stage === 3;
-  const shape = yellowBody(species, grown);
+  const shape = yellowBody(species, grown, creature.bodyAnomaly);
   return grown ? scaleShape(shape, GROWN_SCALE) : shape;
 }
 

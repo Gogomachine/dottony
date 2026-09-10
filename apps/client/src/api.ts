@@ -1,3 +1,4 @@
+import type { Dials, LabView } from '@doton/petri';
 import type {
   AdminCard,
   BanInfo,
@@ -373,6 +374,39 @@ export function tourneyRound(moves: MoveLog[]): Promise<TourneyResponse> {
     method: 'POST',
     body: JSON.stringify({ moves }),
   });
+}
+
+/**
+ * PETRIDOT: лаборатория. Все двери устроены одинаково — что-то сделать и
+ * получить обратно все три стекла разом. Собирать состояние из кусков
+ * клиенту незачем: прибор показывает их вместе.
+ */
+export function getLab(): Promise<LabView> {
+  return request<LabView>('/api/petri');
+}
+
+export function labSeed(): Promise<LabView> {
+  return request<LabView>('/api/petri/seed', { method: 'POST' });
+}
+
+export function labDials(dials: Dials): Promise<LabView> {
+  return request<LabView>('/api/petri/dials', { method: 'POST', body: JSON.stringify(dials) });
+}
+
+export function labFeed(): Promise<LabView> {
+  return request<LabView>('/api/petri/feed', { method: 'POST' });
+}
+
+export function labStore(): Promise<LabView> {
+  return request<LabView>('/api/petri/store', { method: 'POST' });
+}
+
+export function labShelf(id: string): Promise<LabView> {
+  return request<LabView>('/api/petri/shelf', { method: 'POST', body: JSON.stringify({ id }) });
+}
+
+export function labBreed(): Promise<LabView> {
+  return request<LabView>('/api/petri/breed', { method: 'POST' });
 }
 
 /** Жалоба на соперника: называем его тем же кодом, что и при добавлении в друзья. */
