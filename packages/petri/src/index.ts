@@ -17,6 +17,7 @@ export {
   ZONE_EDGES,
   zoneOf,
   zoneMiddle,
+  seedOf,
   clampDial,
   cleanDials,
   resetDials,
@@ -35,12 +36,25 @@ export {
   dialFits,
   envFits,
   hintFor,
+  HINT_REACH,
   formOdds,
 } from './species.js';
-export type { Axes, Behaviour, Color, Comfort, Species } from './species.js';
+export type { Axes, Behaviour, Color, Comfort, Hint, Species } from './species.js';
 
-export { COLOR_MUTATIONS, speciesOf, behaviourOf, mutationCount } from './creature.js';
-export type { BodyAnomaly, ColorMutation, Creature, Stage } from './creature.js';
+export { BODY_ANOMALIES, COLOR_MUTATIONS, speciesOf, behaviourOf, mutationCount } from './creature.js';
+export type { BehaviourMutation, BodyAnomaly, ColorMutation, Creature, Stage } from './creature.js';
+
+export {
+  SEED_PRICE,
+  MUTATION_CHANCE,
+  MISS_GUARANTEE,
+  MAX_MUTATIONS,
+  seedCost,
+  breed,
+  breedable,
+  grown,
+} from './lab.js';
+export type { BreedOptions, BreedResult, Slot } from './lab.js';
 
 export {
   LAB_TZ_HOURS,
@@ -68,3 +82,5 @@ export type { BodyShape, Part, Point, Role } from './body.js';
 
 export { drawBody, bodyMarkup } from './svg.js';
 export type { Drawn, Gaze } from './svg.js';
+
+export type { IncubatorView, LabView } from './view.js';

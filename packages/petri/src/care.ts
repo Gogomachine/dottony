@@ -1,6 +1,6 @@
 import { TOURNEY_TZ_HOURS } from '@doton/core';
 import { DIALS, cleanDials, resetDials, type Dial, type Dials } from './dials.js';
-import { comfortOf, dialFits, envFits } from './species.js';
+import { axesOf, comfortOf, dialFits, envFits } from './species.js';
 import { speciesOf, type Creature, type Stage } from './creature.js';
 
 /**
@@ -131,9 +131,12 @@ export function dayVerdict(inc: Incubator): DayVerdict {
   if (creature === null || inc.lostAt !== null) return 'stable';
   if (creature.stage === 1) return 'point';
   if (creature.stage === 3) return 'stable';
+  const species = speciesOf(creature);
+  // Формы нет — значит, это ещё точка, как бы ни была помечена стадия.
+  if (species === null) return 'point';
   if (inc.feeds >= 2) return 'stuffed';
   if (inc.feeds === 0) return 'hungry';
-  return envFits(speciesOf(creature), dialsOf(inc)) ? 'good' : 'wrong-env';
+  return envFits(species, dialsOf(inc)) ? 'good' : 'wrong-env';
 }
 
 /**
@@ -146,9 +149,11 @@ export function dayVerdict(inc: Incubator): DayVerdict {
 export function moodOf(inc: Incubator): Mood {
   const creature = inc.creature;
   if (creature === null || creature.stage !== 2 || inc.lostAt !== null) return 'fine';
+  const species = speciesOf(creature);
+  if (species === null) return 'fine';
   if (inc.feeds >= 2) return 'stuffed';
   if (inc.feeds === 0) return 'hungry';
-  const comfort = comfortOf(speciesOf(creature));
+  const comfort = comfortOf(species);
   const dials = dialsOf(inc);
   // Порядок опроса — он же порядок важности: холод виден раньше, чем состав
   // среды, и говорить сразу обо всём значит не сказать ничего.
@@ -217,9 +222,18 @@ export function advance(inc: Incubator, today: string): { inc: Incubator; log: D
 
     if (creature !== null && state.lostAt === null) {
       if (verdict === 'point') {
-        // Точка живёт ровно сутки: тумблеры своё дело уже сделали — они
-        // выбрали форму, а не условия.
-        state = { ...state, creature: { ...creature, stage: 2 }, goodDays: 0 };
+        /*
+         * Точка живёт ровно сутки — и в конце этих суток тумблеры решают,
+         * какая из 27 форм вылупится. Форма берётся с них **в этот миг**, а
+         * не при посеве: вся первая стадия только в том и состоит, что игрок
+         * выставляет среду, и записывать форму заранее значило бы решить за
+         * него до того, как он повернул хоть один тумблер.
+         */
+        state = {
+          ...state,
+          creature: { ...creature, stage: 2, axes: axesOf(dialsOf(state)) },
+          goodDays: 0,
+        };
         grew = 2;
       } else if (verdict === 'good') {
         const goodDays = state.goodDays + 1;

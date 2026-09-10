@@ -31,6 +31,28 @@ export const COLOR_MUTATIONS: readonly ColorMutation[] = [
 /** Аномалия тела — третий слот мутации. Всегда про глаза или отростки. */
 export type BodyAnomaly = 'third-eye' | 'one-eye' | 'stalk-eyes' | 'crooked';
 
+export const BODY_ANOMALIES: readonly BodyAnomaly[] = [
+  'third-eye',
+  'one-eye',
+  'stalk-eyes',
+  'crooked',
+];
+
+/**
+ * Занятый слот поведения.
+ *
+ * Полная подмена — существо живёт чужим движением совсем. Частичная —
+ * нижняя ступень лестницы редкости: своё поведение остаётся, но раз в сутки
+ * на несколько минут существо срывается в чужое (жёлтый отлепляется,
+ * проползает круг и возвращается на стенку). Она самая дешёвая в
+ * производстве и единственная, дающая повод открыть прибор просто
+ * посмотреть.
+ */
+export interface BehaviourMutation {
+  to: Behaviour;
+  partial: boolean;
+}
+
 /**
  * Существо целиком. Поля повторяют спецификацию — их читает и сервер, и
  * паспорт в коллекции, и обмен в чате.
@@ -46,9 +68,14 @@ export interface Creature {
   color: Color;
   colorMutation: ColorMutation | null;
   behaviour: Behaviour;
-  behaviourMutation: Behaviour | null;
+  behaviourMutation: BehaviourMutation | null;
   bodyAnomaly: BodyAnomaly | null;
-  axes: Axes;
+  /**
+   * Форма. У точки её ещё **нет**: форму выбирают тумблеры в тот миг, когда
+   * точка вылупляется, — иначе среда решала бы что-то до того, как игрок её
+   * выставил, а вся первая стадия только в этом и состоит.
+   */
+  axes: Axes | null;
   stage: Stage;
   parents: [string, string] | null;
   /** Скрещивание одно на существо: занято — значит, линия уже продолжена. */
@@ -56,9 +83,9 @@ export interface Creature {
   createdAt: string;
 }
 
-/** Вид существа — то, из чего собирается тело и что решает уход. */
-export function speciesOf(creature: Creature): Species {
-  return { color: creature.color, axes: creature.axes };
+/** Вид существа. У точки его ещё нет: форма не выбрана. */
+export function speciesOf(creature: Creature): Species | null {
+  return creature.axes === null ? null : { color: creature.color, axes: creature.axes };
 }
 
 /**
@@ -69,7 +96,11 @@ export function speciesOf(creature: Creature): Species {
  * этом весь визуальный эффект, ради которого мутация поведения и заведена.
  */
 export function behaviourOf(creature: Creature): Behaviour {
-  return creature.behaviourMutation ?? creature.behaviour;
+  const mutation = creature.behaviourMutation;
+  // Частичная мутация — нижняя ступень лестницы: существо живёт своим
+  // поведением и лишь раз в сутки на несколько минут срывается в чужое.
+  // Кто оно по жизни, решает не она.
+  return mutation === null || mutation.partial ? creature.behaviour : mutation.to;
 }
 
 /** Сколько слотов мутации занято: от этого зависит и цена, и наследование. */

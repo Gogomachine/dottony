@@ -13,6 +13,9 @@ importers:
       '@doton/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@doton/petri':
+        specifier: workspace:*
+        version: link:../../packages/petri
       '@doton/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
@@ -29,6 +32,9 @@ importers:
       '@doton/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@doton/petri':
+        specifier: workspace:*
+        version: link:../../packages/petri
       '@doton/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol

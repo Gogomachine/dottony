@@ -55,6 +55,19 @@ import type {
   OrderLeaderboardResponse,
   OrderMove,
 } from '@doton/protocol';
+import {
+  DIALS,
+  LAB_TZ_HOURS,
+  SEED_PRICE,
+  comfortOf,
+  mutationCount,
+  speciesOf,
+  zoneMiddle,
+  type Creature,
+  type Dials,
+  type LabView,
+  type Species,
+} from '@doton/petri';
 import { buildApp, loggedUrl } from './app.js';
 import { INVITE_LIMIT } from './limits.js';
 import { parseStart } from './bot.js';
@@ -4071,5 +4084,276 @@ describe('порог гостевых аккаунтов', () => {
     expect(blocked.statusCode).toBe(429);
     expect(blocked.json()).toEqual({ error: 'too-many' });
     await app.close();
+  });
+});
+
+describe('PETRIDOT', () => {
+  /** Полдень в лаборатории: день считается по московскому поясу. */
+  const noonAt = (day: number): Date => new Date(Date.UTC(2026, 2, day, 12 - LAB_TZ_HOURS, 0, 0));
+
+  interface Bench {
+    app: FastifyInstance;
+    headers: Record<string, string>;
+    look(): Promise<LabView>;
+    act(what: string, payload?: Dials | { id: string }): Promise<{ statusCode: number; body: LabView }>;
+    purse(tokens: number): Promise<void>;
+  }
+
+  async function bench(tokens = 0): Promise<Bench> {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(noonAt(15));
+    const app = await buildApp({
+      databaseUrl: ':memory:',
+      jwtSecret: 'test-jwt',
+      serviceKey: 'kluch-naladki',
+    });
+    const auth = await app.inject({ method: 'POST', url: '/api/auth/guest', payload: { name: 'Био' } });
+    const token = (auth.json() as { token: string }).token;
+    const headers = { authorization: `Bearer ${token}` };
+    const purse = async (amount: number): Promise<void> => {
+      await app.inject({
+        method: 'POST',
+        url: '/api/service/set',
+        headers: { ...headers, 'x-service-key': 'kluch-naladki' },
+        payload: { tokens: amount },
+      });
+    };
+    if (tokens > 0) await purse(tokens);
+    return {
+      app,
+      headers,
+      look: async () =>
+        (await app.inject({ method: 'GET', url: '/api/petri', headers })).json() as LabView,
+      act: async (what, payload) => {
+        const url = `/api/petri/${what}`;
+        const sent = await (payload === undefined
+          ? app.inject({ method: 'POST', url, headers })
+          : app.inject({ method: 'POST', url, headers, payload: { ...payload } }));
+        return { statusCode: sent.statusCode, body: sent.json() as LabView };
+      },
+      purse,
+    };
+  }
+
+  /** Тумблеры на рецепт формы — так из точки выводят нужный вид. */
+  const recipeOf = (species: Species): Dials => ({
+    temp: zoneMiddle('temp', species.axes.temp),
+    humidity: zoneMiddle('humidity', species.axes.humidity),
+    medium: zoneMiddle('medium', species.axes.medium),
+  });
+
+  /** Тумблеры в комфорт существа — так за ним ухаживает знающий игрок. */
+  const comfyFor = (creature: Creature): Dials => {
+    const comfort = comfortOf(speciesOf(creature)!);
+    return { temp: comfort.temp.at, humidity: comfort.humidity.at, medium: comfort.medium.at };
+  };
+
+  /** Вырастить в инкубаторе взрослую форму: посев, вылупление и уход. */
+  async function raise(desk: Bench, from: number): Promise<{ day: number; grown: Creature }> {
+    vi.setSystemTime(noonAt(from));
+    expect((await desk.act('seed')).statusCode).toBe(200);
+    await desk.act('dials', recipeOf({ color: 'yellow', axes: { temp: 1, humidity: 1, medium: 1 } }));
+    vi.setSystemTime(noonAt(from + 1));
+    let view = await desk.look();
+    expect(view.incubator.creature?.stage).toBe(2);
+    let day = from + 1;
+    for (let i = 0; i < view.incubator.grow; i++) {
+      await desk.act('dials', comfyFor(view.incubator.creature!));
+      await desk.act('feed');
+      day += 1;
+      vi.setSystemTime(noonAt(day));
+      view = await desk.look();
+    }
+    expect(view.incubator.creature?.stage).toBe(3);
+    return { day, grown: view.incubator.creature! };
+  }
+
+  it('лаборатория: первая точка бесплатна, вторая стоит своё', async () => {
+    const desk = await bench();
+    try {
+      const cold = await desk.look();
+      expect(cold.incubator.creature).toBeNull();
+      expect(cold.seedCost).toBe(0);
+
+      expect((await desk.act('seed')).statusCode).toBe(200);
+      const seeded = await desk.look();
+      expect(seeded.incubator.creature?.stage).toBe(1);
+      // Формы у точки ещё нет: её выберут тумблеры при вылуплении.
+      expect(seeded.incubator.creature?.axes).toBeNull();
+      expect(seeded.seedCost).toBe(SEED_PRICE);
+
+      // Второй точке некуда лечь, пока в стекле кто-то растёт.
+      expect((await desk.act('seed')).statusCode).toBe(409);
+      expect((await desk.act('seed')).body).toMatchObject({ error: 'busy' });
+    } finally {
+      await desk.app.close();
+      vi.useRealTimers();
+    }
+  });
+
+  it('лаборатория: форму выбирают тумблеры в миг вылупления', async () => {
+    const desk = await bench();
+    try {
+      await desk.act('seed');
+      const want: Species = { color: 'yellow', axes: { temp: 0, humidity: 2, medium: 1 } };
+      await desk.act('dials', recipeOf(want));
+
+      // До полуночи ничего не происходит: сутки считает сервер, и торопить
+      // их нечем — на клиенте нет ни одной ручки, которая двигала бы день.
+      expect((await desk.look()).incubator.creature?.stage).toBe(1);
+
+      vi.setSystemTime(noonAt(16));
+      const hatched = await desk.look();
+      expect(hatched.incubator.creature?.stage).toBe(2);
+      expect(hatched.incubator.creature?.axes).toEqual(want.axes);
+      // И тумблеры сброшены: новые сутки — новая возня.
+      expect(hatched.incubator.set).toBe(false);
+      expect(hatched.incubator.feeds).toBe(0);
+    } finally {
+      await desk.app.close();
+      vi.useRealTimers();
+    }
+  });
+
+  it('лаборатория: комфорт остаётся на сервере', async () => {
+    // Пришли его клиенту — и вся игра в уход кончится в тот вечер, когда
+    // кто-нибудь откроет ответ сервера.
+    const desk = await bench();
+    try {
+      await desk.act('seed');
+      vi.setSystemTime(noonAt(16));
+      const view = await desk.look();
+      const said = JSON.stringify(view);
+      const comfort = comfortOf(speciesOf(view.incubator.creature!)!);
+      for (const dial of DIALS) {
+        expect(said).not.toContain(String(comfort[dial].at));
+      }
+      // Стрелка при этом есть — она называет сторону, а не число.
+      expect(view.incubator.hints).not.toBeNull();
+      expect(['less', 'more', 'near', 'fits']).toContain(view.incubator.hints!.temp);
+    } finally {
+      await desk.app.close();
+      vi.useRealTimers();
+    }
+  });
+
+  it('лаборатория: взрослая форма приходит за хорошие сутки', async () => {
+    const desk = await bench();
+    try {
+      const { grown } = await raise(desk, 15);
+      expect(grown.stage).toBe(3);
+      // Взрослая законсервирована: неделя без ухода ей ничего не делает.
+      vi.setSystemTime(noonAt(25));
+      const later = await desk.look();
+      expect(later.incubator.creature?.stage).toBe(3);
+      expect(later.incubator.lostAt).toBeNull();
+    } finally {
+      await desk.app.close();
+      vi.useRealTimers();
+    }
+  });
+
+  it('лаборатория: небрежение губит на третьи сутки, а не на первые', async () => {
+    const desk = await bench(SEED_PRICE * 3);
+    try {
+      // Первый питомец бессмертен — он туториальный, поэтому губим второго.
+      await raise(desk, 15);
+      await desk.act('shelf', { id: (await desk.look()).incubator.creature!.id });
+      vi.setSystemTime(noonAt(19));
+      expect((await desk.act('seed')).statusCode).toBe(200);
+      vi.setSystemTime(noonAt(20));
+      expect((await desk.look()).incubator.creature?.stage).toBe(2);
+
+      vi.setSystemTime(noonAt(22));
+      expect((await desk.look()).incubator.lostAt).toBeNull();
+      vi.setSystemTime(noonAt(23));
+      const dead = await desk.look();
+      expect(dead.incubator.lostAt).not.toBeNull();
+      // Погибшее освобождает стекло: посеять можно снова.
+      expect((await desk.act('seed')).statusCode).toBe(200);
+    } finally {
+      await desk.app.close();
+      vi.useRealTimers();
+    }
+  });
+
+  it('лаборатория: два стекла хранения — ровно одна пара', async () => {
+    const desk = await bench(SEED_PRICE * 4);
+    try {
+      let day = (await raise(desk, 15)).day;
+      expect((await desk.act('store')).statusCode).toBe(200);
+      day = (await raise(desk, day)).day;
+      expect((await desk.act('store')).statusCode).toBe(200);
+      const full = await desk.look();
+      expect(full.slots.filter(Boolean)).toHaveLength(2);
+      expect(full.incubator.creature).toBeNull();
+
+      // Третьего положить некуда: копить взрослых нельзя.
+      day = (await raise(desk, day)).day;
+      const third = await desk.act('store');
+      expect(third.statusCode).toBe(409);
+      expect(third.body).toMatchObject({ error: 'no-room' });
+    } finally {
+      await desk.app.close();
+      vi.useRealTimers();
+    }
+  });
+
+  it('лаборатория: скрещивание даёт точку, а родителей уводит в коллекцию', async () => {
+    const desk = await bench(SEED_PRICE * 4);
+    try {
+      let day = (await raise(desk, 15)).day;
+      await desk.act('store');
+      day = (await raise(desk, day)).day;
+      await desk.act('store');
+      const before = await desk.look();
+      const parents = before.slots.map((creature) => creature!.id);
+
+      const bred = await desk.act('breed');
+      expect(bred.statusCode).toBe(200);
+      const after = bred.body;
+      // Ребёнок — точка: форму ему выберут тумблеры, как и всякой точке.
+      expect(after.incubator.creature?.stage).toBe(1);
+      expect(after.incubator.creature?.axes).toBeNull();
+      expect(after.incubator.creature?.generation).toBe(2);
+      expect(after.incubator.creature?.parents).toEqual(parents);
+      // Стёкла свободны, родители в коллекции и своё скрещивание потратили.
+      expect(after.slots).toEqual([null, null]);
+      expect(after.collection.map((creature) => creature.id)).toEqual(expect.arrayContaining(parents));
+      for (const parent of after.collection.filter((creature) => parents.includes(creature.id))) {
+        expect(parent.bredAt).not.toBeNull();
+      }
+      // Первое скрещивание игрока не бывает пустым: он должен увидеть, ради
+      // чего всё это.
+      expect(mutationCount(after.incubator.creature!)).toBeGreaterThan(0);
+
+      // Второй раз тех же не скрестить: их уже нет на стёклах.
+      expect((await desk.act('breed')).statusCode).toBe(409);
+    } finally {
+      await desk.app.close();
+      vi.useRealTimers();
+    }
+  });
+
+  it('лаборатория: точка стоит жетонов, и без них её не выдают', async () => {
+    const desk = await bench();
+    try {
+      const { day } = await raise(desk, 15);
+      await desk.act('shelf', { id: (await desk.look()).incubator.creature!.id });
+      vi.setSystemTime(noonAt(day + 1));
+
+      const poor = await desk.act('seed');
+      expect(poor.statusCode).toBe(409);
+      expect(poor.body).toMatchObject({ error: 'poor' });
+      expect((await desk.look()).incubator.creature).toBeNull();
+
+      await desk.purse(SEED_PRICE);
+      expect((await desk.act('seed')).statusCode).toBe(200);
+      // Жетоны списаны ровно один раз.
+      expect((await desk.look()).tokens).toBe(0);
+    } finally {
+      await desk.app.close();
+      vi.useRealTimers();
+    }
   });
 });

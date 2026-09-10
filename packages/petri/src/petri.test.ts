@@ -14,6 +14,7 @@ import {
   feed,
   formOdds,
   hintFor,
+  HINT_REACH,
   labDay,
   labDayShift,
   moodOf,
@@ -22,15 +23,24 @@ import {
   speciesId,
   speciesOfColor,
   zoneOf,
+  zoneMiddle,
   GROW_DAYS,
   NEGLECT_DEATH,
+  MAX_MUTATIONS,
+  MISS_GUARANTEE,
+  SEED_PRICE,
+  breed,
+  breedable,
+  mutationCount,
+  seedCost,
   type Creature,
   type Dials,
+  type BreedOptions,
   type Incubator,
   type Species,
 } from './index.js';
 
-/** Существо в инкубаторе, каким его заводит посев. */
+/** Точка, только что посеянная: формы у неё ещё нет. */
 function seeded(species: Species, day = '2026-03-15'): Incubator {
   const creature: Creature = {
     id: 'c1',
@@ -40,7 +50,7 @@ function seeded(species: Species, day = '2026-03-15'): Incubator {
     behaviour: 'cling',
     behaviourMutation: null,
     bodyAnomaly: null,
-    axes: species.axes,
+    axes: null,
     stage: 1,
     parents: null,
     bredAt: null,
@@ -57,6 +67,25 @@ function seeded(species: Species, day = '2026-03-15'): Incubator {
     immortal: false,
     lostAt: null,
   };
+}
+
+/** Тумблеры на рецепт этого вида — так из точки вылупляют нужную форму. */
+function recipe(species: Species): Dials {
+  return {
+    temp: zoneMiddle('temp', species.axes.temp),
+    humidity: zoneMiddle('humidity', species.axes.humidity),
+    medium: zoneMiddle('medium', species.axes.medium),
+  };
+}
+
+/**
+ * Вылупить нужную форму: выставить рецепт и досидеть сутки. Форму выбирают
+ * тумблеры в миг вылупления, поэтому «посеял и перемотал» дало бы ту форму,
+ * которую подсказал случайный сброс, а не ту, что нужна тесту.
+ */
+function hatched(species: Species): Incubator {
+  const start = setDials(seeded(species), recipe(species));
+  return advance(start, labDayShift(start.day, 1)).inc;
 }
 
 /** Тумблеры ровно в комфорт этого вида — так ухаживает знающий игрок. */
@@ -119,11 +148,17 @@ describe('комфорт', () => {
     expect(elsewhere.length).toBeGreaterThan(10);
   });
 
-  it('подсказка называет сторону, но не число', () => {
+  it('подсказка называет сторону издали и молчит вблизи', () => {
+    // Стрелка, работающая вплотную, находится перебором за полминуты:
+    // крути тумблер, пока она не перевернётся, — и вот точная граница.
+    // Поэтому вблизи прибор говорит только «рядом».
     const comfort = comfortOf(YELLOW);
-    expect(hintFor(YELLOW, 'temp', comfort.temp.at)).toBe(0);
-    expect(hintFor(YELLOW, 'temp', comfort.temp.at - comfort.temp.span - 1)).toBe(1);
-    expect(hintFor(YELLOW, 'temp', comfort.temp.at + comfort.temp.span + 1)).toBe(-1);
+    const { at, span } = comfort.temp;
+    expect(hintFor(YELLOW, 'temp', at)).toBe('fits');
+    expect(hintFor(YELLOW, 'temp', at - span - 1)).toBe('near');
+    expect(hintFor(YELLOW, 'temp', at + span + 1)).toBe('near');
+    expect(hintFor(YELLOW, 'temp', at - span * (HINT_REACH + 2))).toBe('more');
+    expect(hintFor(YELLOW, 'temp', at + span * (HINT_REACH + 2))).toBe('less');
   });
 
   it('среда хороша, только когда хороши все три тумблера', () => {
@@ -181,14 +216,14 @@ describe('рост и уход', () => {
   });
 
   it('взрослая форма приходит за хорошие сутки, а не за календарные', () => {
-    let inc = advance(seeded(YELLOW), '2026-03-16').inc;
+    let inc = hatched(YELLOW);
     expect(inc.creature?.stage).toBe(2);
     for (let i = 0; i < GROW_DAYS; i++) inc = tended(inc, YELLOW);
     expect(inc.creature?.stage).toBe(3);
   });
 
   it('небрежные сутки в зачёт роста не идут', () => {
-    let inc = advance(seeded(YELLOW), '2026-03-16').inc;
+    let inc = hatched(YELLOW);
     // Кормили, но среду не выставили — сутки потрачены зря.
     inc = advance(feed(inc), labDayShift(inc.day, 1)).inc;
     expect(inc.creature?.stage).toBe(2);
@@ -197,7 +232,7 @@ describe('рост и уход', () => {
   });
 
   it('перекорм так же плох, как голод', () => {
-    let inc = advance(seeded(YELLOW), '2026-03-16').inc;
+    let inc = hatched(YELLOW);
     inc = setDials(inc, comfy(YELLOW));
     expect(dayVerdict(feed(inc))).toBe('good');
     expect(dayVerdict(feed(feed(inc)))).toBe('stuffed');
@@ -209,7 +244,7 @@ describe('рост и уход', () => {
   it('гибель наступает на третьи сутки небрежения, а не на первые', () => {
     // Тумблеры сбрасываются сами: смерть за один пропущенный день значила бы
     // потерю недели выращивания по причинам, не относящимся к игре.
-    const start = advance(seeded(YELLOW), '2026-03-16').inc;
+    const start = hatched(YELLOW);
     const day = start.day;
     for (let skipped = 1; skipped < NEGLECT_DEATH; skipped++) {
       const gone = advance(start, labDayShift(day, skipped)).inc;
@@ -223,7 +258,7 @@ describe('рост и уход', () => {
   });
 
   it('хорошие сутки отводят от гибели', () => {
-    let inc = advance(seeded(YELLOW), '2026-03-16').inc;
+    let inc = hatched(YELLOW);
     inc = advance(inc, labDayShift(inc.day, 1)).inc;
     expect(inc.neglect).toBe(1);
     inc = tended(inc, YELLOW);
@@ -231,20 +266,20 @@ describe('рост и уход', () => {
   });
 
   it('первый питомец не погибает: на нём учатся', () => {
-    const start = { ...advance(seeded(YELLOW), '2026-03-16').inc, immortal: true };
+    const start = { ...hatched(YELLOW), immortal: true };
     const long = advance(start, labDayShift(start.day, 30)).inc;
     expect(long.lostAt).toBeNull();
     expect(long.creature?.stage).toBe(2);
   });
 
   it('прибор не живёт назад и не считает те же сутки дважды', () => {
-    const inc = advance(seeded(YELLOW), '2026-03-16').inc;
+    const inc = hatched(YELLOW);
     expect(advance(inc, '2026-03-15').inc).toEqual(inc);
     expect(advance(inc, inc.day).log).toHaveLength(0);
   });
 
   it('новые сутки сбрасывают и тумблеры, и кормёжку', () => {
-    let inc = advance(seeded(YELLOW), '2026-03-16').inc;
+    let inc = hatched(YELLOW);
     inc = feed(setDials(inc, comfy(YELLOW)));
     expect(inc.dials).not.toBeNull();
     inc = advance(inc, labDayShift(inc.day, 1)).inc;
@@ -253,7 +288,7 @@ describe('рост и уход', () => {
   });
 
   it('взрослая форма законсервирована: сутки ей ничего не делают', () => {
-    let inc = advance(seeded(YELLOW), '2026-03-16').inc;
+    let inc = hatched(YELLOW);
     for (let i = 0; i < GROW_DAYS; i++) inc = tended(inc, YELLOW);
     expect(inc.creature?.stage).toBe(3);
     const later = advance(inc, labDayShift(inc.day, 20)).inc;
@@ -264,7 +299,7 @@ describe('рост и уход', () => {
   it('состояние называет то, что хуже всего, — по одному признаку за раз', () => {
     // Кормим по разу от одного и того же дня: вторая кормёжка была бы уже
     // перекормом, и он перекрыл бы собой всё остальное.
-    const day = advance(seeded(YELLOW), '2026-03-16').inc;
+    const day = hatched(YELLOW);
     expect(moodOf(feed(setDials(day, { ...comfy(YELLOW), temp: 0 })))).toBe('cold');
     expect(moodOf(feed(setDials(day, { ...comfy(YELLOW), humidity: SCALE })))).toBe('wet');
     // Холод виден раньше состава среды: говорить сразу обо всём — значит не
@@ -352,5 +387,132 @@ describe('портрет', () => {
         expect(y + h).toBeGreaterThanOrEqual(box.y + box.h);
       }
     }
+  });
+});
+
+/** Взрослое существо, готовое к скрещиванию. */
+function adult(id: string, extra: Partial<Creature> = {}): Creature {
+  return {
+    id,
+    generation: 1,
+    color: 'yellow',
+    colorMutation: null,
+    behaviour: 'cling',
+    behaviourMutation: null,
+    bodyAnomaly: null,
+    axes: { temp: 1, humidity: 1, medium: 1 },
+    stage: 3,
+    parents: null,
+    bredAt: null,
+    createdAt: '2026-03-15T09:00:00Z',
+    ...extra,
+  };
+}
+
+const pair = (seed: number, a: Creature, b: Creature, extra: Partial<BreedOptions> = {}) =>
+  breed(a, b, { seed, misses: 0, promised: false, id: `k${seed}`, at: '2026-03-20T09:00:00Z', ...extra });
+
+describe('скрещивание', () => {
+  it('ребёнок рождается точкой: форму ему выберут тумблеры', () => {
+    const child = pair(1, adult('a'), adult('b')).child;
+    expect(child.stage).toBe(1);
+    expect(child.axes).toBeNull();
+    expect(child.parents).toEqual(['a', 'b']);
+    expect(child.generation).toBe(2);
+    expect(child.bredAt).toBeNull();
+  });
+
+  it('мутации наследуются всегда', () => {
+    const mutant = adult('a', { colorMutation: 'magma' });
+    for (let seed = 0; seed < 40; seed++) {
+      expect(pair(seed, mutant, adult('b')).child.colorMutation).toBe('magma');
+    }
+  });
+
+  it('один и тот же слот у обоих — пятьдесят на пятьдесят', () => {
+    const seen = new Set<string>();
+    for (let seed = 0; seed < 60; seed++) {
+      const child = pair(seed, adult('a', { colorMutation: 'magma' }), adult('b', { colorMutation: 'milk' })).child;
+      seen.add(String(child.colorMutation));
+    }
+    expect(seen).toEqual(new Set(['magma', 'milk']));
+  });
+
+  it('трёх мутаций не бывает: одна сгорает, и сгорает случайно', () => {
+    // Сгорай самая частая, игроки за неделю свели бы всё к одной
+    // оптимальной последовательности скрещиваний.
+    const burned = new Set<string>();
+    for (let seed = 0; seed < 60; seed++) {
+      const result = pair(
+        seed,
+        adult('a', { colorMutation: 'milk', bodyAnomaly: 'third-eye' }),
+        adult('b', { behaviourMutation: { to: 'bounce', partial: false } }),
+      );
+      expect(mutationCount(result.child)).toBe(MAX_MUTATIONS);
+      expect(result.burned).not.toBeNull();
+      burned.add(String(result.burned));
+    }
+    expect(burned.size).toBeGreaterThan(1);
+  });
+
+  it('чистая пара мутирует примерно раз из десяти', () => {
+    let fresh = 0;
+    const runs = 2000;
+    for (let seed = 0; seed < runs; seed++) {
+      if (pair(seed, adult('a'), adult('b')).fresh) fresh++;
+    }
+    // Три слота по четыре процента — около одиннадцати с половиной.
+    expect(fresh / runs).toBeGreaterThan(0.07);
+    expect(fresh / runs).toBeLessThan(0.17);
+  });
+
+  it('обещанная мутация приходит и первому скрещиванию, и после череды пустых', () => {
+    // Скрытый счётчик обрубает хвост распределения: при цикле в трое суток
+    // «не повезло полгода» означало бы полгода игры впустую.
+    for (let seed = 0; seed < 20; seed++) {
+      expect(pair(seed, adult('a'), adult('b'), { promised: true }).fresh).toBe(true);
+      expect(pair(seed, adult('a'), adult('b'), { misses: MISS_GUARANTEE - 1 }).fresh).toBe(true);
+    }
+  });
+
+  it('новая мутация не перебивает наследство', () => {
+    // Занятый слот уже занят тем, что растили: перебить его значило бы
+    // потерять линию ради случайности.
+    for (let seed = 0; seed < 200; seed++) {
+      const child = pair(seed, adult('a', { colorMutation: 'magma' }), adult('b'), { promised: true }).child;
+      expect(child.colorMutation).toBe('magma');
+    }
+  });
+
+  it('скрещивание одно на существо', () => {
+    expect(breedable(adult('a'), adult('b'))).toBe(true);
+    expect(breedable(adult('a', { bredAt: '2026-03-19' }), adult('b'))).toBe(false);
+    expect(breedable(adult('a'), adult('b', { stage: 2 }))).toBe(false);
+    expect(breedable(adult('a'), null)).toBe(false);
+  });
+
+  it('частичная мутация поведения — самая частая ступень', () => {
+    let partial = 0;
+    let full = 0;
+    for (let seed = 0; seed < 400; seed++) {
+      const child = pair(seed, adult('a'), adult('b'), { promised: true }).child;
+      const mutation = child.behaviourMutation;
+      if (mutation === null) continue;
+      if (mutation.partial) partial++;
+      else full++;
+      // Своё поведение чужим не бывает: подменяют на другое.
+      expect(mutation.to).not.toBe(child.behaviour);
+    }
+    expect(partial).toBeGreaterThan(full);
+    // Полная подмена всё-таки случается — иначе лестницы бы не было.
+    expect(full).toBeGreaterThan(0);
+  });
+});
+
+describe('посев', () => {
+  it('первая точка бесплатна, следующие стоят своё', () => {
+    expect(seedCost(0)).toBe(0);
+    expect(seedCost(1)).toBe(SEED_PRICE);
+    expect(seedCost(9)).toBe(SEED_PRICE);
   });
 });

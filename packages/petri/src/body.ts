@@ -345,9 +345,11 @@ export function viewBoxOf(shape: BodyShape, pad = 6): string {
 
 /** Тело существа: то, что рисует прибор. */
 export function bodyOf(creature: Creature): BodyShape {
-  if (creature.stage === 1) return pointBody();
+  const species = speciesOf(creature);
+  // Точка — это точка: пока форма не выбрана, рисовать нечего, кроме глаз.
+  if (creature.stage === 1 || species === null) return pointBody();
   const grown = creature.stage === 3;
-  const shape = yellowBody(speciesOf(creature), grown);
+  const shape = yellowBody(species, grown);
   return grown ? scaleShape(shape, GROWN_SCALE) : shape;
 }
 

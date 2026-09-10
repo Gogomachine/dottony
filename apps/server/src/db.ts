@@ -375,6 +375,57 @@ export class Store {
            played_at TEXT NOT NULL DEFAULT (datetime('now')),
            PRIMARY KEY (day, user_id, round)
          )`,
+        /*
+         * PETRIDOT: лаборатория игрока — второй прибор той же компании.
+         *
+         * Строка на игрока: активное стекло у него одно, и всё, что про
+         * него, живёт здесь. Положения тумблеров хранятся только те, что
+         * выставил человек; пустое поле означает «не трогал», и тогда они
+         * считаются из сида и дня — сброс за прошлые сутки должен
+         * пересчитываться так же, как считался тогда.
+         */
+        `CREATE TABLE IF NOT EXISTS petri_labs (
+           user_id TEXT PRIMARY KEY REFERENCES users(id),
+           seed INTEGER NOT NULL,
+           day TEXT NOT NULL,
+           dials TEXT,
+           feeds INTEGER NOT NULL DEFAULT 0,
+           neglect INTEGER NOT NULL DEFAULT 0,
+           good_days INTEGER NOT NULL DEFAULT 0,
+           /* Сколько точек уже брали: первая бесплатна, дальше по цене. */
+           seeded INTEGER NOT NULL DEFAULT 0,
+           /* Скрытый счётчик неудач скрещивания. Игроку не показывается. */
+           misses INTEGER NOT NULL DEFAULT 0,
+           bred INTEGER NOT NULL DEFAULT 0
+         )`,
+        /*
+         * Существа. Где лежит — колонка `place`: инкубатор, одно из двух
+         * стёкол хранения, коллекция или «утрачено». Отдельных таблиц под
+         * стёкла нет намеренно: существо всю жизнь одно и то же, и
+         * переложить его — это поменять одно поле, а не переписать строку
+         * из таблицы в таблицу.
+         */
+        `CREATE TABLE IF NOT EXISTS petri_creatures (
+           id TEXT PRIMARY KEY,
+           user_id TEXT NOT NULL REFERENCES users(id),
+           generation INTEGER NOT NULL,
+           color TEXT NOT NULL,
+           color_mutation TEXT,
+           behaviour TEXT NOT NULL,
+           behaviour_mutation TEXT,
+           body_anomaly TEXT,
+           /* Форма: у точки её ещё нет — её выберут тумблеры при вылуплении. */
+           axes TEXT,
+           stage INTEGER NOT NULL,
+           parent_a TEXT,
+           parent_b TEXT,
+           bred_at TEXT,
+           created_at TEXT NOT NULL,
+           place TEXT NOT NULL,
+           lost_at TEXT
+         )`,
+        `CREATE INDEX IF NOT EXISTS idx_petri_creatures_user
+           ON petri_creatures (user_id, place)`,
       ],
       'write',
     );
@@ -2335,7 +2386,221 @@ export class Store {
     return Number(rows.rows[0]?.renamed ?? 0) === 1;
   }
 
+  // ---------- PETRIDOT ----------
+
+  /**
+   * Лаборатория игрока. Заводится при первом взгляде: пустая лаборатория —
+   * это чистое стекло, а не отсутствие прибора.
+   */
+  async petriLab(userId: string, seed: number, day: string): Promise<PetriLabRow> {
+    await this.client.execute({
+      sql: `INSERT INTO petri_labs (user_id, seed, day) VALUES (?, ?, ?)
+            ON CONFLICT DO NOTHING`,
+      args: [userId, seed >>> 0, day],
+    });
+    const rows = await this.client.execute({
+      sql: `SELECT seed, day, dials, feeds, neglect, good_days, seeded, misses, bred
+              FROM petri_labs WHERE user_id = ?`,
+      args: [userId],
+    });
+    const row = rows.rows[0]!;
+    return {
+      seed: Number(row.seed),
+      day: String(row.day),
+      dials: row.dials === null ? null : String(row.dials),
+      feeds: Number(row.feeds),
+      neglect: Number(row.neglect),
+      goodDays: Number(row.good_days),
+      seeded: Number(row.seeded),
+      misses: Number(row.misses),
+      bred: Number(row.bred),
+    };
+  }
+
+  /** Записать состояние стекла: день, тумблеры, кормёжку и счётчики. */
+  async petriSaveLab(
+    userId: string,
+    state: { day: string; dials: string | null; feeds: number; neglect: number; goodDays: number },
+  ): Promise<void> {
+    await this.client.execute({
+      sql: `UPDATE petri_labs
+               SET day = ?, dials = ?, feeds = ?, neglect = ?, good_days = ?
+             WHERE user_id = ?`,
+      args: [state.day, state.dials, state.feeds, state.neglect, state.goodDays, userId],
+    });
+  }
+
+  /** Все существа игрока, разложенные по стёклам и полкам. */
+  async petriCreatures(userId: string): Promise<PetriCreatureRow[]> {
+    const rows = await this.client.execute({
+      sql: `SELECT * FROM petri_creatures WHERE user_id = ? ORDER BY created_at DESC, id DESC`,
+      args: [userId],
+    });
+    return rows.rows.map((row) => ({
+      place: String(row.place),
+      lostAt: row.lost_at === null ? null : String(row.lost_at),
+      creature: {
+        id: String(row.id),
+        generation: Number(row.generation),
+        color: String(row.color),
+        colorMutation: row.color_mutation === null ? null : String(row.color_mutation),
+        behaviour: String(row.behaviour),
+        behaviourMutation: row.behaviour_mutation === null ? null : String(row.behaviour_mutation),
+        bodyAnomaly: row.body_anomaly === null ? null : String(row.body_anomaly),
+        axes: row.axes === null ? null : String(row.axes),
+        stage: Number(row.stage),
+        parents:
+          row.parent_a === null || row.parent_b === null
+            ? null
+            : [String(row.parent_a), String(row.parent_b)],
+        bredAt: row.bred_at === null ? null : String(row.bred_at),
+        createdAt: String(row.created_at),
+      },
+    }));
+  }
+
+  /** Положить существо на стекло. */
+  async petriAdd(userId: string, creature: PetriWire, place: string): Promise<void> {
+    await this.client.execute({
+      sql: `INSERT INTO petri_creatures
+              (id, user_id, generation, color, color_mutation, behaviour, behaviour_mutation,
+               body_anomaly, axes, stage, parent_a, parent_b, bred_at, created_at, place)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        creature.id,
+        userId,
+        creature.generation,
+        creature.color,
+        creature.colorMutation,
+        creature.behaviour,
+        creature.behaviourMutation,
+        creature.bodyAnomaly,
+        creature.axes,
+        creature.stage,
+        creature.parents?.[0] ?? null,
+        creature.parents?.[1] ?? null,
+        creature.bredAt,
+        creature.createdAt,
+        place,
+      ],
+    });
+  }
+
+  /**
+   * Записать то, что изменил досчёт суток: стадию, выбранную форму и гибель.
+   * Всё остальное в существе неизменно — родство и мутации даются раз.
+   */
+  async petriGrew(id: string, stage: number, axes: string | null, lostAt: string | null): Promise<void> {
+    await this.client.execute({
+      sql: `UPDATE petri_creatures SET stage = ?, axes = ?, lost_at = ?, place = ?
+             WHERE id = ?`,
+      args: [stage, axes, lostAt, lostAt === null ? 'inc' : 'lost', id],
+    });
+  }
+
+  /**
+   * Переложить существо. Проверка места — в самом запросе: два одновременных
+   * «в стекло» иначе положили бы одного и того же в оба слота.
+   */
+  async petriMove(userId: string, id: string, from: string, to: string): Promise<boolean> {
+    const moved = await this.client.execute({
+      sql: `UPDATE petri_creatures SET place = ?
+             WHERE id = ? AND user_id = ? AND place = ?`,
+      args: [to, id, userId, from],
+    });
+    return moved.rowsAffected > 0;
+  }
+
+  /** Отметить, что существо своё скрещивание уже потратило. */
+  async petriBred(userId: string, ids: string[], at: string): Promise<void> {
+    for (const id of ids) {
+      await this.client.execute({
+        sql: `UPDATE petri_creatures SET bred_at = ? WHERE id = ? AND user_id = ? AND bred_at IS NULL`,
+        args: [at, id, userId],
+      });
+    }
+  }
+
+  /**
+   * Оплатить посев.
+   *
+   * Тем же порядком, что и всякая покупка в приборе: счётчик взятых точек —
+   * он же запись о покупке — растёт первым и с условием на деньги в самом
+   * запросе. Не хватило — ничего не произошло, и точка не выдана.
+   */
+  async petriPay(userId: string, price: number): Promise<boolean> {
+    if (price <= 0) {
+      await this.client.execute({
+        sql: 'UPDATE petri_labs SET seeded = seeded + 1 WHERE user_id = ?',
+        args: [userId],
+      });
+      return true;
+    }
+    const paid = await this.client.execute({
+      sql: 'UPDATE users SET tokens = tokens - ? WHERE id = ? AND tokens >= ?',
+      args: [price, userId, price],
+    });
+    if (paid.rowsAffected === 0) return false;
+    await this.client.execute({
+      sql: 'UPDATE petri_labs SET seeded = seeded + 1 WHERE user_id = ?',
+      args: [userId],
+    });
+    return true;
+  }
+
+  /**
+   * Записать итог скрещивания: счётчик неудач и сколько их всего было.
+   * Счётчик сбрасывается, как только мутация выпала, — иначе гарантия
+   * срабатывала бы каждый раз после первого.
+   */
+  async petriBredCount(userId: string, fresh: boolean): Promise<void> {
+    await this.client.execute({
+      sql: fresh
+        ? 'UPDATE petri_labs SET bred = bred + 1, misses = 0 WHERE user_id = ?'
+        : 'UPDATE petri_labs SET bred = bred + 1, misses = misses + 1 WHERE user_id = ?',
+      args: [userId],
+    });
+  }
+
   close(): void {
     this.client.close();
   }
+}
+
+/** Строка лаборатории — как она лежит в базе. */
+export interface PetriLabRow {
+  seed: number;
+  day: string;
+  dials: string | null;
+  feeds: number;
+  neglect: number;
+  goodDays: number;
+  seeded: number;
+  misses: number;
+  bred: number;
+}
+
+/**
+ * Существо, как оно лежит в базе: те же поля, но составные — строкой.
+ * Разбирает их лаборатория; базе достаточно знать, что это текст.
+ */
+export interface PetriWire {
+  id: string;
+  generation: number;
+  color: string;
+  colorMutation: string | null;
+  behaviour: string;
+  behaviourMutation: string | null;
+  bodyAnomaly: string | null;
+  axes: string | null;
+  stage: number;
+  parents: [string, string] | null;
+  bredAt: string | null;
+  createdAt: string;
+}
+
+export interface PetriCreatureRow {
+  place: string;
+  lostAt: string | null;
+  creature: PetriWire;
 }

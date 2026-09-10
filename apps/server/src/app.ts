@@ -30,6 +30,8 @@ import {
   type AdminFindResponse,
   type BanInfo,
   type AdminLogResponse,
+  PetriDialsRequestSchema,
+  PetriShelfRequestSchema,
   type AdminNoticesResponse,
   type AdminReportsResponse,
   type DuelKind,
@@ -99,6 +101,18 @@ import { Bot, makeLinkToken, parseStart, type BotUpdate } from './bot.js';
 import { orderTempo, replayOrder } from './order.js';
 import { replaySprint } from './sprint.js';
 import { judgeRun } from './judge.js';
+import {
+  breedLab,
+  feedLab,
+  labView,
+  openLab,
+  seedLab,
+  setLabDials,
+  shelveLab,
+  storeLab,
+  type Lab,
+} from './petri.js';
+import type { LabView } from '@doton/petri';
 import { Store, type BoardPeriod } from './db.js';
 import {
   INVITE_LIMIT,
@@ -875,6 +889,87 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         pool: row.pool,
       })),
     };
+  });
+
+  // ---------- PETRIDOT ----------
+
+  /*
+   * Второй прибор той же компании: лабораторный инкубатор с общим кошельком.
+   *
+   * Все двери устроены одинаково — открыть лабораторию (она же досчитает
+   * пропущенные сутки), что-то сделать и вернуть её целиком. Отдавать в
+   * ответ кусок значило бы заставлять клиент собирать состояние из двух
+   * источников, а прибор показывает три стекла разом.
+   */
+  const labAnswer = async (userId: string, lab: Lab): Promise<LabView> =>
+    labView(lab, await store.tokensOf(userId));
+
+  app.get('/api/petri', async (request) => {
+    const user = await requireUser(request);
+    const lab = await openLab(store, user.sub);
+    return labView(lab, await store.tokensOf(user.sub));
+  });
+
+  /** Посев: первая точка бесплатно, дальше за жетоны. */
+  app.post('/api/petri/seed', async (request, reply) => {
+    const user = await requireUser(request);
+    const lab = await openLab(store, user.sub);
+    const seeded = await seedLab(store, user.sub, lab);
+    if (typeof seeded === 'string') return reply.code(409).send({ error: seeded });
+    return labAnswer(user.sub, await openLab(store, user.sub));
+  });
+
+  /**
+   * Тумблеры. Их выставляют сколько угодно раз за сутки: считается то, как
+   * они стоят к концу дня, а не сколько раз их трогали.
+   */
+  app.post('/api/petri/dials', async (request, reply) => {
+    const user = await requireUser(request);
+    const parsed = PetriDialsRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
+    const lab = await openLab(store, user.sub);
+    return labAnswer(user.sub, await setLabDials(store, user.sub, lab, parsed.data));
+  });
+
+  /** Кормёжка. Вторая за сутки — уже перекорм, и она тоже считается. */
+  app.post('/api/petri/feed', async (request, reply) => {
+    const user = await requireUser(request);
+    const lab = await openLab(store, user.sub);
+    const fed = await feedLab(store, user.sub, lab);
+    if (typeof fed === 'string') return reply.code(409).send({ error: fed });
+    return labAnswer(user.sub, fed);
+  });
+
+  /** Переложить взрослого на свободное стекло хранения. */
+  app.post('/api/petri/store', async (request, reply) => {
+    const user = await requireUser(request);
+    const lab = await openLab(store, user.sub);
+    const stored = await storeLab(store, user.sub, lab);
+    if (typeof stored === 'string') return reply.code(409).send({ error: stored });
+    return labAnswer(user.sub, stored);
+  });
+
+  /** Отправить в коллекцию — из инкубатора или со стекла хранения. */
+  app.post('/api/petri/shelf', async (request, reply) => {
+    const user = await requireUser(request);
+    const parsed = PetriShelfRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
+    const lab = await openLab(store, user.sub);
+    const shelved = await shelveLab(store, user.sub, lab, parsed.data.id);
+    if (typeof shelved === 'string') return reply.code(409).send({ error: shelved });
+    return labAnswer(user.sub, shelved);
+  });
+
+  /**
+   * Скрестить двоих со стёкол хранения. Результат считает сервер: клиент его
+   * только показывает.
+   */
+  app.post('/api/petri/breed', async (request, reply) => {
+    const user = await requireUser(request);
+    const lab = await openLab(store, user.sub);
+    const bred = await breedLab(store, user.sub, lab);
+    if (typeof bred === 'string') return reply.code(409).send({ error: bred });
+    return labAnswer(user.sub, bred);
   });
 
   /**

@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@doton/core": "workspace:*",
+    "@doton/petri": "workspace:*",
     "@doton/protocol": "workspace:*"
   },
   "devDependencies": {
