@@ -2095,6 +2095,10 @@ function applyKind(): void {
   // В лаборатории игровых пунктов нет вовсе: она не механика прибора, а
   // второе устройство, и звать из неё дуэль значило бы гонять игрока по
   // кругу через переключатель.
+  for (const go of ['glasses']) {
+    const row = document.querySelector<HTMLElement>(`#menu-list li[data-go="${go}"]`);
+    if (row) row.hidden = deviceKind !== 'lab';
+  }
   for (const go of ['draw', 'tourney', 'duel']) {
     const row = document.querySelector<HTMLElement>(`#menu-list li[data-go="${go}"]`);
     if (row) row.hidden = deviceKind === 'lab';
@@ -2141,6 +2145,10 @@ const MENU_ACTIONS: Record<string, () => void> = {
   // обратно к чашке одним нажатием.
   lab: () => {
     menuEl.hidden = true;
+  },
+  glasses: () => {
+    closeMenu();
+    lab.openSheet();
   },
   rules: () => {
     rulesSheet.hidden = false;
@@ -2413,9 +2421,16 @@ const lab = new Lab({
     vsScoreEl.textContent = state.grow;
     timeLabelEl.textContent = 'Жетоны';
     timeEl.textContent = String(state.tokens);
-    miniTextEl.textContent = state.line;
-    miniCdEl.textContent = '';
-    miniBarEl.style.width = '0%';
+    /*
+     * Строка состояния — в панели режима, а не над стеклом.
+     *
+     * Над стеклом у лаборатории не остаётся ничего, кроме стекла: экранчик
+     * резонанса ей нечем занять, а плашка отнимала бы у препарата высоту.
+     * Всё, что прибор хочет сказать, он говорит в панели — там же, где
+     * стёкла и коллекция.
+     */
+    el<HTMLElement>('menu-lab-state').textContent = state.line;
+    el<HTMLElement>('menu-lab-slots').textContent = state.slots;
   },
 });
 

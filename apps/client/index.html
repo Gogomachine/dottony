@@ -1077,6 +1077,18 @@
       работу — как у настоящего инкубатора, где стекло больше индикатора.
     */
     :root[data-kind='lab'] .scope { aspect-ratio: 1 / 1.62; }
+    /*
+      Экранчик резонанса лаборатории не нужен: считать ей нечего, а строку
+      состояния она говорит в своей панели. Плашка над стеклом только
+      отнимала бы у препарата высоту.
+    */
+    :root[data-kind='lab'] .mini { display: none; }
+    /*
+      Номера образца в лаборатории нет: образец — это расклад поля, а поля
+      здесь нет. Пустая строка с чужим числом внизу панели читалась бы как
+      «тут что-то сломалось».
+    */
+    :root[data-kind='lab'] .menu-card .badge-foot { display: none; }
     .dish {
       position: relative;
       flex: 1 1 auto;
@@ -1141,16 +1153,6 @@
       text-transform: uppercase;
       color: var(--silk-2);
     }
-    /* Шелкография на корпусе — тем же голосом, что «4 сигнала · 36 точек». */
-    .lab-mark {
-      text-align: center;
-      font-family: var(--mono);
-      font-size: 8px;
-      letter-spacing: 0.22em;
-      text-transform: uppercase;
-      color: var(--silk-2);
-      opacity: 0.75;
-    }
     .dials { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; align-items: start; }
     .dial {
       display: flex;
@@ -1194,7 +1196,6 @@
       justify-self: center;
     }
     .feed[hidden] { display: none; }
-    .glasses { width: 100%; padding: 9px 8px; }
 
     /* Стёкла хранения и коллекция — в своём окне. */
     .lab-slots { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -2039,8 +2040,6 @@
           <div class="scale"><span>мин</span><span>макс</span></div>
           <div class="dials" id="lab-dials"></div>
           <button class="feed" id="lab-feed" hidden>Покормить</button>
-          <button class="glasses" id="lab-glasses">Стёкла</button>
-          <span class="lab-mark">Инкубатор точечных культур</span>
         </div>
       </div>
 
@@ -2074,10 +2073,20 @@
                 <span class="when mono">0:18</span>
                 <span class="hint">25 точек нужного цвета одним касанием.</span>
               </li>
+              <!--
+                В лаборатории панель — это и есть её приборная доска: всё,
+                что прибор сказал бы строкой над стеклом, он говорит здесь.
+                Над стеклом же не остаётся ничего, кроме стекла.
+              -->
               <li class="mode" data-go="lab">
-                <b>Лаборатория</b>
-                <span class="when mono">сутки</span>
-                <span class="hint">Чашка Петри: три тумблера среды и уход за культурой.</span>
+                <b>Культура</b>
+                <span class="when mono" id="menu-lab-state">—</span>
+                <span class="hint" id="menu-lab-note">Три тумблера среды и уход за тем, что из неё вышло.</span>
+              </li>
+              <li class="mode" data-go="glasses">
+                <b>Стёкла</b>
+                <span class="when mono" id="menu-lab-slots">0 / 2</span>
+                <span class="hint">Хранение, коллекция и скрещивание.</span>
               </li>
               <li class="mode" data-go="draw">
                 <b>Рисование</b>

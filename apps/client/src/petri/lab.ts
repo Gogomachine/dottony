@@ -54,6 +54,16 @@ const DIAL_NAME: Record<Dial, string> = {
  * Что говорит стрелка. Сторону — да, число — никогда: «теплее» это совет, а
  * «поставь 640» — ответ, после которого ухаживать больше не за чем.
  */
+/**
+ * Ось ручки в её собственных координатах.
+ *
+ * Одно число на всё: и рисование риски, и её поворот. Пока их было два —
+ * шайба рисовалась вокруг 32, а риска вращалась вокруг 30, — стрелка
+ * ходила по кругу мимо центра, и три одинаково выставленных тумблера
+ * выглядели повёрнутыми в разные стороны.
+ */
+const KNOB = 32;
+
 /** Цвет ручки: тумблер узнают рукой, не читая подпись. */
 const DIAL_COLOR: Record<Dial, string> = {
   temp: '#c8503a',
@@ -121,8 +131,8 @@ export interface LabHandlers {
   shelf(id: string): Promise<LabView>;
   breed(): Promise<LabView>;
   load(): Promise<LabView>;
-  /** Что показать в приборной строке: она у лаборатории и у игры одна. */
-  panel(state: { line: string; day: string; grow: string; tokens: number }): void;
+  /** Что показать в приборной строке и в панели режима. */
+  panel(state: { line: string; day: string; grow: string; tokens: number; slots: string }): void;
 }
 
 export class Lab {
@@ -153,7 +163,6 @@ export class Lab {
     this.buildDials();
     el<HTMLButtonElement>('lab-seed').addEventListener('click', () => void this.act(() => this.on.seed()));
     this.feedKey.addEventListener('click', () => void this.act(() => this.on.feed()));
-    el<HTMLButtonElement>('lab-glasses').addEventListener('click', () => this.openSheet());
     el<HTMLButtonElement>('lab-close').addEventListener('click', () => this.closeSheet());
     this.breedKey.addEventListener('click', () => void this.act(() => this.on.breed(), true));
   }
@@ -218,7 +227,7 @@ export class Lab {
     return hours >= 1 ? `${hours} ч` : `${Math.max(1, Math.round(left / 60_000))} мин`;
   }
 
-  /** Строка в экранчик, всё остальное в строке — как есть. */
+  /** Что сказать прибору: строка состояния и приборные числа. */
   private tell(line: string): void {
     const view = this.view;
     const inc = view?.incubator;
@@ -227,6 +236,7 @@ export class Lab {
       day: view === null || view === undefined ? '—' : view.day.slice(8) + '.' + view.day.slice(5, 7),
       grow: inc === undefined || inc === null ? '—' : this.growth(inc),
       tokens: view?.tokens ?? 0,
+      slots: `${(view?.slots ?? []).filter((creature) => creature !== null).length} / 2`,
     });
   }
 
@@ -343,18 +353,8 @@ export class Lab {
     this.body = null;
     this.eyes = [];
     this.shape = null;
-    // Пол препарата: по нему видно, где низ, и на нём стоят те, кто не
-    // прилипает к стенке.
-    this.glass.appendChild(
-      svgNode('line', {
-        x1: 4,
-        y1: FLOOR_Y + 2,
-        x2: GLASS.w - 4,
-        y2: FLOOR_Y + 2,
-        stroke: 'rgba(255,255,255,0.10)',
-        'stroke-width': 0.7,
-      }),
-    );
+    // Черты пола нет намеренно: стекло чистое, а где низ — видно по тому,
+    // кто на нём стоит. Линия читалась бы полкой, а не дном препарата.
     if (creature === null) return;
 
     // Всё, что под стеклом, обрезается его краем: за стеклом культуре
@@ -377,7 +377,7 @@ export class Lab {
      * стекла: тогда видно и пол, и стенки, и то, что существо по ним
      * ходит. Тело во весь окуляр было бы портретом, а не наблюдением.
      */
-    const scale = 0.3;
+    const scale = 0.42;
     const spot = creature.stage === 1 ? FLOOR : WALL;
     const at = { x: spot.x, y: spot.y };
     this.angle = spot.turn;
@@ -499,12 +499,12 @@ export class Lab {
       // Ручка своего цвета: три одинаковые чёрные шайбы игрок различал бы
       // только по подписи, а тумблер узнают рукой, не читая.
       box.innerHTML =
-        `<svg viewBox="0 0 64 64">` +
-        `<circle cx="32" cy="32" r="27" fill="var(--case-2)" stroke="var(--edge)" />` +
-        `<circle cx="32" cy="32" r="21" fill="${DIAL_COLOR[dial]}" />` +
+        `<svg viewBox="0 0 ${KNOB * 2} ${KNOB * 2}">` +
+        `<circle cx="${KNOB}" cy="${KNOB}" r="27" fill="var(--case-2)" stroke="var(--edge)" />` +
+        `<circle cx="${KNOB}" cy="${KNOB}" r="21" fill="${DIAL_COLOR[dial]}" />` +
         // Засечки краёв шкалы: без них «до упора» не отличить от «почти».
         `<path d="M 12 47 L 15 44 M 52 47 L 49 44" stroke="var(--silk-2)" stroke-width="1.6" fill="none" />` +
-        `<line class="mark" x1="32" y1="32" x2="32" y2="14" stroke="#f4f1ea" stroke-width="3.2" stroke-linecap="round" />` +
+        `<line class="mark" x1="${KNOB}" y1="${KNOB}" x2="${KNOB}" y2="${KNOB - 18}" stroke="#f4f1ea" stroke-width="3.2" stroke-linecap="round" />` +
         `</svg>` +
         `<span class="cap">${DIAL_NAME[dial]}</span>` +
         `<span class="hint"></span>`;
@@ -578,7 +578,7 @@ export class Lab {
       // «почти там же, откуда начали».
       const angle = -135 + (value / SCALE) * 270;
       const mark = box.querySelector<SVGLineElement>('.mark');
-      mark?.setAttribute('transform', `rotate(${angle} 30 30)`);
+      mark?.setAttribute('transform', `rotate(${angle} ${KNOB} ${KNOB})`);
       const hint = box.querySelector<HTMLElement>('.hint');
       // Стрелка бывает только у тумблеров ухода: питательной средой после
       // вылупления никто не управляет, и советовать по ней нечего.
@@ -592,7 +592,8 @@ export class Lab {
 
   // ---------- Стёкла и коллекция ----------
 
-  private openSheet(): void {
+  /** Открыть окно стёкол. Зовут его из панели режима — на корпусе кнопки нет. */
+  openSheet(): void {
     this.sheet.hidden = false;
     this.renderSheet();
   }

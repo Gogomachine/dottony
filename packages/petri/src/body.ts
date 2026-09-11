@@ -294,22 +294,28 @@ function eyesFor(
   ];
 }
 
-/** Точка первой стадии: тот же окрас, те же глаза — и всё. */
+/**
+ * Точка первой стадии: тот же окрас, те же глаза — и всё.
+ *
+ * Крупная нарочно. Точка — это не зародыш под микроскопом, а первое, что
+ * игрок видит в своём приборе, и полсуток он смотрит именно на неё. Мелкая
+ * точка в большом стекле читается как сор, а не как культура.
+ */
 function pointBody(anomaly: BodyAnomaly | null = null): BodyShape {
-  const y = ANCHOR.y - 14;
+  const y = ANCHOR.y - 22;
   return {
     parts: [
-      { kind: 'ellipse', x: ANCHOR.x, y, rx: 12, ry: 12, role: 'body' },
+      { kind: 'ellipse', x: ANCHOR.x, y, rx: 20, ry: 20, role: 'body' },
       // Аномалия видна уже у точки: она достаётся по родству, а не растёт
       // вместе с телом, и прятать её до второй стадии значило бы отнимать у
       // игрока ровно тот миг, ради которого он скрещивал.
-      ...eyesFor(anomaly, ANCHOR.x, y - 1, 4.6, 4.2, { x: ANCHOR.x, y: y - 12 }),
+      ...eyesFor(anomaly, ANCHOR.x, y - 1, 7.6, 7, { x: ANCHOR.x, y: y - 20 }),
     ],
     anchor: ANCHOR,
-    head: { x: ANCHOR.x, y: y - 12 },
+    head: { x: ANCHOR.x, y: y - 20 },
     squash: ANCHOR.y,
-    width: 24,
-    height: 26,
+    width: 40,
+    height: 42,
   };
 }
 
