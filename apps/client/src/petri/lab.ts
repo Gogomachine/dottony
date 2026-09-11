@@ -90,8 +90,10 @@ const MOOD_NAME: Record<string, string> = {
  * ни к чему: она просто лежит на дне, прилипать — это уже поведение, а
  * поведение появляется вместе с телом.
  */
-const WALL = { x: 12, y: 58, turn: 90 };
-const FLOOR = { x: 50, y: 92, turn: 0 };
+const GLASS = { w: 100, h: 105 };
+const FLOOR_Y = 98;
+const WALL = { x: 7, y: 42, turn: 90 };
+const FLOOR = { x: 52, y: FLOOR_Y, turn: 0 };
 
 /** Куда смотрит существо в маленьком стекле: там оно просто стоит. */
 function portrait(creature: Creature): SVGSVGElement {
@@ -344,14 +346,21 @@ export class Lab {
     // Пол препарата: по нему видно, где низ, и на нём стоят те, кто не
     // прилипает к стенке.
     this.glass.appendChild(
-      svgNode('line', { x1: 4, y1: 94, x2: 96, y2: 94, stroke: 'rgba(255,255,255,0.10)', 'stroke-width': 0.7 }),
+      svgNode('line', {
+        x1: 4,
+        y1: FLOOR_Y + 2,
+        x2: GLASS.w - 4,
+        y2: FLOOR_Y + 2,
+        stroke: 'rgba(255,255,255,0.10)',
+        'stroke-width': 0.7,
+      }),
     );
     if (creature === null) return;
 
     // Всё, что под стеклом, обрезается его краем: за стеклом культуре
     // делать нечего.
     const clip = svgNode('clipPath', { id: 'petri-glass' });
-    clip.appendChild(svgNode('rect', { x: 1, y: 1, width: 98, height: 98, rx: 6 }));
+    clip.appendChild(svgNode('rect', { x: 1, y: 1, width: GLASS.w - 2, height: GLASS.h - 2, rx: 6 }));
     this.glass.appendChild(clip);
 
     const shape = bodyOf(creature);
@@ -363,7 +372,12 @@ export class Lab {
      * крупнее на сорок процентов», главное, что видно в третьей стадии,
      * перестало бы быть видно вовсе. Стекло показывает настоящий размер.
      */
-    const scale = 0.5;
+    /*
+     * Мелко — и это правильно. Культура в препарате занимает малую часть
+     * стекла: тогда видно и пол, и стенки, и то, что существо по ним
+     * ходит. Тело во весь окуляр было бы портретом, а не наблюдением.
+     */
+    const scale = 0.3;
     const spot = creature.stage === 1 ? FLOOR : WALL;
     const at = { x: spot.x, y: spot.y };
     this.angle = spot.turn;

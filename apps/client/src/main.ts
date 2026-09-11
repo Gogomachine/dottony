@@ -2100,6 +2100,15 @@ function applyKind(): void {
     if (row) row.hidden = deviceKind === 'lab';
   }
   lab.toggle(deviceKind === 'lab');
+  if (deviceKind !== 'lab') {
+    // Приборную строку лаборатория подписывала по-своему — возвращаем
+    // игровые подписи. Числа в них поставит первый же кадр партии, а вот
+    // слова над ними не ставит никто, кроме этого места.
+    scoreLabelEl.textContent = 'Потенциал';
+    timeLabelEl.textContent = 'Время';
+    vsFieldEl.hidden = !inDuel;
+    miniCache = '';
+  }
   el<HTMLSpanElement>('duel-when').textContent = KIND_DUEL_TIME[gameKind()];
   el<HTMLElement>('duel-kind-note').textContent =
     `${KIND_NAME[gameKind()]} · ${KIND_DUEL_TIME[gameKind()]}`;
