@@ -1,5 +1,5 @@
 import type { BodyAnomaly, Creature } from './creature.js';
-import type { Species } from './species.js';
+import type { Color, Species } from './species.js';
 import type { Zone } from './dials.js';
 import { speciesOf } from './creature.js';
 
@@ -24,8 +24,15 @@ export interface Point {
   y: number;
 }
 
-/** Чем красить эту часть: телом, вторым цветом или тенью. */
-export type Role = 'body' | 'accent' | 'shade';
+/**
+ * Чем красить эту часть: телом, вторым цветом, тенью или бликом.
+ *
+ * Блик появился ради синих. У них ось влажности читается хуже всех — шар
+ * остаётся шаром, — и им нужен второй признак: на «сыро» желейная
+ * полупрозрачность, на «сухо» матовое плотное тело. Тенью такое не
+ * нарисовать: тень темнит, а желе светится.
+ */
+export type Role = 'body' | 'accent' | 'shade' | 'gloss';
 
 export type Part =
   | { kind: 'rrect'; x: number; y: number; w: number; h: number; r: number; role: Role }
@@ -74,16 +81,50 @@ function silhouette(humidity: Zone): { w: number; h: number; bulb: number } {
 }
 
 /**
+ * Сколы по контуру — общий для всех диалектов признак «холодного» края.
+ * Куда их ставить, знает каждый диалект сам: у распластанного они вдоль
+ * спины, у шара по окружности.
+ */
+function chips(at: readonly { x: number; y: number; size: number; angle: number }[]): Part[] {
+  return at.map((chip) => ({ kind: 'tri', ...chip, role: 'body' }) as Part);
+}
+
+/**
+ * Потёки: оплывший край. Начинаются **внутри** тела и стекают вниз —
+ * висящие рядом кружки читались бы не как «оплыл», а как «отвалилось».
+ */
+function drips(x: number, y: number, w: number): Part[] {
+  return [-1, 0, 1].map(
+    (side) =>
+      ({
+        kind: 'ellipse',
+        x: x + side * w * 0.3,
+        y: y + (side === 0 ? 10 : 6),
+        rx: 5,
+        ry: side === 0 ? 13 : 9,
+        role: 'body',
+      }) as Part,
+  );
+}
+
+/** Пятна второго цвета: ими взрослая форма и отличается от подростковой. */
+function spots(x: number, y: number, w: number): Part[] {
+  return [
+    { kind: 'ellipse', x: x - w * 0.22, y: y + 3, rx: 4, ry: 4, role: 'accent' },
+    { kind: 'ellipse', x: x + w * 0.24, y: y - 4, rx: 3, ry: 3, role: 'accent' },
+  ];
+}
+
+/**
  * Жёлтый диалект: сидячий, стеблевой, широкое основание. Он прилеплен к
  * стенке стекла, и всё его тело — про опору: снизу подошва, сверху голова с
  * глазами, отростки — усики над головой.
  *
- * Диалекты остальных трёх цветов идут вторым заходом (у красного «отростки»
- * — шипы вдоль спины, у синего — шишки по контуру, у зелёного — ветвящиеся
- * конечности). Пока прибор сеет только жёлтых, и рисовать впрок то, чего в
- * игре нет, значит рисовать вслепую.
+ * Отростки у него — усики над головой: у сидячего стебля им больше негде
+ * расти. У остальных цветов эта же ось говорит их словами — шипами,
+ * шишками и ветвями.
  */
-function yellowBody(species: Species, grown: boolean, anomaly: BodyAnomaly | null = null): BodyShape {
+function yellowBody(species: Species, grown: boolean, anomaly: BodyAnomaly | null): BodyShape {
   const { temp, humidity, medium } = species.axes;
   const shape = silhouette(humidity);
   const parts: Part[] = [];
@@ -239,6 +280,301 @@ function yellowBody(species: Species, grown: boolean, anomaly: BodyAnomaly | nul
     height: ANCHOR.y - top,
   };
 }
+
+/**
+ * Красный диалект: распластанный, с подошвой, вытянут вдоль стенки.
+ *
+ * Он ползает строго по периметру, всегда развёрнут вдоль края — и тело у
+ * него под это: низкое, длинное, на сплошной подошве. Без этого мутация
+ * «красный полез, как зелёный» не читалась бы: оба ползают, и отличить их
+ * можно только по тому, как они устроены.
+ *
+ * Отростки у него — шипы вдоль спины: усики сверху на распластанном теле
+ * смотрелись бы чужой деталью, а шип по хребту продолжает силуэт.
+ */
+function redBody(species: Species, grown: boolean, anomaly: BodyAnomaly | null): BodyShape {
+  const { temp, humidity, medium } = species.axes;
+  // Влажность растит не высоту, а пухлость: сухой — плоская лента, сырой —
+  // раздутый валик. Длина при этом падает: раздуваясь, он собирается.
+  const w = humidity === 0 ? 62 : humidity === 1 ? 52 : 44;
+  const h = humidity === 0 ? 20 : humidity === 1 ? 28 : 36;
+  const parts: Part[] = [];
+
+  const bottom = ANCHOR.y - 4;
+  const top = bottom - h;
+  const midY = bottom - h / 2;
+
+  // Подошва во всю длину: ею он и держится за стекло на ходу.
+  parts.push({ kind: 'ellipse', x: ANCHOR.x, y: ANCHOR.y - 2, rx: w * 0.48, ry: 4.5, role: 'shade' });
+
+  if (temp === 2) {
+    parts.push({ kind: 'ellipse', x: ANCHOR.x, y: midY, rx: w / 2, ry: h / 2, role: 'body' });
+    parts.push(...drips(ANCHOR.x, midY + h * 0.3, w * 0.7));
+  } else {
+    parts.push({
+      kind: 'rrect',
+      x: ANCHOR.x,
+      y: midY,
+      w,
+      h,
+      r: temp === 0 ? 2 : h * 0.5,
+      role: 'body',
+    });
+  }
+
+  if (temp === 0) {
+    parts.push(
+      ...chips([
+        { x: ANCHOR.x - w * 0.42, y: midY, size: 8, angle: -90 },
+        { x: ANCHOR.x + w * 0.46, y: midY + 2, size: 7, angle: 90 },
+        { x: ANCHOR.x - w * 0.1, y: top, size: 7, angle: 0 },
+      ]),
+    );
+  }
+
+  // Шипы вдоль спины — ось питательной среды.
+  const spines = medium === 0 ? [] : medium === 1 ? [0] : [-0.26, 0.02, 0.3];
+  for (const [index, at] of spines.entries()) {
+    const size = (grown ? 12 : 9) * (index === 1 ? 1.15 : 1);
+    parts.push({ kind: 'tri', x: ANCHOR.x + w * at, y: top + 1, size, angle: 0, role: 'body' });
+    // Взрослому шип ветвится вторым, помельче и вторым цветом.
+    if (grown) {
+      parts.push({
+        kind: 'tri',
+        x: ANCHOR.x + w * at + 4,
+        y: top + 3,
+        size: size * 0.55,
+        angle: 26,
+        role: 'accent',
+      });
+    }
+  }
+
+  if (humidity === 2) {
+    // Раздутый: пузыри по телу — тем же приёмом, что и у жёлтого.
+    for (const [dx, dy] of [
+      [-0.28, -0.12],
+      [0.22, 0.14],
+    ] as const) {
+      parts.push({ kind: 'ellipse', x: ANCHOR.x + w * dx, y: midY + h * dy, rx: 4.5, ry: 4.5, role: 'shade' });
+    }
+  }
+
+  if (grown) parts.push(...spots(ANCHOR.x, midY, w * 0.8));
+
+  // Голова у него спереди, а не сверху: он ползёт, и смотреть назад ему
+  // незачем. Перед — правый край.
+  const face = { x: ANCHOR.x + w * 0.2, y: midY - h * 0.1 };
+  const eyeR = h > 30 ? 5.6 : 4.8;
+  parts.push(...eyesFor(anomaly, face.x, face.y, eyeR * 1.7, eyeR, { x: ANCHOR.x + w * 0.34, y: top }));
+
+  return {
+    parts,
+    anchor: ANCHOR,
+    head: { x: ANCHOR.x + w * 0.4, y: top },
+    squash: ANCHOR.y,
+    width: w,
+    height: ANCHOR.y - top,
+  };
+}
+
+/**
+ * Синий диалект: компактный, шарообразный, упругий. Он прыгает.
+ *
+ * У синих известная беда: ось влажности читается хуже всех — шар остаётся
+ * шаром. Поэтому у них к силуэту добавлен второй признак, и он не
+ * геометрический: на «сыро» тело желейное, с бликом и почти прозрачным
+ * краем, на «сухо» — матовое и плотное, с жёстким тёмным ободом. Это видно
+ * даже тогда, когда разница в размере не видна.
+ */
+function blueBody(species: Species, grown: boolean, anomaly: BodyAnomaly | null): BodyShape {
+  const { temp, humidity, medium } = species.axes;
+  // Сухой шар собран и вытянут вверх, сырой — расплылся вширь.
+  const rx = humidity === 0 ? 19 : humidity === 1 ? 23 : 27;
+  const ry = humidity === 0 ? 25 : humidity === 1 ? 23 : 21;
+  const parts: Part[] = [];
+  const midY = ANCHOR.y - ry - 3;
+
+  // След на стекле: шар не стоит на подошве, но касание должно быть видно —
+  // иначе он и в покое выглядит зависшим.
+  parts.push({ kind: 'ellipse', x: ANCHOR.x, y: ANCHOR.y - 2, rx: rx * 0.7, ry: 3.5, role: 'shade' });
+
+  if (temp === 0) {
+    // Холодный шар — гранёный: скруглений почти нет, и по бокам сколы.
+    parts.push({ kind: 'rrect', x: ANCHOR.x, y: midY, w: rx * 2, h: ry * 2, r: 3, role: 'body' });
+    parts.push(
+      ...chips([
+        { x: ANCHOR.x - rx, y: midY - 2, size: 8, angle: -90 },
+        { x: ANCHOR.x + rx, y: midY + 4, size: 7, angle: 90 },
+        { x: ANCHOR.x + rx * 0.2, y: midY - ry, size: 7, angle: 0 },
+      ]),
+    );
+  } else {
+    parts.push({ kind: 'ellipse', x: ANCHOR.x, y: midY, rx, ry, role: 'body' });
+    if (temp === 2) parts.push(...drips(ANCHOR.x, midY + ry * 0.55, rx * 1.4));
+  }
+
+  if (humidity === 2) {
+    // Желейный: блик сверху и мягкие пузыри внутри.
+    parts.push({ kind: 'ellipse', x: ANCHOR.x - rx * 0.3, y: midY - ry * 0.42, rx: rx * 0.34, ry: ry * 0.22, role: 'gloss' });
+    parts.push({ kind: 'ellipse', x: ANCHOR.x + rx * 0.34, y: midY + ry * 0.24, rx: 4, ry: 4, role: 'gloss' });
+  } else if (humidity === 0) {
+    // Матовый и плотный: тяжёлый обод снизу, никакого блеска.
+    parts.push({ kind: 'ellipse', x: ANCHOR.x, y: midY + ry * 0.5, rx: rx * 0.86, ry: ry * 0.3, role: 'shade' });
+  }
+
+  // Шишки по контуру — ось питательной среды.
+  const bumps = medium === 0 ? [] : medium === 1 ? [-40] : [-70, -18, 44];
+  for (const angle of bumps) {
+    const rad = (angle * Math.PI) / 180;
+    const size = grown ? 7 : 5.4;
+    parts.push({
+      kind: 'ellipse',
+      x: ANCHOR.x + Math.sin(rad) * rx,
+      y: midY - Math.cos(rad) * ry,
+      rx: size,
+      ry: size,
+      role: grown ? 'accent' : 'body',
+    });
+  }
+
+  if (grown) parts.push(...spots(ANCHOR.x, midY, rx * 1.5));
+
+  const eyeR = rx > 24 ? 6.2 : 5.4;
+  parts.push(...eyesFor(anomaly, ANCHOR.x, midY - ry * 0.12, eyeR * 1.6, eyeR, { x: ANCHOR.x, y: midY - ry }));
+
+  return {
+    parts,
+    anchor: ANCHOR,
+    head: { x: ANCHOR.x, y: midY - ry },
+    // Сплющивается он вокруг точки касания: приземление давит шар в стекло.
+    squash: ANCHOR.y,
+    width: rx * 2,
+    height: ANCHOR.y - (midY - ry),
+  };
+}
+
+/**
+ * Зелёный диалект: ветвящийся, цепкий, с опорными лапками. Он лазает.
+ *
+ * Лапки у него есть всегда, при любой среде: ими он и держится за стекло.
+ * Отростки же — это ветвящиеся конечности по бокам, и от питательной среды
+ * зависят именно они. Так «сколько у него лап» и «насколько он ветвист»
+ * остаются разными вопросами, и ось не спорит с силуэтом.
+ */
+function greenBody(species: Species, grown: boolean, anomaly: BodyAnomaly | null): BodyShape {
+  const { temp, humidity, medium } = species.axes;
+  const w = humidity === 0 ? 22 : humidity === 1 ? 32 : 40;
+  const h = humidity === 0 ? 50 : humidity === 1 ? 42 : 36;
+  const parts: Part[] = [];
+  const bottom = ANCHOR.y - 12;
+  const top = bottom - h;
+  const midY = bottom - h / 2;
+
+  // Опорные лапки: четыре, вниз и врозь, тянутся до самого стекла.
+  for (const side of [-1, 1]) {
+    for (const [index, spread] of [0.26, 0.62].entries()) {
+      const angle = side * (150 + index * 16);
+      parts.push({
+        kind: 'stalk',
+        x: ANCHOR.x + side * w * spread * 0.5,
+        y: bottom - 2,
+        angle,
+        len: 14 + index * 2,
+        w: 3,
+        tip: 2.6,
+        role: 'body',
+      });
+    }
+  }
+
+  if (temp === 2) {
+    parts.push({ kind: 'ellipse', x: ANCHOR.x, y: midY, rx: w / 2, ry: h / 2, role: 'body' });
+    parts.push(...drips(ANCHOR.x, midY + h * 0.28, w * 0.7));
+  } else {
+    parts.push({
+      kind: 'rrect',
+      x: ANCHOR.x,
+      y: midY,
+      w,
+      h,
+      r: temp === 0 ? 2 : w * 0.42,
+      role: 'body',
+    });
+  }
+
+  if (temp === 0) {
+    parts.push(
+      ...chips([
+        { x: ANCHOR.x - w / 2, y: midY - 3, size: 8, angle: -90 },
+        { x: ANCHOR.x + w / 2, y: midY + 5, size: 7, angle: 90 },
+        { x: ANCHOR.x + w * 0.16, y: top, size: 7, angle: 0 },
+      ]),
+    );
+  }
+
+  // Ветвящиеся конечности по бокам — ось питательной среды.
+  const limbs = medium === 0 ? [] : medium === 1 ? [{ side: 1, at: 0.35 }] : [
+    { side: -1, at: 0.28 },
+    { side: 1, at: 0.46 },
+    { side: -1, at: 0.68 },
+  ];
+  for (const limb of limbs) {
+    const from = { x: ANCHOR.x + (limb.side * w) / 2, y: top + h * limb.at };
+    const angle = limb.side * 68;
+    const len = (grown ? 22 : 16) * (humidity === 2 ? 1.1 : 1);
+    parts.push({ kind: 'stalk', x: from.x, y: from.y, angle, len, w: 3.2, tip: 0, role: 'body' });
+    const fork = step(from, angle, len);
+    for (const turn of [-30, 26]) {
+      parts.push({
+        kind: 'stalk',
+        x: fork.x,
+        y: fork.y,
+        angle: angle + turn,
+        len: len * 0.5,
+        w: 2.4,
+        tip: 2.6,
+        role: grown ? 'accent' : 'body',
+      });
+    }
+  }
+
+  if (humidity === 2) {
+    for (const [dx, dy] of [
+      [-0.3, -0.18],
+      [0.26, 0.2],
+    ] as const) {
+      parts.push({ kind: 'ellipse', x: ANCHOR.x + w * dx, y: midY + h * dy, rx: 4.5, ry: 4.5, role: 'shade' });
+    }
+  }
+
+  if (grown) parts.push(...spots(ANCHOR.x, midY, w));
+
+  const eyeR = w > 34 ? 6 : 5.2;
+  const face = top + h * 0.26;
+  parts.push(...eyesFor(anomaly, ANCHOR.x, face, Math.min(w * 0.3, 10), eyeR, { x: ANCHOR.x, y: top }));
+
+  return {
+    parts,
+    anchor: ANCHOR,
+    head: { x: ANCHOR.x, y: top },
+    squash: ANCHOR.y,
+    width: w,
+    height: ANCHOR.y - top,
+  };
+}
+
+/**
+ * Диалекты по цветам. Оснастка у всех одна — крепление снизу, голова
+ * сверху, — и потому любое тело подставляется в любой цикл движения: это
+ * обязательное условие мутации поведения, и держится оно здесь.
+ */
+const DIALECTS: Record<Color, (species: Species, grown: boolean, anomaly: BodyAnomaly | null) => BodyShape> = {
+  yellow: yellowBody,
+  red: redBody,
+  blue: blueBody,
+  green: greenBody,
+};
 
 /**
  * Глаза по аномалии тела.
@@ -414,12 +750,12 @@ export function bodyOf(creature: Creature): BodyShape {
   // Точка — это точка: пока форма не выбрана, рисовать нечего, кроме глаз.
   if (creature.stage === 1 || species === null) return pointBody(creature.bodyAnomaly);
   const grown = creature.stage === 3;
-  const shape = yellowBody(species, grown, creature.bodyAnomaly);
+  const shape = DIALECTS[species.color](species, grown, creature.bodyAnomaly);
   return grown ? scaleShape(shape, GROWN_SCALE) : shape;
 }
 
 /** Тело вида на второй стадии — им рисуется каталог форм. */
 export function bodyOfSpecies(species: Species, grown = false): BodyShape {
-  const shape = yellowBody(species, grown);
+  const shape = DIALECTS[species.color](species, grown, null);
   return grown ? scaleShape(shape, GROWN_SCALE) : shape;
 }

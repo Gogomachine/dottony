@@ -9,7 +9,7 @@ import {
   type ColorMutation,
   type Creature,
 } from './creature.js';
-import { BEHAVIOUR_LADDER, type Behaviour } from './species.js';
+import { BEHAVIOUR_LADDER, COLORS, type Behaviour, type Color } from './species.js';
 
 /**
  * Лаборатория: три стекла, посев и скрещивание.
@@ -39,6 +39,19 @@ export const SEED_PRICE = 2000;
 /** Сколько стоит очередная точка: первая в жизни лаборатории — даром. */
 export function seedCost(seeded: number): number {
   return seeded <= 0 ? 0 : SEED_PRICE;
+}
+
+/**
+ * Какого цвета выпала точка при посеве.
+ *
+ * Все четыре равновероятны: цвет — это не редкость, а характер. Редкость
+ * живёт в форме (узкие зоны шкал) и в мутациях; делать вдобавок редкими
+ * сами цвета значило бы, что четверть игры почти никто не увидит, а
+ * поведений у нас ровно четыре и показать надо все.
+ */
+export function seedColor(seed: number): Color {
+  const roll = nextInt(seedRng(seed >>> 0), COLORS.length);
+  return COLORS[roll.value] ?? 'yellow';
 }
 
 /** Шанс новой мутации на каждый свободный слот при скрещивании двух чистых. */

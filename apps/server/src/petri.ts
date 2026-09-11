@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
+  BEHAVIOUR_OF,
   CARE_DIALS,
   GROW_DAYS,
   HATCH_HOURS,
@@ -15,6 +16,7 @@ import {
   labDay,
   moodOf,
   paceOf,
+  seedColor,
   seedCost,
   seedOf,
   setDials,
@@ -258,15 +260,17 @@ export async function seedLab(
   if (lab.inc.creature !== null) {
     await store.petriMove(userId, lab.inc.creature.id, 'lost', 'gone');
   }
+  const id = randomUUID();
+  // Цвет выпадает при посеве и задаёт поведение: жёлтый липнет к стенке,
+  // красный ползёт по краю, синий прыгает, зелёный лазает. Тело при этом
+  // рисуется своим диалектом — у каждого цвета он свой.
+  const color = seedColor(seedOf(id, lab.inc.seed));
   const creature: Creature = {
-    id: randomUUID(),
+    id,
     generation: 1,
-    // Пока лаборатория сеет только жёлтых: диалекты остальных цветов идут
-    // следующим заходом, и выдавать точку, которой не во что вылупиться,
-    // было бы нечестно.
-    color: 'yellow',
+    color,
     colorMutation: null,
-    behaviour: 'cling',
+    behaviour: BEHAVIOUR_OF[color],
     behaviourMutation: null,
     bodyAnomaly: null,
     axes: null,

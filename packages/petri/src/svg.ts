@@ -22,6 +22,9 @@ export interface Drawn {
 /** Чем красить роль части. */
 function paint(role: Role, skin: Skin): Record<string, string | number> {
   if (role === 'accent') return { fill: skin.accent };
+  // Блик: не цвет, а свет. Он один и тот же на любом окрасе — тем и
+  // читается как «мокрое», а не как «другой цвет».
+  if (role === 'gloss') return { fill: '#FFFFFF', 'fill-opacity': 0.26 * skin.fillOpacity + 0.06 };
   // Подошва и тень — тот же второй цвет вполсилы: отдельной краски для них
   // заводить незачем, а на «стекле» она обязана оставаться прозрачной.
   if (role === 'shade') return { fill: skin.accent, 'fill-opacity': 0.3 * skin.fillOpacity + 0.1 };

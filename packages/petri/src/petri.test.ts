@@ -25,6 +25,8 @@ import {
   setDials,
   speciesId,
   speciesOfColor,
+  seedColor,
+  COLORS,
   zoneOf,
   zoneMiddle,
   GROW_DAYS,
@@ -38,6 +40,7 @@ import {
   seedCost,
   type Creature,
   type Dials,
+  type BodyShape,
   type BreedOptions,
   type Incubator,
   type Species,
@@ -594,5 +597,80 @@ describe('аномалии тела', () => {
     const angles = (shape: { parts: { kind: string }[] }): string =>
       JSON.stringify(shape.parts.filter((part) => part.kind === 'stalk'));
     expect(angles(crooked)).not.toBe(angles(straight));
+  });
+});
+
+describe('диалекты цветов', () => {
+  const at = (color: Species['color'], axes: Species['axes']): BodyShape =>
+    bodyOfSpecies({ color, axes });
+  const kinds = (shape: BodyShape): string[] => shape.parts.map((part) => part.kind);
+  const count = (shape: BodyShape, kind: string): number =>
+    kinds(shape).filter((one) => one === kind).length;
+
+  it('у каждого цвета свои двадцать семь форм и своя оснастка', () => {
+    // Оснастка одна на всех: цикл движения принадлежит поведению, и любой
+    // корпус обязан подставляться в любой цикл без переделки.
+    for (const color of COLORS) {
+      for (const species of speciesOfColor(color)) {
+        const shape = bodyOfSpecies(species);
+        expect(shape.anchor).toEqual({ x: 50, y: 96 });
+        expect(shape.head.y).toBeLessThan(shape.anchor.y - 10);
+        expect(shape.parts.filter((part) => part.kind === 'eye').length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('силуэты цветов не путаются между собой', () => {
+    const axes = { temp: 1, humidity: 1, medium: 1 } as const;
+    const red = at('red', axes);
+    const blue = at('blue', axes);
+    const green = at('green', axes);
+    const yellow = at('yellow', axes);
+    // Красный распластан: он шире всех и ниже всех.
+    expect(red.width).toBeGreaterThan(yellow.width);
+    expect(red.height).toBeLessThan(yellow.height);
+    // Синий компактен: почти круглый.
+    expect(Math.abs(blue.width - blue.height)).toBeLessThan(blue.width * 0.6);
+    // Зелёный цепкий: у него всегда есть опорные лапки, при любой среде.
+    expect(count(green, 'stalk')).toBeGreaterThanOrEqual(4);
+    expect(count(at('green', { temp: 1, humidity: 1, medium: 0 }), 'stalk')).toBeGreaterThanOrEqual(4);
+  });
+
+  it('ось питательной среды говорит словами своего цвета', () => {
+    const axis = (color: Species['color'], kind: string): number[] =>
+      [0, 1, 2].map((medium) =>
+        count(at(color, { temp: 1, humidity: 1, medium: medium as 0 | 1 | 2 }), kind),
+      );
+    // Красный отвечает шипами вдоль спины, синий — шишками по контуру,
+    // зелёный — ветвящимися конечностями, жёлтый — усиками.
+    const spines = axis('red', 'tri');
+    expect(spines[0]).toBeLessThan(spines[1]!);
+    expect(spines[1]).toBeLessThan(spines[2]!);
+    const bumps = axis('blue', 'ellipse');
+    expect(bumps[0]).toBeLessThan(bumps[1]!);
+    expect(bumps[1]).toBeLessThan(bumps[2]!);
+    const limbs = axis('green', 'stalk');
+    expect(limbs[0]).toBeLessThan(limbs[1]!);
+    expect(limbs[1]).toBeLessThan(limbs[2]!);
+    const stalks = axis('yellow', 'stalk');
+    expect(stalks[0]).toBeLessThan(stalks[1]!);
+    expect(stalks[1]).toBeLessThan(stalks[2]!);
+  });
+
+  it('у синего влажность видна не только силуэтом', () => {
+    // Известная беда: шар остаётся шаром. Поэтому у сырого есть блик и
+    // прозрачность, у сухого — тяжёлый матовый обод.
+    const wet = at('blue', { temp: 1, humidity: 2, medium: 0 });
+    const dry = at('blue', { temp: 1, humidity: 0, medium: 0 });
+    expect(wet.parts.some((part) => part.kind !== 'eye' && part.role === 'gloss')).toBe(true);
+    expect(dry.parts.some((part) => part.kind !== 'eye' && part.role === 'gloss')).toBe(false);
+    expect(dry.parts.filter((part) => part.kind !== 'eye' && part.role === 'shade').length).toBeGreaterThan(
+      wet.parts.filter((part) => part.kind !== 'eye' && part.role === 'shade').length,
+    );
+  });
+
+  it('цвет при посеве выпадает любой из четырёх', () => {
+    const seen = new Set(Array.from({ length: 200 }, (_, i) => seedColor(i * 7919)));
+    expect(seen).toEqual(new Set(COLORS));
   });
 });

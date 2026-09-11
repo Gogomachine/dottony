@@ -1,8 +1,10 @@
 import {
   DIALS,
   SCALE,
+  behaviourOf,
   bodyOf,
   boundsOf,
+  seedOf,
   drawBody,
   mutationCount,
   skinOf,
@@ -11,11 +13,13 @@ import {
   viewBoxOf,
   type BodyShape,
   type Creature,
+  type Behaviour,
   type Dial,
   type Dials,
   type Hint,
   type LabView,
 } from '@doton/petri';
+import { poseOf, type Pose } from './motion';
 
 /**
  * PETRIDOT в окуляре: чашка Петри, три тумблера и два стекла хранения.
@@ -437,23 +441,25 @@ export class Lab {
      */
     const scale = 0.42;
     /*
-     * Куда поставить крепление, чтобы существо **касалось** стекла.
+     * Насколько тело торчит ниже крепления — по этому числу цикл движения
+     * и сажает его на стекло.
      *
      * Считаем из самого тела: у одних подошва широкая и выступает за
-     * крепление, у других её нет вовсе. Поставь всех по одной координате —
-     * и половина повиснет в воздухе, а половина уедет за стекло. Поэтому
-     * берём, насколько тело торчит ниже крепления, и на столько же отводим
-     * его от края.
+     * крепление, у других её нет вовсе. Веди всех по одной дорожке — и
+     * половина повиснет в воздухе, а половина уедет за стекло.
      */
     const box = boundsOf(shape);
-    const below = (box.y + box.h - shape.anchor.y) * scale;
-    const cling = creature.stage !== 1;
-    // Прилипший к стенке развёрнут поперёк: его «низ» смотрит в стенку,
-    // то есть влево. У стоящего на дне низ смотрит вниз.
-    const at = cling
-      ? { x: EDGE + below - BITE, y: this.glassH * WALL.at }
-      : { x: FLOOR.x, y: this.glassH - EDGE - below + BITE };
-    this.angle = cling ? WALL.turn : FLOOR.turn;
+    this.below = (box.y + box.h - shape.anchor.y) * scale;
+    // Половина ширины: ею тело упирается в боковые стенки, когда идёт
+    // свободно, а не держится за них подошвой.
+    this.wide = (box.w / 2) * scale;
+    // Точка ещё никуда не ползёт: она просто лежит на дне. Двигаться — это
+    // уже поведение, а поведение появляется вместе с телом.
+    this.behaviour = creature.stage === 1 ? null : behaviourOf(creature);
+    this.seed = seedOf(creature.id);
+    const pose = this.poseNow(0);
+    const at = { x: pose.x, y: pose.y };
+    this.angle = pose.turn;
 
     const group = svgNode('g');
     group.setAttribute(
@@ -495,6 +501,36 @@ export class Lab {
   private place: { at: { x: number; y: number }; scale: number } = { at: { x: 50, y: 50 }, scale: 1 };
   /** Под каким углом тело сидит под стеклом: это выбирает поведение, а не тело. */
   private angle = 0;
+  /** Насколько тело торчит ниже крепления — им цикл сажает его на стекло. */
+  private below = 0;
+  /** Половина ширины тела — ею оно упирается в боковые стенки. */
+  private wide = 0;
+  /** Каким циклом оно живёт. У точки поведения ещё нет. */
+  private behaviour: Behaviour | null = null;
+  private seed = 0;
+
+  /**
+   * Где тело в этот миг. Считает цикл поведения; точка лежит на дне и
+   * никуда не идёт — ей цикл не нужен.
+   */
+  private poseNow(time: number): Pose {
+    if (this.behaviour === null) {
+      return {
+        x: GLASS_W * 0.52,
+        y: this.glassH - EDGE - this.below + BITE,
+        turn: 0,
+        sx: 1,
+        sy: 1,
+      };
+    }
+    return poseOf(this.behaviour, time, {
+      glass: { w: GLASS_W, h: this.glassH },
+      edge: EDGE,
+      below: this.below,
+      wide: this.wide,
+      seed: this.seed,
+    });
+  }
 
   /**
    * Один цикл анимации: покачивание с затуханием и моргание отдельным слоем.
@@ -510,26 +546,27 @@ export class Lab {
     const shape = this.shape;
     if (body === null || shape === null) return;
     const pace = this.view?.incubator.pace ?? 1;
-    const now = performance.now() / 1000;
-    const sway = Math.sin(now * 1.1 * pace) * 3.2 + Math.sin(now * 0.37 * pace) * 1.4;
+    const now = (performance.now() / 1000) * pace;
+    const pose = this.poseNow(now);
+    this.angle = pose.turn;
+    const k = this.place.scale;
     body.setAttribute(
       'transform',
-      `translate(${this.place.at.x} ${this.place.at.y}) rotate(${this.angle + sway}) scale(${this.place.scale}) translate(${-shape.anchor.x} ${-shape.anchor.y})`,
+      `translate(${pose.x.toFixed(2)} ${pose.y.toFixed(2)}) rotate(${pose.turn.toFixed(2)}) scale(${(k * pose.sx).toFixed(3)} ${(k * pose.sy).toFixed(3)}) translate(${-shape.anchor.x} ${-shape.anchor.y})`,
     );
 
     const id = this.view?.incubator.creature?.id ?? '';
     const period = 3.1 + (id.charCodeAt(0) % 7) * 0.43;
     const phase = (now * pace) % period;
     const shut = phase < 0.14 ? 1 - phase / 0.14 : 1;
-    // Куда уехала точка тела при нынешнем повороте — по этому и ставим глаз.
-    const rad = ((this.angle + sway) * Math.PI) / 180;
-    const k = this.place.scale;
+    // Куда уехала точка тела при нынешней позе — по этому и ставим глаз.
+    const rad = (pose.turn * Math.PI) / 180;
     const world = (x: number, y: number): { x: number; y: number } => {
-      const dx = (x - shape.anchor.x) * k;
-      const dy = (y - shape.anchor.y) * k;
+      const dx = (x - shape.anchor.x) * k * pose.sx;
+      const dy = (y - shape.anchor.y) * k * pose.sy;
       return {
-        x: this.place.at.x + dx * Math.cos(rad) - dy * Math.sin(rad),
-        y: this.place.at.y + dx * Math.sin(rad) + dy * Math.cos(rad),
+        x: pose.x + dx * Math.cos(rad) - dy * Math.sin(rad),
+        y: pose.y + dx * Math.sin(rad) + dy * Math.cos(rad),
       };
     };
     /*

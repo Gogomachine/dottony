@@ -51,6 +51,7 @@ export {
   MISS_GUARANTEE,
   MAX_MUTATIONS,
   seedCost,
+  seedColor,
   breed,
   breedable,
   grown,
