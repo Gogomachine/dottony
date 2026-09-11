@@ -2,6 +2,7 @@ import {
   DIALS,
   SCALE,
   bodyOf,
+  boundsOf,
   drawBody,
   mutationCount,
   skinOf,
@@ -100,10 +101,21 @@ const MOOD_NAME: Record<string, string> = {
  * ни к чему: она просто лежит на дне, прилипать — это уже поведение, а
  * поведение появляется вместе с телом.
  */
-const GLASS = { w: 100, h: 105 };
-const FLOOR_Y = 98;
-const WALL = { x: 7, y: 42, turn: 90 };
-const FLOOR = { x: 52, y: FLOOR_Y, turn: 0 };
+const GLASS_W = 100;
+/** Внутренний край стекла: за него культура не заходит. */
+const EDGE = 3;
+/**
+ * Насколько подошва утоплена в стенку.
+ *
+ * Ровно вплотную было бы честно, но покачивание поворачивает тело вокруг
+ * крепления, и на каждом взмахе подошва отрывалась бы от стекла на волос —
+ * а это ровно то, что читается как «висит в воздухе». Утопленная на волос
+ * подошва держится всегда.
+ */
+const BITE = 1.2;
+/** Доля высоты, на которой прилипший держится за стенку. */
+const WALL = { at: 0.38, turn: 90 };
+const FLOOR = { x: 52, turn: 0 };
 
 /** Куда смотрит существо в маленьком стекле: там оно просто стоит. */
 function portrait(creature: Creature): SVGSVGElement {
@@ -149,6 +161,20 @@ export class Lab {
   private readonly breedNote = el<HTMLSpanElement>('lab-breed-note');
   private readonly shelfNote = el<HTMLSpanElement>('lab-shelf-note');
 
+  /**
+   * Высота стекла в его собственных координатах.
+   *
+   * Ширина всегда сто, а высота — сколько выйдет по форме окна. Считаем её
+   * сами и в неё же ставим `viewBox`: иначе SVG впишет квадрат в прямоугольник
+   * с полями сверху и снизу, и «дно препарата» окажется краем невидимой
+   * полосы, а не стекла. Культура на нём и висела в воздухе.
+   */
+  private glassH = 105;
+
+  /** Гнездо кормёжки целиком: клавиша, подпись и строка состояния. */
+  private feedSlot: HTMLElement | null = null;
+  private feedState: HTMLElement | null = null;
+
   private view: LabView | null = null;
   private body: SVGGElement | null = null;
   private eyes: SVGGElement[] = [];
@@ -161,6 +187,10 @@ export class Lab {
 
   constructor(private readonly on: LabHandlers) {
     this.buildDials();
+    // Форма окна меняется от поворота телефона и от появления клавиатуры.
+    // Стекло обязано пересчитать свои координаты, иначе дно препарата
+    // разъедется с дном стекла.
+    new ResizeObserver(() => this.fit()).observe(this.glass);
     el<HTMLButtonElement>('lab-seed').addEventListener('click', () => void this.act(() => this.on.seed()));
     this.feedKey.addEventListener('click', () => void this.act(() => this.on.feed()));
     el<HTMLButtonElement>('lab-close').addEventListener('click', () => this.closeSheet());
@@ -181,8 +211,25 @@ export class Lab {
 
   show(): void {
     this.root.hidden = false;
+    this.fit();
     void this.reload();
     this.tick();
+  }
+
+  /**
+   * Подогнать систему координат стекла под то, каким его показал браузер.
+   * Зовётся при открытии и при всякой перемене размеров: поворот телефона
+   * меняет форму окна, а вместе с ней и дно препарата.
+   */
+  private fit(): void {
+    const rect = this.glass.getBoundingClientRect();
+    if (rect.width < 1) return;
+    const height = Math.max(60, Math.min(240, Math.round((GLASS_W * rect.height) / rect.width)));
+    if (height === this.glassH) return;
+    this.glassH = height;
+    this.glass.setAttribute('viewBox', `0 0 ${GLASS_W} ${height}`);
+    const creature = this.view?.incubator.creature ?? null;
+    this.drawDish(this.view?.incubator.lostAt === null ? creature : null);
   }
 
   hide(): void {
@@ -294,9 +341,20 @@ export class Lab {
     const feeding = alive && creature !== null && creature.stage >= 2;
     const medium = this.dialsEl.querySelector<HTMLElement>('.dial[data-dial="medium"]');
     if (medium) medium.hidden = feeding;
-    this.feedKey.hidden = !feeding;
+    if (this.feedSlot) this.feedSlot.hidden = !feeding;
     // Взрослая форма законсервирована: кормить её незачем.
     this.feedKey.disabled = creature?.stage !== 2;
+    /*
+     * Что с кормёжкой сегодня. Клавиша при этом **не запирается** после
+     * первой: перекорм — настоящая опасность ухода, и убрать её значило бы
+     * убрать половину игры. Но прибор говорит, что корм уже дан: ошибаться
+     * человек должен по невнимательности, а не потому, что ему не сказали.
+     */
+    if (this.feedState) {
+      this.feedState.textContent =
+        inc.feeds === 0 ? '' : inc.feeds === 1 ? 'дано' : 'перекорм';
+      this.feedState.className = `hint ${inc.feeds === 1 ? 'fits' : ''}`;
+    }
 
     this.drawDish(alive ? creature : null);
     this.renderDials();
@@ -360,7 +418,7 @@ export class Lab {
     // Всё, что под стеклом, обрезается его краем: за стеклом культуре
     // делать нечего.
     const clip = svgNode('clipPath', { id: 'petri-glass' });
-    clip.appendChild(svgNode('rect', { x: 1, y: 1, width: GLASS.w - 2, height: GLASS.h - 2, rx: 6 }));
+    clip.appendChild(svgNode('rect', { x: 1, y: 1, width: GLASS_W - 2, height: this.glassH - 2, rx: 6 }));
     this.glass.appendChild(clip);
 
     const shape = bodyOf(creature);
@@ -378,14 +436,29 @@ export class Lab {
      * ходит. Тело во весь окуляр было бы портретом, а не наблюдением.
      */
     const scale = 0.42;
-    const spot = creature.stage === 1 ? FLOOR : WALL;
-    const at = { x: spot.x, y: spot.y };
-    this.angle = spot.turn;
+    /*
+     * Куда поставить крепление, чтобы существо **касалось** стекла.
+     *
+     * Считаем из самого тела: у одних подошва широкая и выступает за
+     * крепление, у других её нет вовсе. Поставь всех по одной координате —
+     * и половина повиснет в воздухе, а половина уедет за стекло. Поэтому
+     * берём, насколько тело торчит ниже крепления, и на столько же отводим
+     * его от края.
+     */
+    const box = boundsOf(shape);
+    const below = (box.y + box.h - shape.anchor.y) * scale;
+    const cling = creature.stage !== 1;
+    // Прилипший к стенке развёрнут поперёк: его «низ» смотрит в стенку,
+    // то есть влево. У стоящего на дне низ смотрит вниз.
+    const at = cling
+      ? { x: EDGE + below - BITE, y: this.glassH * WALL.at }
+      : { x: FLOOR.x, y: this.glassH - EDGE - below + BITE };
+    this.angle = cling ? WALL.turn : FLOOR.turn;
 
     const group = svgNode('g');
     group.setAttribute(
       'transform',
-      `translate(${at.x} ${at.y}) rotate(${spot.turn}) scale(${scale}) translate(${-shape.anchor.x} ${-shape.anchor.y})`,
+      `translate(${at.x} ${at.y}) rotate(${this.angle}) scale(${scale}) translate(${-shape.anchor.x} ${-shape.anchor.y})`,
     );
     /*
      * Глаза живут **вне** повёрнутого тела.
@@ -511,9 +584,38 @@ export class Lab {
       this.dialsEl.appendChild(box);
       this.grip(box, dial);
     }
-    // Кормёжка живёт в том же гнезде, что и питательная среда: тумблер не
-    // прячется, а сменяется — своё дело среда сделала при вылуплении.
-    this.dialsEl.appendChild(this.feedKey);
+    /*
+     * Кормёжка живёт в том же гнезде, что и питательная среда, и выглядит
+     * тем же органом прибора: кольцо шайбы, колпачок, подпись под ним.
+     * Тумблер не прячется, а сменяется — своё дело среда сделала при
+     * вылуплении, и на её место встаёт клавиша.
+     *
+     * Внутри колпачка три крупинки — те же точки, из которых сделан весь
+     * прибор: корм здесь тоже точечный.
+     */
+    const slot = document.createElement('div');
+    slot.className = 'dial feed-slot';
+    this.feedKey.innerHTML =
+      `<svg viewBox="0 0 ${KNOB * 2} ${KNOB * 2}" aria-hidden="true">` +
+      `<circle cx="${KNOB}" cy="${KNOB - 6}" r="4.2" />` +
+      `<circle cx="${KNOB - 8}" cy="${KNOB + 6}" r="4.2" />` +
+      `<circle cx="${KNOB + 8}" cy="${KNOB + 6}" r="4.2" />` +
+      `</svg>`;
+    // Прячется теперь всё гнездо целиком, а не одна клавиша в нём: подпись
+    // без клавиши висела бы в ряду сама по себе.
+    this.feedKey.hidden = false;
+    slot.appendChild(this.feedKey);
+    const cap = document.createElement('span');
+    cap.className = 'cap';
+    cap.textContent = 'Корм';
+    slot.appendChild(cap);
+    const state = document.createElement('span');
+    state.className = 'hint';
+    state.id = 'lab-feed-state';
+    slot.appendChild(state);
+    this.dialsEl.appendChild(slot);
+    this.feedSlot = slot;
+    this.feedState = state;
   }
 
   /**

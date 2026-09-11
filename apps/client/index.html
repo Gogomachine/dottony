@@ -1103,15 +1103,15 @@
       касательной, и «пополз по краю» стало бы не отличить от «висит».
     */
     /*
-      Стекло меряется высотой, а не шириной: панель тумблеров под ним не
-      должна уезжать под корпус на низком экране, а препарат — вылезать на
-      неё. Что не влезло по высоте, то и определяет ширину.
+      Стекло занимает всё, что осталось от панели, — и по ширине, и по
+      высоте. Соотношение ему не задаётся: его считает сама лаборатория и
+      под него же выставляет систему координат. Пока размер задавался
+      здесь, а координаты были свои, SVG вписывался с полями — и культура
+      стояла на краю невидимой полосы, а не на дне препарата.
     */
     #lab-glass {
+      width: 100%;
       height: 100%;
-      width: auto;
-      max-width: 100%;
-      aspect-ratio: 1 / 1.05;
       border-radius: 10px;
       background: var(--scope);
       box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06), inset 0 6px 22px rgba(0, 0, 0, 0.6);
@@ -1179,23 +1179,45 @@
     .dial .hint.near { color: var(--silk-2); }
 
     /*
-      Кормёжка встаёт на место третьего тумблера — того же размера и в том
-      же гнезде: питательная среда своё дело сделала, и её место занимает
-      еда, а не пустота.
+      Кормёжка встаёт на место третьего тумблера — в то же гнездо, того же
+      размера и тем же органом прибора: кольцо шайбы, колпачок, подпись
+      под ним. Питательная среда своё дело сделала, и её место занимает
+      еда, а не пустота и не кнопка из браузера.
     */
+    .feed-slot { grid-column: 3; cursor: default; }
+    .feed-slot[hidden] { display: none; }
     .feed {
-      grid-column: 3;
-      align-self: center;
       width: 100%;
       max-width: 84px;
       aspect-ratio: 1 / 1;
       border-radius: 50%;
-      padding: 0;
-      font-size: 10px;
-      line-height: 1.15;
-      justify-self: center;
+      padding: 5px;
+      border: 1px solid var(--edge);
+      background: var(--case-2);
+      /* Колпачок утоплен в кольцо: клавиша прибора нажимается, а не гаснет. */
+      box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06), 0 1px 0 rgba(255, 255, 255, 0.5);
+      display: grid;
+      place-items: center;
+      cursor: pointer;
     }
-    .feed[hidden] { display: none; }
+    .feed svg {
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      background: var(--acc);
+      border: 1px solid var(--acc-edge);
+      box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.18), inset 0 2px 0 rgba(255, 255, 255, 0.22);
+      display: block;
+    }
+    .feed svg circle { fill: #fdfbf6; }
+    .feed:active svg {
+      box-shadow: inset 0 3px 7px rgba(0, 0, 0, 0.35);
+      transform: translateY(1px);
+    }
+    .feed:disabled { cursor: default; }
+    /* Законсервированную кормить незачем — клавиша это и показывает. */
+    .feed:disabled svg { background: var(--case-2); border-color: var(--edge); box-shadow: none; }
+    .feed:disabled svg circle { fill: var(--silk-2); opacity: 0.5; }
 
     /* Стёкла хранения и коллекция — в своём окне. */
     .lab-slots { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
