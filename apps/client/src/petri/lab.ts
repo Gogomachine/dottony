@@ -179,6 +179,9 @@ export class Lab {
   private feedSlot: HTMLElement | null = null;
   private feedState: HTMLElement | null = null;
 
+  /** Крупинки корма, летящие в стекло: ответ прибора на нажатие клавиши. */
+  private crumbs: { node: SVGCircleElement; x: number; from: number; to: number; at: number }[] = [];
+
   private view: LabView | null = null;
   private body: SVGGElement | null = null;
   private eyes: SVGGElement[] = [];
@@ -196,7 +199,15 @@ export class Lab {
     // разъедется с дном стекла.
     new ResizeObserver(() => this.fit()).observe(this.glass);
     el<HTMLButtonElement>('lab-seed').addEventListener('click', () => void this.act(() => this.on.seed()));
-    this.feedKey.addEventListener('click', () => void this.act(() => this.on.feed()));
+    this.feedKey.addEventListener('click', () => {
+      // Клавиша проваливается сразу, не дожидаясь сервера: палец должен
+      // почувствовать нажатие в тот же миг, а не через дорогу до сервера и
+      // обратно. Если сервер откажет, мы это скажем строкой.
+      this.press();
+      void this.act(() => this.on.feed()).then((done) => {
+        if (done) this.crumble();
+      });
+    });
     el<HTMLButtonElement>('lab-close').addEventListener('click', () => this.closeSheet());
     this.breedKey.addEventListener('click', () => void this.act(() => this.on.breed(), true));
   }
@@ -292,17 +303,76 @@ export class Lab {
   }
 
   /** Одно действие за раз: две кормёжки в один клик — уже перекорм. */
-  private async act(what: () => Promise<LabView>, sheet = false): Promise<void> {
-    if (this.busy) return;
+  private async act(what: () => Promise<LabView>, sheet = false): Promise<boolean> {
+    if (this.busy) return false;
     this.busy = true;
     try {
       this.apply(await what());
       if (sheet) this.renderSheet();
+      return true;
     } catch (error) {
       this.tell(this.why(error));
+      return false;
     } finally {
       this.busy = false;
     }
+  }
+
+  /** Ход клавиши: вниз и обратно. Без него нажатие ничем не отзывается. */
+  private press(): void {
+    this.feedKey.classList.add('press');
+    window.setTimeout(() => this.feedKey.classList.remove('press'), 130);
+  }
+
+  /**
+   * Корм сыплется в стекло.
+   *
+   * Это и есть ответ прибора на нажатие: провалившаяся клавиша говорит, что
+   * её нажали, а крупинки — что от этого что-то произошло. Без них кормёжка
+   * меняла только маленькую подпись под клавишей, и нажатие выглядело
+   * несработавшим.
+   */
+  private crumble(): void {
+    const layer = this.glass.querySelector('g[clip-path]');
+    if (layer === null) return;
+    const now = performance.now() / 1000;
+    for (let i = 0; i < 4; i++) {
+      const node = svgNode('circle', { r: 1.7, fill: '#f0e7d2' });
+      layer.appendChild(node);
+      this.crumbs.push({
+        node,
+        x: GLASS_W * (0.34 + i * 0.11),
+        from: EDGE + 2,
+        to: this.glassH - EDGE - 2,
+        // Сыплются не разом: горсть, а не четыре одинаковые точки.
+        at: now + i * 0.11,
+      });
+    }
+  }
+
+  /** Падение крупинок: разгон, касание дна и тихое исчезновение. */
+  private fall(now: number): void {
+    if (this.crumbs.length === 0) return;
+    const left: typeof this.crumbs = [];
+    for (const crumb of this.crumbs) {
+      const t = now - crumb.at;
+      if (t > 1.9) {
+        crumb.node.remove();
+        continue;
+      }
+      left.push(crumb);
+      if (t < 0) {
+        crumb.node.setAttribute('fill-opacity', '0');
+        continue;
+      }
+      // Ускорение, а не равномерный ход: падает, а не спускается.
+      const drop = Math.min(1, t * t * 2.4);
+      crumb.node.setAttribute('cx', crumb.x.toFixed(2));
+      crumb.node.setAttribute('cy', (crumb.from + (crumb.to - crumb.from) * drop).toFixed(2));
+      // Полежав на дне, крупинка растворяется в среде.
+      crumb.node.setAttribute('fill-opacity', (t < 1.2 ? 0.9 : Math.max(0, 0.9 - (t - 1.2) * 1.3)).toFixed(2));
+    }
+    this.crumbs = left;
   }
 
   /**
@@ -412,6 +482,9 @@ export class Lab {
    */
   private drawDish(creature: Creature | null): void {
     this.glass.textContent = '';
+    // Стекло перерисовано — крупинки с него тоже стёрлись: держать список
+    // узлов, которых уже нет в разметке, значит однажды на них наткнуться.
+    this.crumbs = [];
     this.body = null;
     this.eyes = [];
     this.shape = null;
@@ -542,6 +615,9 @@ export class Lab {
   private tick = (): void => {
     if (!this.open) return;
     this.frame = requestAnimationFrame(this.tick);
+    // Крупинки летят своим чередом: они не часть тела, и падать должны
+    // даже тогда, когда в стекле рисовать некого.
+    this.fall(performance.now() / 1000);
     const body = this.body;
     const shape = this.shape;
     if (body === null || shape === null) return;
@@ -710,7 +786,10 @@ export class Lab {
   private renderDials(): void {
     const view = this.view;
     if (view === null) return;
-    for (const box of this.dialsEl.querySelectorAll<HTMLElement>('.dial')) {
+    // Только тумблеры: гнездо кормёжки стоит в том же ряду и той же
+    // разметкой, и без этой проверки обход стирал его подпись — «дано»
+    // появлялось и тут же пропадало.
+    for (const box of this.dialsEl.querySelectorAll<HTMLElement>('.dial[data-dial]')) {
       const dial = box.dataset.dial as Dial;
       const value = view.incubator.dials[dial];
       // Ручка ходит на 270°: край шкалы должен быть виден как край, а не как

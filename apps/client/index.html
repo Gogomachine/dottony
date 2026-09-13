@@ -1076,7 +1076,16 @@
       стоит под ним, а не поверх. Прибор тот же, но развёрнут под другую
       работу — как у настоящего инкубатора, где стекло больше индикатора.
     */
-    :root[data-kind='lab'] .scope { aspect-ratio: 1 / 1.62; }
+    :root[data-kind='lab'] .scope {
+      aspect-ratio: 1 / 1.62;
+      /*
+        Кант окуляра в лаборатории серый, а не стеклянный. Чёрная обводка с
+        белым бликом снизу — это кант **стекла**: он говорит «здесь начинается
+        окуляр». А в лаборатории на этом месте корпус с тумблерами, и
+        стеклянный кант вокруг него читался как рамка вокруг рамки.
+      */
+      box-shadow: inset 0 0 0 1px var(--edge);
+    }
     /*
       Экранчик резонанса лаборатории не нужен: считать ей нечего, а строку
       состояния она говорит в своей панели. Плашка над стеклом только
@@ -1186,12 +1195,18 @@
     */
     .feed-slot { grid-column: 3; cursor: default; }
     .feed-slot[hidden] { display: none; }
+    /*
+      Клавиша меньше шайбы нарочно: тумблер крутят подушечкой, по нему
+      ведут, и он обязан быть крупным. По клавише бьют кончиком пальца — ей
+      хватает меньшего, и разный размер сразу говорит, что это разные органы.
+    */
     .feed {
       width: 100%;
-      max-width: 84px;
+      max-width: 64px;
       aspect-ratio: 1 / 1;
       border-radius: 50%;
-      padding: 5px;
+      padding: 4px;
+      margin: 8px 0;
       border: 1px solid var(--edge);
       background: var(--case-2);
       /* Колпачок утоплен в кольцо: клавиша прибора нажимается, а не гаснет. */
@@ -1206,13 +1221,16 @@
       border-radius: 50%;
       background: var(--acc);
       border: 1px solid var(--acc-edge);
-      box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.18), inset 0 2px 0 rgba(255, 255, 255, 0.22);
+      box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.22), inset 0 2px 0 rgba(255, 255, 255, 0.24);
       display: block;
+      /* Ход клавиши: вниз она идёт мгновенно, назад — отпускается. */
+      transition: transform 90ms ease-out, box-shadow 90ms ease-out;
     }
     .feed svg circle { fill: #fdfbf6; }
-    .feed:active svg {
-      box-shadow: inset 0 3px 7px rgba(0, 0, 0, 0.35);
-      transform: translateY(1px);
+    .feed:active svg,
+    .feed.press svg {
+      box-shadow: inset 0 4px 8px rgba(0, 0, 0, 0.4);
+      transform: translateY(2px) scale(0.94);
     }
     .feed:disabled { cursor: default; }
     /* Законсервированную кормить незачем — клавиша это и показывает. */
