@@ -135,8 +135,6 @@ const chainCountEl = el<HTMLDivElement>('chain-count');
 const seedEl = el<HTMLSpanElement>('seed');
 /** Верхняя строка подвала: чем прибор занят. */
 const brandEl = el<HTMLElement>('brand-line');
-/** Устройство прибора: четыре цвета сигнала и поле шесть на шесть. */
-const BRAND_LINE = '4 сигнала · 36 точек';
 const overlay = el<HTMLDivElement>('game-over');
 const overTitleEl = el<HTMLHeadingElement>('over-title');
 const overNoteEl = el<HTMLParagraphElement>('over-note');
@@ -2035,6 +2033,20 @@ function setMode(next: Mode): void {
 const KIND_NAME: Record<DeviceMode, string> = { chain: 'Цепочки', order: 'Тап', lab: 'Лаб' };
 
 /**
+ * Чем прибор занят — верхняя строка подвала.
+ *
+ * Раньше там стояло его устройство: «4 сигнала · 36 точек». Устройство у
+ * прибора одно и то же всегда, и читать его каждый раз незачем — оно уже
+ * стоит в шапке (`DOTOSCOPE · MODEL 36`). А вот занятие меняется, и внизу
+ * корпуса ему самое место: над номером того, над чем прибор занят.
+ */
+const KIND_DOING: Record<DeviceMode, string> = {
+  chain: 'цепочки',
+  order: 'тап',
+  lab: 'выращивание',
+};
+
+/**
  * Переключатель ходит по кругу: цепочки → тап → лаб → цепочки.
  *
  * Третье положение — не механика, а второй прибор той же компании, и живёт
@@ -2086,7 +2098,11 @@ function other(kind: DeviceMode): DeviceMode {
 function applyKind(): void {
   // Цвет корпуса — механика того, что идёт прямо сейчас: в матче это
   // механика матча (друг мог позвать в свою), вне матча — своя.
-  document.documentElement.dataset.kind = inDuel ? duelKind : deviceKind;
+  const doing = inDuel ? duelKind : deviceKind;
+  document.documentElement.dataset.kind = doing;
+  // Подвал называет занятие той же механикой, что и корпус: в чужой дуэли
+  // прибор занят её механикой, а не той, что стоит на переключателе.
+  brandEl.textContent = KIND_DOING[doing];
   el<HTMLElement>('menu-kind').textContent = KIND_NAME[deviceKind].toLowerCase();
   // В меню видна только своя механика: у каждой свой одиночный режим.
   for (const [go, kind] of [
@@ -2124,9 +2140,8 @@ function applyKind(): void {
     // слова над ними не ставит никто, кроме этого места.
     scoreLabelEl.textContent = 'Потенциал';
     timeLabelEl.textContent = 'Время';
-    // И подвал: лаборатория подписывала его выращиванием и номером
-    // культуры, а у прибора там своё устройство и расклад поля.
-    brandEl.textContent = BRAND_LINE;
+    // И номер образца: лаборатория ставила туда номер культуры, а в игре
+    // образец — это расклад поля.
     seedEl.textContent = `образец #${session.seed.toString(16)}`;
     vsFieldEl.hidden = !inDuel;
     miniCache = '';
@@ -2463,11 +2478,10 @@ const lab = new Lab({
     el<HTMLElement>('menu-lab-slots').textContent = state.slots;
     el<HTMLElement>('menu-lab-tell').textContent = state.tell;
     /*
-     * Подвал корпуса: сверху — чем прибор занят, снизу — номер того, над
-     * чем он занят. У лаборатории это выращивание и номер культуры, а не
-     * устройство поля и его расклад: поля здесь нет вовсе.
+     * Номер образца в подвале: у лаборатории образец — культура под
+     * стеклом, а не расклад поля. Занятие над ним подписывает `applyKind`:
+     * оно меняется только вместе с положением переключателя.
      */
-    brandEl.textContent = 'выращивание';
     seedEl.textContent = state.sample;
   },
 });
