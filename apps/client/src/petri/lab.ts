@@ -168,6 +168,7 @@ export class Lab {
   private readonly dialsEl = el<HTMLDivElement>('lab-dials');
   private readonly feedKey = el<HTMLButtonElement>('lab-feed');
   private readonly sheet = el<HTMLDivElement>('lab-sheet');
+  private readonly shelfSheet = el<HTMLDivElement>('lab-shelf-sheet');
   private readonly slotsEl = el<HTMLDivElement>('lab-slots');
   private readonly shelfEl = el<HTMLDivElement>('lab-shelf');
   private readonly breedKey = el<HTMLButtonElement>('lab-breed');
@@ -220,6 +221,7 @@ export class Lab {
       });
     });
     el<HTMLButtonElement>('lab-close').addEventListener('click', () => this.closeSheet());
+    el<HTMLButtonElement>('lab-shelf-close').addEventListener('click', () => this.closeSheet());
     this.breedKey.addEventListener('click', () => void this.act(() => this.on.breed(), true));
   }
 
@@ -265,13 +267,21 @@ export class Lab {
     this.frame = 0;
   }
 
+  /** Закрывает оба окна лаборатории: клавиша прибора закрывает то, что открыто. */
   closeSheet(): void {
     this.sheet.hidden = true;
+    this.shelfSheet.hidden = true;
   }
 
-  /** Открыто ли окно стёкол — прибору это нужно, чтобы знать, что закрывать. */
+  /** Открыто ли хоть одно окно лаборатории. */
   get sheetOpen(): boolean {
-    return !this.sheet.hidden;
+    return !this.sheet.hidden || !this.shelfSheet.hidden;
+  }
+
+  /** Коллекция: свой архив, а не хвост окна стёкол. */
+  openShelf(): void {
+    this.shelfSheet.hidden = false;
+    this.renderShelf();
   }
 
   private async reload(): Promise<void> {
@@ -912,8 +922,22 @@ export class Lab {
         : 'Нужны двое взрослых на стёклах хранения';
     this.breedKey.disabled = inc !== null && view.incubator.lostAt === null;
 
+    this.renderShelf();
+  }
+
+  /**
+   * Коллекция. Архив, а не витрина: сюда уходят все, кого довели до взрослой
+   * формы, и оба родителя после скрещивания — она растёт вдвое быстрее линии.
+   *
+   * В подписи стоит поколение: низкий номер значит близость к дикому предку,
+   * и число таких только убывает. Это встроенная редкость, без единого
+   * искусственного правила.
+   */
+  private renderShelf(): void {
+    const view = this.view;
+    if (view === null) return;
     this.shelfEl.textContent = '';
-    for (const creature of view.collection.slice(0, 24)) {
+    for (const creature of view.collection.slice(0, 60)) {
       const figure = document.createElement('figure');
       figure.appendChild(portrait(creature));
       const cap = document.createElement('figcaption');
@@ -923,7 +947,8 @@ export class Lab {
     }
     this.shelfNote.textContent =
       view.collection.length === 0
-        ? 'Пусто. Сюда уходят те, кого довели до взрослой формы.'
-        : `Всего: ${view.collection.length}`;
+        ? 'Пусто. Сюда уходят те, кого довели до взрослой формы, и родители после скрещивания.'
+        : `Всего: ${view.collection.length}` +
+          (view.collection.length > 60 ? ' · показаны последние 60' : '');
   }
 }

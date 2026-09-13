@@ -2099,6 +2099,15 @@ function applyKind(): void {
     const row = document.querySelector<HTMLElement>(`#menu-list li[data-go="${go}"]`);
     if (row) row.hidden = deviceKind !== 'lab';
   }
+  /*
+   * Под списком: в лаборатории обучения нет — показ объясняет цепочки на
+   * настоящем поле, а поля здесь не бывает. Его место занимает коллекция.
+   * Правила остаются, но текст у них свой.
+   */
+  el<HTMLButtonElement>('menu-tutorial').hidden = deviceKind === 'lab';
+  el<HTMLButtonElement>('menu-shelf').hidden = deviceKind !== 'lab';
+  el<HTMLElement>('rules-game').hidden = deviceKind === 'lab';
+  el<HTMLElement>('rules-lab').hidden = deviceKind !== 'lab';
   for (const go of ['draw', 'tourney', 'duel']) {
     const row = document.querySelector<HTMLElement>(`#menu-list li[data-go="${go}"]`);
     if (row) row.hidden = deviceKind === 'lab';
@@ -2149,6 +2158,10 @@ const MENU_ACTIONS: Record<string, () => void> = {
   glasses: () => {
     closeMenu();
     lab.openSheet();
+  },
+  shelf: () => {
+    closeMenu();
+    lab.openShelf();
   },
   rules: () => {
     rulesSheet.hidden = false;
