@@ -65,18 +65,24 @@ export function labDaysBetween(from: string, to: string): number {
 export const HATCH_HOURS = 12;
 
 /**
- * Сколько хороших суток на второй стадии до взрослой формы.
+ * Сколько часов идёт вторая стадия.
  *
- * Три дня от точки до взрослого: сутки на вылупление и двое на рост. Это
- * рычаг темпа, и он тут не случайно самый доступный: при одном инкубаторе
- * одно скрещивание — это два выращивания подряд, и каждый лишний день
- * цикла отодвигает первую самостоятельную мутацию на недели.
+ * Полтора дня от точки до взрослого: полсуток на вылупление и сутки на
+ * рост. Часы, а не календарные сутки, — по той же причине, что и у
+ * вылупления: «поставил вечером — утром посмотрел» работает только тогда,
+ * когда прибор считает от мига, а не от полуночи.
  *
- * Считаются **хорошие** сутки, а не календарные: небрежный день не
- * засчитывается вовсе. Иначе «нормальный уход» из условия роста
- * превращается в украшение — расти можно и мимоходом.
+ * Сутки эти настоящие, но не даровые, и держат их два правила:
+ *
+ * 1. Небрежные сутки отодвигают срок ещё на столько же (`advance`). Иначе
+ *    время шло бы само, а голод и чужая среда не стоили бы ничего: до
+ *    гибели за одни сутки роста дело не доходит.
+ * 2. Взрослеет существо не по будильнику, а в первый час после срока,
+ *    когда оно сыто и стоит в своих условиях (`growing`). Иначе срок,
+ *    выпавший на ночь после сброса тумблеров, проходил бы вообще без
+ *    всякого ухода.
  */
-export const GROW_DAYS = 2;
+export const GROW_HOURS = 24;
 
 /**
  * Сколько суток небрежения до гибели.
@@ -111,8 +117,15 @@ export interface Incubator {
   feeds: number;
   /** Суток небрежения подряд. */
   neglect: number;
-  /** Хороших суток на второй стадии. */
-  goodDays: number;
+  /**
+   * Когда существо готово повзрослеть — миг по настоящим часам.
+   *
+   * Ставится при вылуплении и отодвигается за каждые небрежные сутки.
+   * Хранится срок, а не остаток: между двумя взглядами на прибор может
+   * пройти неделя, и срок за неё надо пересчитать задним числом — ровно
+   * так же, как пересчитываются пропущенные сутки.
+   */
+  growAt: string | null;
   /**
    * Первый питомец бессмертен: он туториальный. На нём учатся читать
    * поведение, и учиться этому ценой недели выращивания — плохая сделка.
@@ -144,6 +157,52 @@ export function dialsOf(inc: Incubator): Dials {
 /** Живо ли существо и есть ли за кем ухаживать. */
 export function alive(inc: Incubator): boolean {
   return inc.creature !== null && inc.lostAt === null;
+}
+
+/** Когда точка вылупится — миг по настоящим часам. Не точка — `null`. */
+export function hatchTime(creature: Creature | null): Date | null {
+  if (creature === null || creature.stage !== 1) return null;
+  const born = Date.parse(creature.createdAt);
+  if (Number.isNaN(born)) return null;
+  return new Date(born + HATCH_HOURS * 3600_000);
+}
+
+/**
+ * Всё ли хорошо у существа прямо сейчас: сыто, не перекормлено и стоит в
+ * своих условиях.
+ *
+ * Те же три условия, по которым судятся сутки, — но спрошенные в эту самую
+ * минуту. По ним прибор решает, пускать ли во взрослую форму: срок мог
+ * выпасть на ночь после сброса тумблеров, и взрослеть в такой час значило
+ * бы вырасти без всякого ухода.
+ */
+export function growing(inc: Incubator): boolean {
+  const creature = inc.creature;
+  if (creature === null || creature.stage !== 2 || inc.lostAt !== null) return false;
+  const species = speciesOf(creature);
+  if (species === null) return false;
+  if (inc.feeds !== 1) return false;
+  return envFits(species, dialsOf(inc));
+}
+
+/** Дошёл ли срок взросления к этому мигу. */
+export function growDue(inc: Incubator, now: Date): boolean {
+  if (inc.growAt === null || inc.creature?.stage !== 2 || inc.lostAt !== null) return false;
+  const due = Date.parse(inc.growAt);
+  return !Number.isNaN(due) && now.getTime() >= due;
+}
+
+/**
+ * Повзрослеть, если срок дошёл и уход на этот миг в порядке.
+ *
+ * Спрашивается не только при досчёте суток, но и после каждого действия:
+ * тот, кто покормил просроченное существо, должен увидеть взрослую форму в
+ * ответе на свою же кормёжку, а не при следующем взгляде на прибор.
+ */
+export function ripen(inc: Incubator, now: Date): Incubator {
+  const creature = inc.creature;
+  if (creature === null || !growDue(inc, now) || !growing(inc)) return inc;
+  return { ...inc, creature: { ...creature, stage: 3 }, growAt: null };
 }
 
 /**
@@ -237,7 +296,7 @@ export function advance(inc: Incubator, now: Date): { inc: Incubator; log: DayLo
    * дальше это уже не замес, а уход, и мерки у него другие. Третий тумблер
    * с этого момента и вовсе уходит с корпуса, уступая место кормёжке.
    */
-  const hatch = (): void => {
+  const hatch = (at: Date): void => {
     const creature = state.creature;
     if (creature === null) return;
     state = {
@@ -245,17 +304,36 @@ export function advance(inc: Incubator, now: Date): { inc: Incubator; log: DayLo
       creature: { ...creature, stage: 2, axes: axesOf(dialsOf(state)) },
       dials: null,
       feeds: 0,
-      goodDays: 0,
+      // Сутки роста отсчитываются от вылупления, а не от полуночи: прибор
+      // обещал срок в часах и обязан его держать.
+      growAt: new Date(at.getTime() + GROW_HOURS * 3600_000).toISOString(),
       neglect: 0,
     };
   };
 
-  /** Пора ли вылупляться к этому мигу. */
-  const ripe = (at: Date): boolean => {
-    const creature = state.creature;
-    if (creature === null || creature.stage !== 1 || state.lostAt !== null) return false;
-    const born = Date.parse(creature.createdAt);
-    return !Number.isNaN(born) && at.getTime() - born >= HATCH_HOURS * 3600_000;
+  /** Когда вылупится, если ещё точка и жива. */
+  const ripeAt = (): Date | null => (state.lostAt === null ? hatchTime(state.creature) : null);
+
+  /**
+   * Повзрослеть, если срок дошёл и уход на этот миг в порядке.
+   *
+   * Возвращает `true`, если взрослая форма наступила именно сейчас. Отказ
+   * ничего не отодвигает: небрежное просто ждёт следующего часа, когда
+   * станет сытым и попадёт в свои условия.
+   */
+  const mature = (at: Date): boolean => {
+    const next = ripen(state, at);
+    if (next === state) return false;
+    state = next;
+    return true;
+  };
+
+  /** Небрежные сутки отодвигают срок ещё на столько же. */
+  const postpone = (): void => {
+    if (state.growAt === null) return;
+    const due = Date.parse(state.growAt);
+    if (Number.isNaN(due)) return;
+    state = { ...state, growAt: new Date(due + GROW_HOURS * 3600_000).toISOString() };
   };
 
   // Часы могли уйти назад (перевод времени, чужая машина) — тогда считать
@@ -267,26 +345,28 @@ export function advance(inc: Incubator, now: Date): { inc: Incubator; log: DayLo
 
   for (let i = 0; i < passed; i++) {
     const day = state.day;
+    const end = labDayEnd(day);
     // Вылупление внутри этих суток: тогда они не судятся как уход. Точка
     // часть дня была точкой, и спрашивать с неё кормёжку не за что.
-    const hatched = ripe(labDayEnd(day));
-    if (hatched) hatch();
+    const at = ripeAt();
+    const hatched = at !== null && at.getTime() <= end.getTime();
+    if (hatched && at !== null) hatch(at);
+    // Взросление — до суда над сутками: к полуночи оно либо состоялось (и
+    // тогда сутки уже не про уход), либо срок ещё не дошёл.
+    const matured = mature(end);
     const verdict = hatched ? 'point' : dayVerdict(state);
-    let grew: Stage | null = hatched ? 2 : null;
+    const grew: Stage | null = hatched ? 2 : matured ? 3 : null;
     let lost = false;
     const creature = state.creature;
 
     if (creature !== null && state.lostAt === null && !hatched) {
       if (verdict === 'good') {
-        const goodDays = state.goodDays + 1;
-        state = { ...state, goodDays, neglect: Math.max(0, state.neglect - 1) };
-        if (goodDays >= GROW_DAYS) {
-          state = { ...state, creature: { ...creature, stage: 3 } };
-          grew = 3;
-        }
+        state = { ...state, neglect: Math.max(0, state.neglect - 1) };
       } else if (verdict !== 'stable' && verdict !== 'point') {
         const neglect = state.neglect + 1;
         state = { ...state, neglect };
+        // Небрежные сутки не просто не в зачёт: они стоят суток роста.
+        postpone();
         if (neglect >= NEGLECT_DEATH && !state.immortal) {
           state = { ...state, lostAt: day };
           lost = true;
@@ -311,11 +391,15 @@ export function advance(inc: Incubator, now: Date): { inc: Incubator; log: DayLo
   // Если оборвались на гибели, до сегодня всё равно надо дойти: мёртвому
   // стеклу сутки ничего не делают.
   state = { ...state, day: today };
-  // И наконец — вылупление в текущих, ещё не кончившихся сутках: человек
-  // должен увидеть форму в тот час, когда она появилась, а не в полночь.
-  if (ripe(now)) {
-    hatch();
+  // И наконец — текущие, ещё не кончившиеся сутки: человек должен увидеть
+  // и форму, и взрослый рост в тот час, когда они наступили, а не в полночь.
+  const at = ripeAt();
+  if (at !== null && at.getTime() <= now.getTime()) {
+    hatch(at);
     log.push({ day: today, verdict: 'point', grew: 2, lost: false });
+  }
+  if (mature(now)) {
+    log.push({ day: today, verdict: 'stable', grew: 3, lost: false });
   }
   return { inc: state, log };
 }

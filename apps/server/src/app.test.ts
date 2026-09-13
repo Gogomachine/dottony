@@ -58,6 +58,7 @@ import type {
 import {
   CARE_DIALS,
   HATCH_HOURS,
+  GROW_HOURS,
   LAB_TZ_HOURS,
   SEED_PRICE,
   comfortOf,
@@ -4162,7 +4163,10 @@ describe('PETRIDOT', () => {
     let view = await desk.look();
     expect(view.incubator.creature?.stage).toBe(2);
     let day = from + 1;
-    for (let i = 0; i < view.incubator.grow; i++) {
+    // Часы роста идут, пока существо сыто и стоит в своих условиях.
+    // Заходим каждый полдень, выставляем комфорт и кормим — и так пока не
+    // наберётся суточная норма хороших часов.
+    while (view.incubator.creature?.stage === 2 && day < from + 8) {
       await desk.act('dials', comfyFor(view.incubator.creature!));
       await desk.act('feed');
       day += 1;
@@ -4259,6 +4263,47 @@ describe('PETRIDOT', () => {
     }
   });
 
+  it('лаборатория: вторая стадия — сутки, и в срок взрослеет только ухоженное', async () => {
+    // Сутки настоящие, от вылупления, а не «двое суток по календарю». Но
+    // даром они не идут: в свой час взрослеет только сытое и стоящее в
+    // своих условиях — иначе срок, выпавший на ночь после сброса
+    // тумблеров, проходил бы вообще без ухода.
+    const desk = await bench();
+    try {
+      const sown = new Date(noonAt(15).getTime() + 2 * 3600_000);
+      vi.setSystemTime(sown);
+      await desk.act('seed');
+      await desk.act('dials', recipeOf({ color: 'yellow', axes: { temp: 1, humidity: 1, medium: 1 } }));
+
+      const hatched = new Date(sown.getTime() + HATCH_HOURS * 3600_000);
+      vi.setSystemTime(hatched);
+      let view = await desk.look();
+      expect(view.incubator.creature?.stage).toBe(2);
+      expect(Date.parse(view.incubator.growAt!) - hatched.getTime()).toBe(GROW_HOURS * 3600_000);
+
+      // День ухода: тумблеры в комфорт и корм — ровно один.
+      await desk.act('dials', comfyFor(view.incubator.creature!));
+      await desk.act('feed');
+
+      // Срок дошёл, но пришёл он ночью, после сброса: существо голодно и
+      // стоит невесть в чём, и взрослой формы ему не дают.
+      const due = new Date(Date.parse(view.incubator.growAt!));
+      vi.setSystemTime(due);
+      view = await desk.look();
+      expect(view.incubator.creature?.stage).toBe(2);
+      expect(view.incubator.growing).toBe(false);
+
+      // А как только уход в порядке — взрослеет в тот же миг, в ответе на
+      // свою же кормёжку.
+      await desk.act('dials', comfyFor(view.incubator.creature!));
+      const fed = await desk.act('feed');
+      expect(fed.body.incubator.creature?.stage).toBe(3);
+    } finally {
+      await desk.app.close();
+      vi.useRealTimers();
+    }
+  });
+
   it('лаборатория: комфорт остаётся на сервере', async () => {
     // Пришли его клиенту — и вся игра в уход кончится в тот вечер, когда
     // кто-нибудь откроет ответ сервера.
@@ -4281,7 +4326,7 @@ describe('PETRIDOT', () => {
     }
   });
 
-  it('лаборатория: взрослая форма приходит за хорошие сутки', async () => {
+  it('лаборатория: взрослая форма приходит за сутки хороших часов', async () => {
     const desk = await bench();
     try {
       const { grown } = await raise(desk, 15);

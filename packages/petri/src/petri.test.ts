@@ -31,7 +31,9 @@ import {
   COLORS,
   zoneOf,
   zoneMiddle,
-  GROW_DAYS,
+  GROW_HOURS,
+  growing,
+  ripen,
   NEGLECT_DEATH,
   MAX_MUTATIONS,
   MISS_GUARANTEE,
@@ -78,7 +80,7 @@ function seeded(species: Species, day = labDay(START)): Incubator {
     day,
     feeds: 0,
     neglect: 0,
-    goodDays: 0,
+    growAt: null,
     immortal: false,
     lostAt: null,
   };
@@ -272,11 +274,35 @@ describe('рост и уход', () => {
     expect(after.creature?.axes).toEqual(YELLOW.axes);
   });
 
-  it('взрослая форма приходит за хорошие сутки, а не за календарные', () => {
-    let inc = hatched(YELLOW);
-    expect(inc.creature?.stage).toBe(2);
-    for (let i = 0; i < GROW_DAYS; i++) inc = tended(inc, YELLOW, careDay(i));
+  it('взрослая форма приходит через сутки после вылупления', () => {
+    // Уход держат оба дня: в полночь тумблеры и кормёжка сбрасываются, и
+    // утром всё выставляют заново.
+    let inc = tended(hatched(YELLOW), YELLOW, HATCH_HOURS + 12);
+    inc = tended(inc, YELLOW, HATCH_HOURS + GROW_HOURS);
     expect(inc.creature?.stage).toBe(3);
+    expect(inc.growAt).toBeNull();
+  });
+
+  it('небрежные сутки отодвигают взрослую форму ещё на сутки', () => {
+    // Сутки роста даром не идут: пропустил день — срок уехал на день.
+    const start = hatched(YELLOW);
+    const due = Date.parse(start.growAt!);
+    // Сутки прошли мимо: ни корма, ни своих условий.
+    const missed = advance(setDials(start, wrong(YELLOW)), at(careDay(0))).inc;
+    expect(Date.parse(missed.growAt!) - due).toBe(GROW_HOURS * 3600_000);
+    expect(missed.creature?.stage).toBe(2);
+  });
+
+  it('в срок взрослеет только ухоженное, остальные ждут своего часа', () => {
+    // Срок может выпасть на ночь после сброса тумблеров или на час, когда
+    // среда сбита. Взрослеть тогда значило бы вырасти без всякого ухода.
+    const due = at(HATCH_HOURS + GROW_HOURS);
+    let inc = tended(hatched(YELLOW), YELLOW, HATCH_HOURS + 12);
+    inc = advance(feed(setDials(inc, wrong(YELLOW))), due).inc;
+    expect(inc.creature?.stage).toBe(2);
+    expect(growing(inc)).toBe(false);
+    // И вырастает в тот самый миг, когда уход приходит в порядок.
+    expect(ripen(setDials(inc, comfy(YELLOW)), due).creature?.stage).toBe(3);
   });
 
   it('небрежные сутки в зачёт роста не идут', () => {
@@ -284,7 +310,6 @@ describe('рост и уход', () => {
     // Кормили, но среду выставили мимо — сутки потрачены зря.
     inc = advance(feed(setDials(inc, wrong(YELLOW))), at(careDay(0))).inc;
     expect(inc.creature?.stage).toBe(2);
-    expect(inc.goodDays).toBe(0);
     expect(inc.neglect).toBe(1);
   });
 
@@ -339,10 +364,10 @@ describe('рост и уход', () => {
   });
 
   it('взрослая форма законсервирована: сутки ей ничего не делают', () => {
-    let inc = hatched(YELLOW);
-    for (let i = 0; i < GROW_DAYS; i++) inc = tended(inc, YELLOW, careDay(i));
+    let inc = tended(hatched(YELLOW), YELLOW, HATCH_HOURS + 12);
+    inc = tended(inc, YELLOW, HATCH_HOURS + GROW_HOURS);
     expect(inc.creature?.stage).toBe(3);
-    const later = advance(inc, at(careDay(GROW_DAYS + 20))).inc;
+    const later = advance(inc, at(HATCH_HOURS + GROW_HOURS + 24 * 20)).inc;
     expect(later.lostAt).toBeNull();
     expect(later.creature?.stage).toBe(3);
   });

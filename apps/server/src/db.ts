@@ -391,7 +391,12 @@ export class Store {
            dials TEXT,
            feeds INTEGER NOT NULL DEFAULT 0,
            neglect INTEGER NOT NULL DEFAULT 0,
-           good_days INTEGER NOT NULL DEFAULT 0,
+           /*
+            * Срок взросления: миг, когда подросток будет готов ко взрослой
+            * форме. Вторая стадия меряется часами, а не сутками, и каждые
+            * небрежные сутки этот срок отодвигают.
+            */
+           grow_at TEXT,
            /* Сколько точек уже брали: первая бесплатна, дальше по цене. */
            seeded INTEGER NOT NULL DEFAULT 0,
            /* Скрытый счётчик неудач скрещивания. Игроку не показывается. */
@@ -528,6 +533,9 @@ export class Store {
     // бы со счётом. У матчей, сыгранных до заявок, колонка пуста.
     await this.addColumnIfMissing('duels', 'kind', "TEXT NOT NULL DEFAULT 'chain'");
     await this.addColumnIfMissing('duels', 'claims', 'TEXT');
+    // Вторая стадия лаборатории считалась хорошими сутками, а стала сроком
+    // в часах: у стёкол, заведённых до этого, колонки ещё нет.
+    await this.addColumnIfMissing('petri_labs', 'grow_at', 'TEXT');
     await this.client.execute(
       'CREATE UNIQUE INDEX IF NOT EXISTS idx_users_friend_code ON users (friend_code)',
     );
@@ -2399,7 +2407,7 @@ export class Store {
       args: [userId, seed >>> 0, day],
     });
     const rows = await this.client.execute({
-      sql: `SELECT seed, day, dials, feeds, neglect, good_days, seeded, misses, bred
+      sql: `SELECT seed, day, dials, feeds, neglect, grow_at, seeded, misses, bred
               FROM petri_labs WHERE user_id = ?`,
       args: [userId],
     });
@@ -2410,7 +2418,7 @@ export class Store {
       dials: row.dials === null ? null : String(row.dials),
       feeds: Number(row.feeds),
       neglect: Number(row.neglect),
-      goodDays: Number(row.good_days),
+      growAt: row.grow_at === null ? null : String(row.grow_at),
       seeded: Number(row.seeded),
       misses: Number(row.misses),
       bred: Number(row.bred),
@@ -2420,13 +2428,19 @@ export class Store {
   /** Записать состояние стекла: день, тумблеры, кормёжку и счётчики. */
   async petriSaveLab(
     userId: string,
-    state: { day: string; dials: string | null; feeds: number; neglect: number; goodDays: number },
+    state: {
+      day: string;
+      dials: string | null;
+      feeds: number;
+      neglect: number;
+      growAt: string | null;
+    },
   ): Promise<void> {
     await this.client.execute({
       sql: `UPDATE petri_labs
-               SET day = ?, dials = ?, feeds = ?, neglect = ?, good_days = ?
+               SET day = ?, dials = ?, feeds = ?, neglect = ?, grow_at = ?
              WHERE user_id = ?`,
-      args: [state.day, state.dials, state.feeds, state.neglect, state.goodDays, userId],
+      args: [state.day, state.dials, state.feeds, state.neglect, state.growAt, userId],
     });
   }
 
@@ -2574,7 +2588,7 @@ export interface PetriLabRow {
   dials: string | null;
   feeds: number;
   neglect: number;
-  goodDays: number;
+  growAt: string | null;
   seeded: number;
   misses: number;
   bred: number;

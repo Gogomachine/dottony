@@ -77,6 +77,16 @@ const DIAL_COLOR: Record<Dial, string> = {
   medium: '#86a93f',
 };
 
+/** «12 часов», «24 часа», «21 час» — прибор говорит по-русски. */
+function hoursSaid(hours: number): string {
+  const last = hours % 10;
+  const two = hours % 100;
+  if (two >= 11 && two <= 14) return `${hours} часов`;
+  if (last === 1) return `${hours} час`;
+  if (last >= 2 && last <= 4) return `${hours} часа`;
+  return `${hours} часов`;
+}
+
 const HINT_NAME: Record<Hint, string> = {
   less: '◀ убавить',
   more: 'прибавить ▶',
@@ -293,21 +303,41 @@ export class Lab {
   }
 
   /**
-   * Что стоит в поле «рост». У точки это часы до вылупления: полсуток —
-   * не «когда-нибудь», а сегодня вечером или завтра утром, и человек
-   * вправе знать, когда возвращаться.
+   * Сколько осталось до срока — часами, а под конец минутами.
+   *
+   * Часы округляются к ближайшему, а не вниз: только что назначенный
+   * суточный срок обязан читаться как «24 ч», а не как «23».
+   */
+  private until(at: string): string {
+    const left = Date.parse(at) - Date.now();
+    if (Number.isNaN(left)) return '—';
+    if (left <= 0) return 'вот-вот';
+    const hours = left / 3600_000;
+    return hours >= 1 ? `${Math.round(hours)} ч` : `${Math.max(1, Math.round(left / 60_000))} мин`;
+  }
+
+  /**
+   * Что стоит в поле «рост». И у точки, и у подростка это один и тот же
+   * ответ — часы до следующей формы: срок человек должен читать сразу, а не
+   * выводить из дробей.
+   *
+   * «ждёт ухода» — это дошедший срок у небрежного существа: взрослеет оно
+   * в первый час, когда сыто и стоит в своих условиях, и сказать об этом
+   * надо ровно там, где человек ищет время.
    */
   private growth(inc: LabView['incubator']): string {
     const creature = inc.creature;
     if (creature === null) return '—';
     if (inc.lostAt !== null) return 'утрачена';
     if (creature.stage === 3) return 'взрослая';
-    if (creature.stage === 2) return `${inc.goodDays}/${inc.grow}`;
+    if (creature.stage === 2) {
+      if (inc.growAt === null) return '—';
+      const left = Date.parse(inc.growAt) - Date.now();
+      if (left > 0) return this.until(inc.growAt);
+      return inc.growing ? 'вот-вот' : 'ждёт ухода';
+    }
     if (inc.hatchAt === null) return 'точка';
-    const left = Date.parse(inc.hatchAt) - Date.now();
-    if (left <= 0) return 'вот-вот';
-    const hours = Math.floor(left / 3600_000);
-    return hours >= 1 ? `${hours} ч` : `${Math.max(1, Math.round(left / 60_000))} мин`;
+    return this.until(inc.hatchAt);
   }
 
   /**
@@ -330,10 +360,10 @@ export class Lab {
     if (inc.lostAt !== null) return 'Культура утрачена. Стекло можно засеять заново.';
     if (creature.stage === 1) {
       // Первая стадия — не уход, а замес: три тумблера и покой.
-      return `Точка досталась случайной. Выставь условия тремя тумблерами — из них выйдет форма — и жди ${HATCH_HOURS} часов.`;
+      return `Точка досталась случайной. Выставь условия тремя тумблерами — из них выйдет форма — и жди ${hoursSaid(HATCH_HOURS)}.`;
     }
     if (creature.stage === 2) {
-      return `Уход: два тумблера в комфорт и корм раз в сутки. Стрелки под ними называют сторону. Хороших суток нужно ${inc.grow}.`;
+      return `Уход: два тумблера в комфорт и корм раз в сутки. Стрелки под ними называют сторону. Взрослая форма — через ${hoursSaid(inc.growHours)}; небрежные сутки отодвигают срок ещё на сутки.`;
     }
     return 'Взрослая форма стабильна: ухода не требует и погибнуть не может. Переложи её на стекло или в коллекцию.';
   }

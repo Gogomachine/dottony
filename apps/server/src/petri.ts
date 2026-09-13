@@ -2,8 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   BEHAVIOUR_OF,
   CARE_DIALS,
-  GROW_DAYS,
-  HATCH_HOURS,
+  GROW_HOURS,
   NEGLECT_DEATH,
   advance,
   breed,
@@ -11,7 +10,10 @@ import {
   cleanDials,
   dialsOf,
   feed,
+  growing,
   grown,
+  hatchTime,
+  ripen,
   hintFor,
   labDay,
   moodOf,
@@ -103,6 +105,27 @@ interface Lab {
   bred: number;
 }
 
+/**
+ * Повзрослеть прямо сейчас, если срок дошёл и уход в порядке.
+ *
+ * Спрашивается после каждого действия с уходом: тот, кто покормил
+ * просроченное существо, должен увидеть взрослую форму в ответе на свою же
+ * кормёжку, а не при следующем взгляде на прибор.
+ */
+async function ripened(store: Store, userId: string, inc: Incubator, now: Date): Promise<Incubator> {
+  const after = ripen(inc, now);
+  const creature = after.creature;
+  if (after !== inc && creature !== null) {
+    await store.petriGrew(
+      creature.id,
+      creature.stage,
+      creature.axes === null ? null : JSON.stringify(creature.axes),
+      after.lostAt,
+    );
+  }
+  return after;
+}
+
 function placed(rows: PetriCreatureRow[], place: Place): PetriCreatureRow | undefined {
   return rows.find((row) => row.place === place);
 }
@@ -130,7 +153,7 @@ export async function openLab(store: Store, userId: string, now = new Date()): P
     day: row.day,
     feeds: row.feeds,
     neglect: row.neglect,
-    goodDays: row.goodDays,
+    growAt: row.growAt,
     // Первый питомец бессмертен: он туториальный, и учиться читать
     // поведение ценой недели выращивания — плохая сделка.
     immortal: row.seeded <= 1,
@@ -145,7 +168,7 @@ export async function openLab(store: Store, userId: string, now = new Date()): P
       dials: after.dials === null ? null : JSON.stringify(after.dials),
       feeds: after.feeds,
       neglect: after.neglect,
-      goodDays: after.goodDays,
+      growAt: after.growAt,
     });
     const creature = after.creature;
     if (creature !== null) {
@@ -194,10 +217,11 @@ export function labView(lab: Lab, tokens: number): LabView {
   }
   // Когда вылупится: полсуток от посева. Часы у прибора свои, и считать их
   // клиенту не по чему — сказать должен сервер.
-  const hatchAt =
-    creature !== null && creature.stage === 1 && inc.lostAt === null
-      ? new Date(Date.parse(creature.createdAt) + HATCH_HOURS * 3600_000).toISOString()
-      : null;
+  const hatch = inc.lostAt === null ? hatchTime(creature) : null;
+  // Срок взросления: он же и ответ на «почему не растёт». Дошедший срок у
+  // небрежного существа просто стоит — прибор ждёт часа, когда оно будет
+  // сыто и в своих условиях.
+  const grows = growing(inc);
   return {
     day: inc.day,
     incubator: {
@@ -209,11 +233,12 @@ export function labView(lab: Lab, tokens: number): LabView {
       pace: paceOf(inc),
       neglect: inc.neglect,
       death: NEGLECT_DEATH,
-      goodDays: inc.goodDays,
-      grow: GROW_DAYS,
+      growHours: GROW_HOURS,
+      growing: grows,
       lostAt: inc.lostAt,
       hints,
-      hatchAt,
+      hatchAt: hatch === null ? null : hatch.toISOString(),
+      growAt: creature?.stage === 2 && inc.lostAt === null ? inc.growAt : null,
     },
     slots: lab.slots,
     collection: lab.collection,
@@ -289,35 +314,46 @@ export async function seedLab(
     dials: null,
     feeds: 0,
     neglect: 0,
-    goodDays: 0,
+    growAt: null,
   });
   return creature;
 }
 
 /** Выставить тумблеры. */
-export async function setLabDials(store: Store, userId: string, lab: Lab, dials: Dials): Promise<Lab> {
-  const inc = setDials(lab.inc, cleanDials(dials));
+export async function setLabDials(
+  store: Store,
+  userId: string,
+  lab: Lab,
+  dials: Dials,
+  now = new Date(),
+): Promise<Lab> {
+  const inc = await ripened(store, userId, setDials(lab.inc, cleanDials(dials)), now);
   await store.petriSaveLab(userId, {
     day: inc.day,
     dials: JSON.stringify(inc.dials),
     feeds: inc.feeds,
     neglect: inc.neglect,
-    goodDays: inc.goodDays,
+    growAt: inc.growAt,
   });
   return { ...lab, inc };
 }
 
 /** Покормить. Вторая кормёжка за сутки — уже перекорм, и она тоже считается. */
-export async function feedLab(store: Store, userId: string, lab: Lab): Promise<Lab | LabError> {
+export async function feedLab(
+  store: Store,
+  userId: string,
+  lab: Lab,
+  now = new Date(),
+): Promise<Lab | LabError> {
   if (lab.inc.creature === null || lab.inc.lostAt !== null) return 'empty';
   if (lab.inc.creature.stage !== 2) return 'not-grown';
-  const inc = feed(lab.inc);
+  const inc = await ripened(store, userId, feed(lab.inc), now);
   await store.petriSaveLab(userId, {
     day: inc.day,
     dials: inc.dials === null ? null : JSON.stringify(inc.dials),
     feeds: inc.feeds,
     neglect: inc.neglect,
-    goodDays: inc.goodDays,
+    growAt: inc.growAt,
   });
   return { ...lab, inc };
 }
@@ -341,11 +377,11 @@ export async function storeLab(store: Store, userId: string, lab: Lab): Promise<
     dials: lab.inc.dials === null ? null : JSON.stringify(lab.inc.dials),
     feeds: 0,
     neglect: 0,
-    goodDays: 0,
+    growAt: null,
   });
   const slots: [Creature | null, Creature | null] = [...lab.slots];
   slots[free] = creature;
-  return { ...lab, inc: { ...lab.inc, creature: null, feeds: 0, neglect: 0, goodDays: 0 }, slots };
+  return { ...lab, inc: { ...lab.inc, creature: null, feeds: 0, neglect: 0, growAt: null }, slots };
 }
 
 /** Отправить в коллекцию — из инкубатора или со стекла хранения. */
@@ -370,14 +406,14 @@ export async function shelveLab(
       dials: lab.inc.dials === null ? null : JSON.stringify(lab.inc.dials),
       feeds: 0,
       neglect: 0,
-      goodDays: 0,
+      growAt: null,
     });
   }
   const slots: [Creature | null, Creature | null] = [...lab.slots];
   if (slot >= 0) slots[slot] = null;
   return {
     ...lab,
-    inc: from === INC ? { ...lab.inc, creature: null, feeds: 0, neglect: 0, goodDays: 0 } : lab.inc,
+    inc: from === INC ? { ...lab.inc, creature: null, feeds: 0, neglect: 0, growAt: null } : lab.inc,
     slots,
     collection: [creature, ...lab.collection],
   };
@@ -426,13 +462,13 @@ export async function breedLab(
     dials: lab.inc.dials === null ? null : JSON.stringify(lab.inc.dials),
     feeds: 0,
     neglect: 0,
-    goodDays: 0,
+    growAt: null,
   });
 
   const bredParents = [first!, second!].map((parent) => ({ ...parent, bredAt: at }));
   return {
     ...lab,
-    inc: { ...lab.inc, creature: result.child, feeds: 0, neglect: 0, goodDays: 0, lostAt: null },
+    inc: { ...lab.inc, creature: result.child, feeds: 0, neglect: 0, growAt: null, lostAt: null },
     slots: [null, null],
     collection: [...bredParents, ...lab.collection],
     misses: result.fresh ? 0 : lab.misses + 1,
