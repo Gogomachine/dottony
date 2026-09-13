@@ -6,6 +6,7 @@ import {
   boundsOf,
   seedOf,
   drawBody,
+  HATCH_HOURS,
   mutationCount,
   skinOf,
   speciesId,
@@ -148,7 +149,15 @@ export interface LabHandlers {
   breed(): Promise<LabView>;
   load(): Promise<LabView>;
   /** Что показать в приборной строке и в панели режима. */
-  panel(state: { line: string; day: string; grow: string; tokens: number; slots: string }): void;
+  panel(state: {
+    line: string;
+    /** Что делать прямо сейчас — строкой под именем в панели режима. */
+    note: string;
+    day: string;
+    grow: string;
+    tokens: number;
+    slots: string;
+  }): void;
 }
 
 export class Lab {
@@ -291,12 +300,41 @@ export class Lab {
     return hours >= 1 ? `${hours} ч` : `${Math.max(1, Math.round(left / 60_000))} мин`;
   }
 
+  /**
+   * Что делать прямо сейчас.
+   *
+   * Панель режима — единственное место, где прибор говорит словами: над
+   * стеклом ничего нет, кроме стекла. Поэтому здесь не описание режима, а
+   * прямое указание на нынешний шаг — у каждой стадии он свой.
+   */
+  private note(): string {
+    const view = this.view;
+    if (view === null) return 'Лаборатория не отвечает.';
+    const inc = view.incubator;
+    const creature = inc.creature;
+    if (creature === null) {
+      return view.seedCost === 0
+        ? 'Посев даёт случайную точку — какая достанется, решает прибор. Первая бесплатно.'
+        : `Посев даёт случайную точку — какая достанется, решает прибор. ${view.seedCost} ж.`;
+    }
+    if (inc.lostAt !== null) return 'Культура утрачена. Стекло можно засеять заново.';
+    if (creature.stage === 1) {
+      // Первая стадия — не уход, а замес: три тумблера и покой.
+      return `Точка досталась случайной. Выставь условия тремя тумблерами — из них выйдет форма — и жди ${HATCH_HOURS} часов.`;
+    }
+    if (creature.stage === 2) {
+      return `Уход: два тумблера в комфорт и корм раз в сутки. Стрелки под ними называют сторону. Хороших суток нужно ${inc.grow}.`;
+    }
+    return 'Взрослая форма стабильна: ухода не требует и погибнуть не может. Переложи её на стекло или в коллекцию.';
+  }
+
   /** Что сказать прибору: строка состояния и приборные числа. */
   private tell(line: string): void {
     const view = this.view;
     const inc = view?.incubator;
     this.on.panel({
       line,
+      note: this.note(),
       day: view === null || view === undefined ? '—' : view.day.slice(8) + '.' + view.day.slice(5, 7),
       grow: inc === undefined || inc === null ? '—' : this.growth(inc),
       tokens: view?.tokens ?? 0,
@@ -453,8 +491,8 @@ export class Lab {
       return;
     }
     if (creature.stage === 1) {
-      // Точке нужен замес, а не уход: три тумблера и полсуток покоя.
-      this.tell('Точка · замешай среду и жди');
+      // Что с ней делать, сказано в панели — здесь только то, что она есть.
+      this.tell('Точка');
       return;
     }
     if (creature.stage === 3) {

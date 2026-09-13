@@ -2430,6 +2430,7 @@ const lab = new Lab({
      * стёкла и коллекция.
      */
     el<HTMLElement>('menu-lab-state').textContent = state.line;
+    el<HTMLElement>('menu-lab-note').textContent = state.note;
     el<HTMLElement>('menu-lab-slots').textContent = state.slots;
   },
 });
