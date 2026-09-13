@@ -397,6 +397,14 @@ export class Store {
             * небрежные сутки этот срок отодвигают.
             */
            grow_at TEXT,
+           /*
+            * Напоминание о суточном сбросе: хочет ли его игрок и за какие
+            * сутки прибор уже решил, писать ему или нет. День, а не «да/нет»,
+            * потому что решение принимается раз в сутки и должно переживать
+            * перезапуск сервера.
+            */
+           tell INTEGER NOT NULL DEFAULT 1,
+           told TEXT,
            /* Сколько точек уже брали: первая бесплатна, дальше по цене. */
            seeded INTEGER NOT NULL DEFAULT 0,
            /* Скрытый счётчик неудач скрещивания. Игроку не показывается. */
@@ -536,6 +544,12 @@ export class Store {
     // Вторая стадия лаборатории считалась хорошими сутками, а стала сроком
     // в часах: у стёкол, заведённых до этого, колонки ещё нет.
     await this.addColumnIfMissing('petri_labs', 'grow_at', 'TEXT');
+    // Напоминание о суточном сбросе и отметка о том, за какие сутки прибор
+    // уже решал, писать ли. Тем, кто завёл стекло раньше, напоминание
+    // достаётся включённым: это его обычное состояние, и выключить его
+    // можно в панели режима.
+    await this.addColumnIfMissing('petri_labs', 'tell', 'INTEGER NOT NULL DEFAULT 1');
+    await this.addColumnIfMissing('petri_labs', 'told', 'TEXT');
     await this.client.execute(
       'CREATE UNIQUE INDEX IF NOT EXISTS idx_users_friend_code ON users (friend_code)',
     );
@@ -2407,7 +2421,7 @@ export class Store {
       args: [userId, seed >>> 0, day],
     });
     const rows = await this.client.execute({
-      sql: `SELECT seed, day, dials, feeds, neglect, grow_at, seeded, misses, bred
+      sql: `SELECT seed, day, dials, feeds, neglect, grow_at, tell, told, seeded, misses, bred
               FROM petri_labs WHERE user_id = ?`,
       args: [userId],
     });
@@ -2419,6 +2433,8 @@ export class Store {
       feeds: Number(row.feeds),
       neglect: Number(row.neglect),
       growAt: row.grow_at === null ? null : String(row.grow_at),
+      tell: Number(row.tell) === 1,
+      told: row.told === null ? null : String(row.told),
       seeded: Number(row.seeded),
       misses: Number(row.misses),
       bred: Number(row.bred),
@@ -2442,6 +2458,49 @@ export class Store {
              WHERE user_id = ?`,
       args: [state.day, state.dials, state.feeds, state.neglect, state.growAt, userId],
     });
+  }
+
+  /** Включить или выключить напоминание о суточном сбросе. */
+  async petriTell(userId: string, on: boolean): Promise<void> {
+    await this.client.execute({
+      sql: 'UPDATE petri_labs SET tell = ? WHERE user_id = ?',
+      args: [on ? 1 : 0, userId],
+    });
+  }
+
+  /** Пометить, что за эти сутки прибор уже решил, писать ли игроку. */
+  async petriTold(userId: string, day: string): Promise<void> {
+    await this.client.execute({
+      sql: 'UPDATE petri_labs SET told = ? WHERE user_id = ?',
+      args: [day, userId],
+    });
+  }
+
+  /**
+   * Кому сегодня ещё не писали о сбросе.
+   *
+   * Условие тут грубое нарочно: стекло не пустое, напоминание включено, за
+   * сегодня решения не было и есть куда писать. Что именно там происходит —
+   * вылупилось, погибло, выросло, — знает только досчёт суток, а он дорогой;
+   * поэтому сюда попадают кандидаты, а разбирается с ними лаборатория.
+   */
+  async petriToTell(day: string, limit = 200): Promise<{ userId: string; chat: string }[]> {
+    const rows = await this.client.execute({
+      // По строке на стекло, а не на связку: два привязанных Telegram у
+      // одного игрока или лишняя строка в инкубаторе превратились бы в два
+      // одинаковых письма. Группировка делает это невозможным.
+      sql: `SELECT l.user_id AS user_id, MIN(i.external_id) AS chat
+              FROM petri_labs l
+              JOIN identities i
+                ON i.user_id = l.user_id AND i.kind = 'telegram' AND i.bot_started = 1
+              JOIN petri_creatures c
+                ON c.user_id = l.user_id AND c.place = 'inc' AND c.lost_at IS NULL
+             WHERE l.tell = 1 AND (l.told IS NULL OR l.told <> ?)
+             GROUP BY l.user_id
+             LIMIT ?`,
+      args: [day, limit],
+    });
+    return rows.rows.map((row) => ({ userId: String(row.user_id), chat: String(row.chat) }));
   }
 
   /** Все существа игрока, разложенные по стёклам и полкам. */
@@ -2589,6 +2648,8 @@ export interface PetriLabRow {
   feeds: number;
   neglect: number;
   growAt: string | null;
+  tell: boolean;
+  told: string | null;
   seeded: number;
   misses: number;
   bred: number;

@@ -65,12 +65,15 @@ import {
   mutationCount,
   speciesOf,
   zoneMiddle,
+  NEGLECT_DEATH,
   type Creature,
   type Dials,
+  type Incubator,
   type LabView,
   type Species,
 } from '@doton/petri';
 import { buildApp, loggedUrl } from './app.js';
+import { labTell } from './petri.js';
 import { INVITE_LIMIT } from './limits.js';
 import { parseStart } from './bot.js';
 import { Store } from './db.js';
@@ -4097,7 +4100,7 @@ describe('PETRIDOT', () => {
     app: FastifyInstance;
     headers: Record<string, string>;
     look(): Promise<LabView>;
-    act(what: string, payload?: Dials | { id: string }): Promise<{ statusCode: number; body: LabView }>;
+    act(what: string, payload?: Dials | { id: string } | { on: boolean }): Promise<{ statusCode: number; body: LabView }>;
     purse(tokens: number): Promise<void>;
   }
 
@@ -4301,6 +4304,170 @@ describe('PETRIDOT', () => {
     } finally {
       await desk.app.close();
       vi.useRealTimers();
+    }
+  });
+
+  /** Строка существа для базы: подробности напоминанию не нужны. */
+  const wire = (id: string) => ({
+    id, generation: 1, color: 'yellow', colorMutation: null, behaviour: 'cling',
+    behaviourMutation: null, bodyAnomaly: null, axes: null, stage: 2,
+    parents: null, bredAt: null, createdAt: '2026-03-15T09:00:00.000Z',
+  });
+
+  /** Стекло с подростком: всё, что нужно напоминанию. */
+  const glass = (over: Partial<Incubator> = {}): Incubator => {
+    const creature: Creature = {
+      id: 'c1', generation: 1, color: 'yellow', colorMutation: null, behaviour: 'cling',
+      behaviourMutation: null, bodyAnomaly: null, axes: { temp: 1, humidity: 1, medium: 1 },
+      stage: 2, parents: null, bredAt: null, createdAt: '2026-03-15T09:00:00.000Z',
+    };
+    return {
+      seed: 4242, creature, dials: null, day: '2026-03-16', feeds: 0, neglect: 0,
+      growAt: null, immortal: false, lostAt: null, ...over,
+    };
+  };
+
+  it('лаборатория: напоминание зовёт только тех, кому есть что делать', () => {
+    // Прибор пишет в чужой мессенджер, и молчать он обязан чаще, чем
+    // говорить: письмо без дела — это шум в чате, а не забота.
+    const waiting = labTell(glass());
+    expect(waiting).toContain('Тумблеры сброшены');
+    expect(waiting).toContain('yellow-111');
+
+    // Точке уход не нужен: её тумблеры — рецепт, и сброс их не трогает.
+    expect(labTell(glass({ creature: { ...glass().creature!, stage: 1, axes: null } }))).toBeNull();
+    // Взрослой форме тоже.
+    expect(labTell(glass({ creature: { ...glass().creature!, stage: 3 } }))).toBeNull();
+    // Погибшей — тем более.
+    expect(labTell(glass({ lostAt: '2026-03-15' }))).toBeNull();
+    // И тому, кто сегодня уже приходил: он всё сделал.
+    expect(labTell(glass({ dials: { temp: 500, humidity: 500, medium: 0 }, feeds: 1 }))).toBeNull();
+  });
+
+  it('лаборатория: о небрежных сутках напоминание говорит, а первенца не пугает', () => {
+    const warned = labTell(glass({ neglect: 2 }));
+    expect(warned).toContain(`2 из ${NEGLECT_DEATH}`);
+    // Первый питомец бессмертен — грозить его хозяину гибелью нечестно.
+    expect(labTell(glass({ neglect: 2, immortal: true }))).not.toContain('Небрежных');
+  });
+
+  it('лаборатория: писать некому, пока нет ни бота, ни культуры', async () => {
+    // Отбор в базе грубый, и это нарочно: сюда должны попадать только те, у
+    // кого есть куда писать и о ком писать. Что именно в стекле происходит,
+    // знает досчёт суток, а он дорогой.
+    const store = new Store({ url: ':memory:' });
+    try {
+      await store.migrate();
+      const day = '2026-03-16';
+      for (const id of ['tihiy', 'zvanyy']) {
+        await store.createUser(id, id, { kind: 'guest', externalId: id });
+        await store.petriLab(id, 1, day);
+      }
+      // У обоих есть стекло, но ни у кого — ни Telegram, ни культуры.
+      expect(await store.petriToTell(day)).toEqual([]);
+
+      // Telegram привязан, но бот не запущен: он не пишет первым.
+      await store.linkIdentity('zvanyy', { kind: 'telegram', externalId: '777' });
+      await store.petriAdd('zvanyy', wire('c1'), 'inc');
+      expect(await store.petriToTell(day)).toEqual([]);
+
+      await store.markBotStarted('777');
+      expect(await store.petriToTell(day)).toEqual([{ userId: 'zvanyy', chat: '777' }]);
+
+      // Решение за сутки принимается один раз — и переживает перезапуск.
+      await store.petriTold('zvanyy', day);
+      expect(await store.petriToTell(day)).toEqual([]);
+      expect(await store.petriToTell('2026-03-17')).toHaveLength(1);
+
+      // Выключенное напоминание убирает стекло из отбора вовсе.
+      await store.petriTell('zvanyy', false);
+      expect(await store.petriToTell('2026-03-17')).toEqual([]);
+    } finally {
+      store.close();
+    }
+  });
+
+  it('лаборатория: напоминание выключается из панели режима', async () => {
+    const desk = await bench();
+    try {
+      // Включено по умолчанию: это обычное состояние прибора.
+      expect((await desk.look()).tell).toBe(true);
+      const off = await desk.act('tell', { on: false });
+      expect(off.statusCode).toBe(200);
+      expect(off.body.tell).toBe(false);
+      // И остаётся выключенным при следующем взгляде, а не на один ответ.
+      expect((await desk.look()).tell).toBe(false);
+      expect((await desk.act('tell', { on: true })).body.tell).toBe(true);
+    } finally {
+      await desk.app.close();
+      vi.useRealTimers();
+    }
+  });
+
+  it('лаборатория: напоминание уходит утром, один раз и с кнопкой', async () => {
+    // Часы напоминаний — единственное, что лаборатория делает сама. Ночью
+    // они молчат, утром пишут один раз, и второй тик в те же сутки ничего
+    // не добавляет.
+    const calls = stubTelegram();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const hourAt = (day: number, hour: number): Date =>
+      new Date(Date.UTC(2026, 2, day, hour - LAB_TZ_HOURS, 0, 0));
+    vi.setSystemTime(hourAt(15, 12));
+    const app = await buildApp({
+      databaseUrl: ':memory:',
+      jwtSecret: 'test-jwt',
+      telegramBotToken: BOT_TOKEN,
+      publicUrl: 'https://example.test',
+    });
+    const tellNow = (app as unknown as { tellLabsNow(): Promise<void> }).tellLabsNow.bind(app);
+    const letters = (): string[] =>
+      calls.filter((call) => call.method === 'sendMessage').map((call) => String(call.payload.text));
+    try {
+      // Игрок пришёл через бота: только так прибору и позволено ему писать.
+      await app.inject({
+        method: 'POST',
+        url: '/telegram/webhook',
+        headers: { 'x-telegram-bot-api-secret-token': webhookSecret('test-jwt') },
+        payload: { message: { chat: { id: 777 }, from: { id: 777, username: 'ada' }, text: '/start' } },
+      });
+      const auth = await app.inject({
+        method: 'POST',
+        url: '/api/auth/telegram',
+        payload: { initData: signedInitData({ id: 777, username: 'ada' }) },
+      });
+      const headers = { authorization: `Bearer ${(auth.json() as { token: string }).token}` };
+      await app.inject({ method: 'POST', url: '/api/petri/seed', headers });
+      await app.inject({
+        method: 'POST',
+        url: '/api/petri/dials',
+        headers,
+        payload: recipeOf({ color: 'yellow', axes: { temp: 1, humidity: 1, medium: 1 } }),
+      });
+      const before = letters().length;
+
+      // Ночью прибор молчит, хотя писать уже есть о чём: точка вылупилась
+      // в полночь и с этого часа голодна.
+      vi.setSystemTime(hourAt(16, 3));
+      await tellNow();
+      expect(letters()).toHaveLength(before);
+
+      vi.setSystemTime(hourAt(16, 9));
+      await tellNow();
+      const sent = letters();
+      expect(sent).toHaveLength(before + 1);
+      expect(sent.at(-1)).toContain('Тумблеры сброшены');
+      const last = [...calls].reverse().find((call) => call.method === 'sendMessage')!;
+      expect(last.payload.chat_id).toBe('777');
+      expect(JSON.stringify(last.payload.reply_markup)).toContain('t.me/dotoscope_bot');
+
+      // Второй тик в те же сутки ничего не добавляет: прибор думает о
+      // каждом стекле раз в день.
+      await tellNow();
+      expect(letters()).toHaveLength(before + 1);
+    } finally {
+      await app.close();
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
     }
   });
 

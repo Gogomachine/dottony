@@ -36,6 +36,7 @@ import {
   getInvites,
   getLab,
   labBreed,
+  labTell,
   labDials,
   labFeed,
   labSeed,
@@ -2095,7 +2096,7 @@ function applyKind(): void {
   // В лаборатории игровых пунктов нет вовсе: она не механика прибора, а
   // второе устройство, и звать из неё дуэль значило бы гонять игрока по
   // кругу через переключатель.
-  for (const go of ['glasses']) {
+  for (const go of ['glasses', 'tell']) {
     const row = document.querySelector<HTMLElement>(`#menu-list li[data-go="${go}"]`);
     if (row) row.hidden = deviceKind !== 'lab';
   }
@@ -2163,6 +2164,9 @@ const MENU_ACTIONS: Record<string, () => void> = {
     closeMenu();
     lab.openShelf();
   },
+  // Переключатель, а не переход: меню остаётся открытым, и новое состояние
+  // видно в той же строке, которую нажали.
+  tell: () => void lab.toggleTell(),
   rules: () => {
     rulesSheet.hidden = false;
   },
@@ -2421,6 +2425,10 @@ const lab = new Lab({
     await ensureAuth(guestName);
     return labShelf(id);
   },
+  tell: async (on) => {
+    await ensureAuth(guestName);
+    return labTell(on);
+  },
   /*
    * Приборная строка у лаборатории та же, что у игры, — просто про другое:
    * день, рост и жетоны вместо потенциала, запаса и часов. Заводить ей
@@ -2445,6 +2453,7 @@ const lab = new Lab({
     el<HTMLElement>('menu-lab-state').textContent = state.line;
     el<HTMLElement>('menu-lab-note').textContent = state.note;
     el<HTMLElement>('menu-lab-slots').textContent = state.slots;
+    el<HTMLElement>('menu-lab-tell').textContent = state.tell;
   },
 });
 

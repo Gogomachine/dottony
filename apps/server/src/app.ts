@@ -32,6 +32,7 @@ import {
   type AdminLogResponse,
   PetriDialsRequestSchema,
   PetriShelfRequestSchema,
+  PetriTellRequestSchema,
   type AdminNoticesResponse,
   type AdminReportsResponse,
   type DuelKind,
@@ -104,15 +105,17 @@ import { judgeRun } from './judge.js';
 import {
   breedLab,
   feedLab,
+  labTell,
   labView,
   openLab,
   seedLab,
   setLabDials,
   shelveLab,
   storeLab,
+  tellLab,
   type Lab,
 } from './petri.js';
-import type { LabView } from '@doton/petri';
+import { TELL_HOUR, TELL_UNTIL, labDay, labHour, type LabView } from '@doton/petri';
 import { Store, type BoardPeriod } from './db.js';
 import {
   INVITE_LIMIT,
@@ -961,6 +964,19 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
 
   /**
+   * Напоминание о суточном сбросе. Выключается одним нажатием и навсегда:
+   * прибор пишет в чужой мессенджер, и право прекратить это должно быть
+   * там же, где сама лаборатория, а не в переписке с ботом.
+   */
+  app.post('/api/petri/tell', async (request, reply) => {
+    const user = await requireUser(request);
+    const parsed = PetriTellRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
+    const lab = await openLab(store, user.sub);
+    return labAnswer(user.sub, await tellLab(store, user.sub, lab, parsed.data.on));
+  });
+
+  /**
    * Скрестить двоих со стёкол хранения. Результат считает сервер: клиент его
    * только показывает.
    */
@@ -1119,6 +1135,54 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   );
   tourneyClock.unref?.();
   app.addHook('onClose', () => clearInterval(tourneyClock));
+
+  /**
+   * Напоминание о суточном сбросе.
+   *
+   * В полночь у всех стёкол сбрасываются тумблеры и обнуляется кормёжка —
+   * и с этого мига начинаются небрежные сутки у того, кто не зайдёт. Это
+   * единственное, о чём лаборатория пишет сама: не «возвращайся играть», а
+   * «твои условия сброшены, существо ждёт».
+   *
+   * Кандидатов отбирает база грубо, а решает лаборатория: перед письмом
+   * стекло досчитывается до «сейчас», иначе прибор напомнил бы об уходе за
+   * тем, кто этой ночью вылупился, вырос или погиб. Досчёт заодно и
+   * записывается — судьба прошедших суток не ждёт, пока хозяин заглянет.
+   *
+   * Отметка `told` ставится в любом случае, даже когда письма не было: раз
+   * в сутки прибор думает о каждом стекле один раз.
+   */
+  async function tellLabs(): Promise<void> {
+    if (!bot) return;
+    const now = new Date();
+    const hour = labHour(now);
+    // Не ночью. Спящий хостинг может проснуться в любой час, и «сегодня
+    // надо зайти», пришедшее в три ночи, — не напоминание, а побудка.
+    if (hour < TELL_HOUR || hour >= TELL_UNTIL) return;
+    const today = labDay(now);
+    const open = bot.miniAppLink('lab');
+    for (const row of await store.petriToTell(today)) {
+      const lab = await openLab(store, row.userId, now);
+      const text = labTell(lab.inc);
+      if (text !== null) {
+        await bot.sendMessage(row.chat, text, open ? { text: '🔬 Открыть лабораторию', url: open } : undefined);
+      }
+      await store.petriTold(row.userId, today);
+    }
+  }
+
+  // Разослать напоминания прямо сейчас. Ленивой двери у них нет — в отличие
+  // от турнирных итогов, которые всё равно наступают при первом взгляде, —
+  // и без этого шва проверить, кому прибор пишет, можно было бы только
+  // подождав пять минут настоящего времени.
+  app.decorate('tellLabsNow', tellLabs);
+
+  const labClock = setInterval(
+    () => void tellLabs().catch((error: unknown) => app.log.error(error, 'petri tell failed')),
+    5 * 60_000,
+  );
+  labClock.unref?.();
+  app.addHook('onClose', () => clearInterval(labClock));
 
   // ---------- Служба ----------
 

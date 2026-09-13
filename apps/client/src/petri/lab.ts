@@ -157,6 +157,7 @@ export interface LabHandlers {
   store(): Promise<LabView>;
   shelf(id: string): Promise<LabView>;
   breed(): Promise<LabView>;
+  tell(on: boolean): Promise<LabView>;
   load(): Promise<LabView>;
   /** Что показать в приборной строке и в панели режима. */
   panel(state: {
@@ -167,6 +168,8 @@ export interface LabHandlers {
     grow: string;
     tokens: number;
     slots: string;
+    /** Состояние напоминания — словом в той же строке, что его включает. */
+    tell: string;
   }): void;
 }
 
@@ -294,6 +297,16 @@ export class Lab {
     this.renderShelf();
   }
 
+  /**
+   * Напоминание о суточном сбросе — переключателем, а не настройкой в
+   * отдельном окне: состояние видно в той же строке, которую нажимают.
+   */
+  async toggleTell(): Promise<void> {
+    const view = this.view;
+    if (view === null) return;
+    await this.act(() => this.on.tell(!view.tell));
+  }
+
   private async reload(): Promise<void> {
     try {
       this.apply(await this.on.load());
@@ -379,6 +392,7 @@ export class Lab {
       grow: inc === undefined || inc === null ? '—' : this.growth(inc),
       tokens: view?.tokens ?? 0,
       slots: `${(view?.slots ?? []).filter((creature) => creature !== null).length} / 2`,
+      tell: view === null ? '—' : view.tell ? 'вкл' : 'выкл',
     });
   }
 

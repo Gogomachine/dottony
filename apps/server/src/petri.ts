@@ -22,6 +22,7 @@ import {
   seedCost,
   seedOf,
   setDials,
+  speciesId,
   speciesOf,
   type Creature,
   type CareDial,
@@ -103,6 +104,8 @@ interface Lab {
   seeded: number;
   misses: number;
   bred: number;
+  /** Хочет ли игрок напоминаний о суточном сбросе. */
+  tell: boolean;
 }
 
 /**
@@ -194,6 +197,7 @@ export async function openLab(store: Store, userId: string, now = new Date()): P
     seeded: row.seeded,
     misses: row.misses,
     bred: row.bred,
+    tell: row.tell,
   };
 }
 
@@ -243,6 +247,7 @@ export function labView(lab: Lab, tokens: number): LabView {
     slots: lab.slots,
     collection: lab.collection,
     seedCost: seedCost(lab.seeded),
+    tell: lab.tell,
     tokens,
     // Новости показываются один раз — при том взгляде, который сутки и
     // досчитал. Хранить их незачем: прибор рассказывает, что было ночью, а
@@ -336,6 +341,35 @@ export async function setLabDials(
     growAt: inc.growAt,
   });
   return { ...lab, inc };
+}
+
+/** Включить или выключить напоминание о суточном сбросе. */
+export async function tellLab(store: Store, userId: string, lab: Lab, on: boolean): Promise<Lab> {
+  await store.petriTell(userId, on);
+  return { ...lab, tell: on };
+}
+
+/**
+ * Что сказать в напоминании — или `null`, если говорить нечего.
+ *
+ * Молчать прибор обязан чаще, чем говорить. Точке уход не нужен: её
+ * тумблеры — рецепт, и сброс их не трогает. Взрослой форме тем более. А
+ * тому, кто уже сегодня приходил, напоминать не о чем — он всё сделал, и
+ * письмо было бы просто шумом в чате.
+ */
+export function labTell(inc: Incubator): string | null {
+  const creature = inc.creature;
+  if (creature === null || inc.lostAt !== null || creature.stage !== 2) return null;
+  if (inc.dials !== null && inc.feeds > 0) return null;
+  const species = speciesOf(creature);
+  const name = species === null ? 'культура' : speciesId(species);
+  const lines = [`Лаборатория: новые сутки. Тумблеры сброшены, кормёжка обнулена — ${name} ждёт условий и корма.`];
+  // Счётчик небрежения показываем только тому, кому он чем-то грозит:
+  // первому питомцу гибель не полагается, и пугать его хозяина нечестно.
+  if (inc.neglect > 0 && !inc.immortal) {
+    lines.push(`Небрежных суток подряд: ${inc.neglect} из ${NEGLECT_DEATH}.`);
+  }
+  return lines.join('\n');
 }
 
 /** Покормить. Вторая кормёжка за сутки — уже перекорм, и она тоже считается. */

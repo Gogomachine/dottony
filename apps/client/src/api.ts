@@ -409,6 +409,11 @@ export function labBreed(): Promise<LabView> {
   return request<LabView>('/api/petri/breed', { method: 'POST' });
 }
 
+/** Напоминание о суточном сбросе: включить или выключить. */
+export function labTell(on: boolean): Promise<LabView> {
+  return request<LabView>('/api/petri/tell', { method: 'POST', body: JSON.stringify({ on }) });
+}
+
 /** Жалоба на соперника: называем его тем же кодом, что и при добавлении в друзья. */
 export function report(code: string): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>('/api/reports', {

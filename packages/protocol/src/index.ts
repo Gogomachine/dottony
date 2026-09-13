@@ -287,6 +287,11 @@ export const PetriShelfRequestSchema = z.object({
   id: z.string().uuid(),
 });
 
+/** Напоминание о суточном сбросе: включить или выключить. */
+export const PetriTellRequestSchema = z.object({
+  on: z.boolean(),
+});
+
 /**
  * Заход турнира. Сид не присылают: он у турнира один на всех, и сервер
  * знает его сам — присланному сиду тут верить нельзя вовсе.

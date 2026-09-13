@@ -66,6 +66,8 @@ export interface LabView {
   collection: Creature[];
   /** Сколько стоит следующая точка. Ноль — первая, она даром. */
   seedCost: number;
+  /** Напоминает ли прибор в Telegram о суточном сбросе. */
+  tell: boolean;
   tokens: number;
   /** Что случилось, пока не заходили: по строке на сутки, новые сверху. */
   news: DayLog[];
