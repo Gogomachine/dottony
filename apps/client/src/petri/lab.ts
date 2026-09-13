@@ -20,7 +20,7 @@ import {
   type Hint,
   type LabView,
 } from '@doton/petri';
-import { poseOf, type Pose } from './motion';
+import { lidOf, poseOf, type Pose } from './motion';
 
 /**
  * PETRIDOT в окуляре: чашка Петри, три тумблера и два стекла хранения.
@@ -711,8 +711,8 @@ export class Lab {
    * Один цикл анимации: покачивание с затуханием и моргание отдельным слоем.
    *
    * Скорость цикла — основной индикатор состояния, и она приходит с сервера
-   * вместе с настроением. Периоды моргания у разных существ не кратны друг
-   * другу: синхронное моргание превращает чашку в механизм.
+   * вместе с настроением. Моргание идёт по тем же часам: голодное существо
+   * и моргает реже — один ритм на всё, а не два независимых.
    */
   private tick = (): void => {
     if (!this.open) return;
@@ -733,10 +733,10 @@ export class Lab {
       `translate(${pose.x.toFixed(2)} ${pose.y.toFixed(2)}) rotate(${pose.turn.toFixed(2)}) scale(${(k * pose.sx).toFixed(3)} ${(k * pose.sy).toFixed(3)}) translate(${-shape.anchor.x} ${-shape.anchor.y})`,
     );
 
-    const id = this.view?.incubator.creature?.id ?? '';
-    const period = 3.1 + (id.charCodeAt(0) % 7) * 0.43;
-    const phase = (now * pace) % period;
-    const shut = phase < 0.14 ? 1 - phase / 0.14 : 1;
+    // Веко второго глаза опаздывает на доли секунды. Раньше оно вместо
+    // этого просто закрывалось не до конца — пара при этом всё равно
+    // моргала в один кадр, и читалось это как механизм, а не как взгляд.
+    const lag = 0.015 + (this.seed % 40) / 1000;
     // Куда уехала точка тела при нынешней позе — по этому и ставим глаз.
     const rad = (pose.turn * Math.PI) / 180;
     const world = (x: number, y: number): { x: number; y: number } => {
@@ -763,9 +763,7 @@ export class Lab {
     };
     const face = world(mid.x, mid.y);
     for (const [index, eye] of this.eyes.entries()) {
-      // Второй глаз моргает чуть иначе: рассинхрон — это характер, а у
-      // мутантов ещё и признак.
-      const own = index === 1 ? Math.min(1, shut + 0.08) : shut;
+      const own = lidOf(now, this.seed, index === 0 ? 0 : lag * index);
       const centre = spots[index];
       if (centre === undefined) continue;
       const at = { x: face.x + (centre.x - mid.x) * k, y: face.y + (centre.y - mid.y) * k };
