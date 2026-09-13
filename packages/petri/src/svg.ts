@@ -16,6 +16,15 @@ import type { Skin } from './palette.js';
 
 export interface Drawn {
   tag: 'rect' | 'ellipse' | 'circle' | 'path';
+  /**
+   * Из какой части тела вышла эта фигура.
+   *
+   * По номеру, а не по цвету. Прибор рисует глаз белым — и блик у мокрого
+   * синего тоже белый; тот, кто искал глаза по белой заливке, находил вместо
+   * них блики, а настоящие глаза оставались без движения и висели посреди
+   * стекла сами по себе. Номер части не врёт никогда.
+   */
+  of: number;
   attrs: Record<string, string | number>;
 }
 
@@ -57,7 +66,7 @@ export interface Gaze {
   y: number;
 }
 
-function drawPart(part: Part, skin: Skin, gaze: Gaze): Drawn[] {
+function drawPart(part: Part, skin: Skin, gaze: Gaze): Omit<Drawn, 'of'>[] {
   switch (part.kind) {
     case 'rrect':
       return [
@@ -88,7 +97,7 @@ function drawPart(part: Part, skin: Skin, gaze: Gaze): Drawn[] {
       const rad = (part.angle * Math.PI) / 180;
       const end = { x: part.x + Math.sin(rad) * part.len, y: part.y - Math.cos(rad) * part.len };
       const colors = paint(part.role, skin);
-      const drawn: Drawn[] = [
+      const drawn: Omit<Drawn, 'of'>[] = [
         {
           tag: 'path',
           attrs: {
@@ -129,7 +138,9 @@ function drawPart(part: Part, skin: Skin, gaze: Gaze): Drawn[] {
 
 /** Всё тело фигурами, снизу вверх — порядок тот же, что и порядок частей. */
 export function drawBody(shape: BodyShape, skin: Skin, gaze: Gaze = { x: 0, y: 0 }): Drawn[] {
-  return shape.parts.flatMap((part) => drawPart(part, skin, gaze));
+  return shape.parts.flatMap((part, index) =>
+    drawPart(part, skin, gaze).map((drawn) => ({ ...drawn, of: index })),
+  );
 }
 
 /** То же самое разметкой — для каталога, паспорта и картинки в чат. */

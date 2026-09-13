@@ -8,6 +8,8 @@ import {
   axesOf,
   bodyOf,
   bodyOfSpecies,
+  drawBody,
+  skinOf,
   boundsOf,
   viewBoxOf,
   comfortOf,
@@ -672,5 +674,46 @@ describe('диалекты цветов', () => {
   it('цвет при посеве выпадает любой из четырёх', () => {
     const seen = new Set(Array.from({ length: 200 }, (_, i) => seedColor(i * 7919)));
     expect(seen).toEqual(new Set(COLORS));
+  });
+});
+
+describe('отрисовка', () => {
+  it('глаз узнаётся по номеру части, а не по цвету', () => {
+    /*
+     * Прибор рисует белок глаза белым — и блик у мокрого синего тоже белый.
+     * Тот, кто искал глаза по заливке, находил вместо них блики: настоящие
+     * глаза оставались без движения и висели посреди стекла сами по себе.
+     */
+    const wet: Species = { color: 'blue', axes: { temp: 1, humidity: 2, medium: 0 } };
+    const shape = bodyOfSpecies(wet);
+    const skin = skinOf({
+      id: 'x',
+      generation: 1,
+      color: 'blue',
+      colorMutation: null,
+      behaviour: 'bounce',
+      behaviourMutation: null,
+      bodyAnomaly: null,
+      axes: wet.axes,
+      stage: 2,
+      parents: null,
+      bredAt: null,
+      createdAt: '2026-03-15T09:00:00Z',
+    });
+    const drawn = drawBody(shape, skin);
+
+    // Белым рисуется больше фигур, чем есть глаз: блики тоже белые.
+    const white = drawn.filter((one) => one.attrs.fill === '#FFFFFF');
+    const eyes = shape.parts.filter((part) => part.kind === 'eye');
+    expect(white.length).toBeGreaterThan(eyes.length);
+
+    // А по номеру части глаза считаются точно: белок и зрачок на каждый.
+    const byPart = new Set(drawn.filter((one) => shape.parts[one.of]?.kind === 'eye').map((one) => one.of));
+    expect(byPart.size).toBe(eyes.length);
+    for (const part of byPart) {
+      expect(drawn.filter((one) => one.of === part)).toHaveLength(2);
+    }
+    // И каждая фигура помнит свою часть — ни одна не осталась без номера.
+    for (const one of drawn) expect(shape.parts[one.of]).toBeDefined();
   });
 });

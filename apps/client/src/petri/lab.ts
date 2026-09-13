@@ -185,6 +185,8 @@ export class Lab {
   private view: LabView | null = null;
   private body: SVGGElement | null = null;
   private eyes: SVGGElement[] = [];
+  /** Где глаз на теле — по этим точкам его и ставят каждый кадр. */
+  private eyeSpots: { x: number; y: number }[] = [];
   private shape: BodyShape | null = null;
   private frame = 0;
   private busy = false;
@@ -482,6 +484,7 @@ export class Lab {
    */
   private drawDish(creature: Creature | null): void {
     this.glass.textContent = '';
+    this.eyeSpots = [];
     // Стекло перерисовано — крупинки с него тоже стёрлись: держать список
     // узлов, которых уже нет в разметке, значит однажды на них наткнуться.
     this.crumbs = [];
@@ -549,18 +552,25 @@ export class Lab {
      * перерисовка тела.
      */
     const face = svgNode('g');
+    // Глаза узнаём по номеру части, а не по цвету заливки: белым рисуется и
+    // белок, и блик у мокрого синего.
+    const lids = new Map<number, SVGGElement>();
     for (const drawn of drawBody(shape, skin)) {
       const node = svgNode(drawn.tag, drawn.attrs);
-      if (drawn.attrs.fill === '#FFFFFF') {
-        const lid = svgNode('g');
-        lid.appendChild(node);
-        this.eyes.push(lid);
-        face.appendChild(lid);
+      const from = shape.parts[drawn.of];
+      if (from?.kind !== 'eye') {
+        group.appendChild(node);
         continue;
       }
-      const last = this.eyes[this.eyes.length - 1];
-      if (last !== undefined && last.childNodes.length === 1) last.appendChild(node);
-      else group.appendChild(node);
+      let lid = lids.get(drawn.of);
+      if (lid === undefined) {
+        lid = svgNode('g');
+        lids.set(drawn.of, lid);
+        face.appendChild(lid);
+        this.eyes.push(lid);
+        this.eyeSpots.push({ x: from.x, y: from.y });
+      }
+      lid.appendChild(node);
     }
     const inside = svgNode('g', { 'clip-path': 'url(#petri-glass)' });
     inside.appendChild(group);
@@ -653,7 +663,7 @@ export class Lab {
      * прилепившийся к стенке смотрит одним глазом вверх, другим вниз, и
      * читается это как «лежит на боку», а не «висит на стенке».
      */
-    const spots = shape.parts.filter((part) => part.kind === 'eye');
+    const spots = this.eyeSpots;
     if (spots.length === 0) return;
     const mid = {
       x: spots.reduce((sum, part) => sum + part.x, 0) / spots.length,
