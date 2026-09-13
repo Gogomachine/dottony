@@ -133,6 +133,10 @@ const sampleKeyEl = el<HTMLButtonElement>('paper-sample');
 const statEl = el<HTMLDivElement>('stat');
 const chainCountEl = el<HTMLDivElement>('chain-count');
 const seedEl = el<HTMLSpanElement>('seed');
+/** Верхняя строка подвала: чем прибор занят. */
+const brandEl = el<HTMLElement>('brand-line');
+/** Устройство прибора: четыре цвета сигнала и поле шесть на шесть. */
+const BRAND_LINE = '4 сигнала · 36 точек';
 const overlay = el<HTMLDivElement>('game-over');
 const overTitleEl = el<HTMLHeadingElement>('over-title');
 const overNoteEl = el<HTMLParagraphElement>('over-note');
@@ -2120,6 +2124,10 @@ function applyKind(): void {
     // слова над ними не ставит никто, кроме этого места.
     scoreLabelEl.textContent = 'Потенциал';
     timeLabelEl.textContent = 'Время';
+    // И подвал: лаборатория подписывала его выращиванием и номером
+    // культуры, а у прибора там своё устройство и расклад поля.
+    brandEl.textContent = BRAND_LINE;
+    seedEl.textContent = `образец #${session.seed.toString(16)}`;
     vsFieldEl.hidden = !inDuel;
     miniCache = '';
   }
@@ -2454,6 +2462,13 @@ const lab = new Lab({
     el<HTMLElement>('menu-lab-note').textContent = state.note;
     el<HTMLElement>('menu-lab-slots').textContent = state.slots;
     el<HTMLElement>('menu-lab-tell').textContent = state.tell;
+    /*
+     * Подвал корпуса: сверху — чем прибор занят, снизу — номер того, над
+     * чем он занят. У лаборатории это выращивание и номер культуры, а не
+     * устройство поля и его расклад: поля здесь нет вовсе.
+     */
+    brandEl.textContent = 'выращивание';
+    seedEl.textContent = state.sample;
   },
 });
 

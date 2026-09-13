@@ -170,6 +170,12 @@ export interface LabHandlers {
     slots: string;
     /** Состояние напоминания — словом в той же строке, что его включает. */
     tell: string;
+    /**
+     * Номер образца в подвал корпуса. У лаборатории образец — это культура
+     * под стеклом, а не расклад поля: номер поля внизу лаборатории был бы
+     * числом ниоткуда.
+     */
+    sample: string;
   }): void;
 }
 
@@ -381,6 +387,15 @@ export class Lab {
     return 'Взрослая форма стабильна: ухода не требует и погибнуть не может. Переложи её на стекло или в коллекцию.';
   }
 
+  /**
+   * Номер культуры под стеклом — начало её номера, как и у поля в игре.
+   * Пустое стекло номера не имеет: выдумывать его нечему.
+   */
+  private sample(): string {
+    const id = this.view?.incubator.creature?.id;
+    return id === undefined ? 'образец —' : `образец #${id.slice(0, 8)}`;
+  }
+
   /** Что сказать прибору: строка состояния и приборные числа. */
   private tell(line: string): void {
     const view = this.view;
@@ -393,6 +408,7 @@ export class Lab {
       tokens: view?.tokens ?? 0,
       slots: `${(view?.slots ?? []).filter((creature) => creature !== null).length} / 2`,
       tell: view === null ? '—' : view.tell ? 'вкл' : 'выкл',
+      sample: this.sample(),
     });
   }
 
