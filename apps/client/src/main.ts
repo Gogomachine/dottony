@@ -798,7 +798,7 @@ function startFreeBoard(): void {
   closeWindows();
   menuEl.hidden = true;
   setMode('puzzle');
-  setStat('Свободная доска: двадцать пять ходов, попыток сколько угодно');
+  setStat('Свободно · попыток сколько угодно');
 }
 
 /** Ключ недоигранной попытки: день и ходы, сделанные до перезагрузки. */
@@ -817,13 +817,13 @@ const PUZZLE_RUN_KEY = 'doton.puzzle.run';
  */
 async function startDaily(): Promise<void> {
   if (!apiAvailable) {
-    setStat('Вызов дня живёт в таблице, а прибор сейчас без связи', 'warn');
+    setStat('Вызов дня: прибор без связи', 'warn');
     return;
   }
   try {
     await ensureAuth(guestName);
   } catch {
-    setStat('Вызов дня требует входа — попробуй ещё раз', 'warn');
+    setStat('Вызов дня: нужен вход — ещё раз', 'warn');
     return;
   }
   let taken: PuzzleView;
@@ -839,7 +839,7 @@ async function startDaily(): Promise<void> {
       void showPuzzleBoard();
       return;
     }
-    setStat('Вызов дня не отвечает — попробуй позже', 'warn');
+    setStat('Вызов дня не отвечает — позже', 'warn');
     return;
   }
 
@@ -853,7 +853,7 @@ async function startDaily(): Promise<void> {
   // дают то же самое поле.
   writeStore(PUZZLE_RUN_KEY, JSON.stringify({ day: taken.day, moves: [] }));
   updateMenuPuzzle();
-  setStat('Вызов дня: двадцать пять ходов, попытка одна');
+  setStat('Вызов дня · попытка одна');
 }
 
 /**
@@ -891,7 +891,7 @@ function resumeDaily(): boolean {
   puzzleRun = { moves: [...kept.moves] };
   renderer.resetAnims();
   updateHud();
-  setStat(`Попытка дня продолжается · ${movesWord(session.movesLeft)}`);
+  setStat(`Попытка дня · ${movesWord(session.movesLeft)}`);
   return true;
 }
 
@@ -1031,7 +1031,7 @@ async function shareDaily(): Promise<void> {
   const line = view === null ? null : dailyLine(view);
   if (line === null) return;
   const how = await shareLine(line, deviceLink('puzzle'));
-  if (how === 'copied') setStat('Скопировано — остаётся вставить в чат');
+  if (how === 'copied') setStat('Скопировано — вставьте в чат');
 }
 
 /** Таблица дня — тем же окном, что и остальные таблицы прибора. */
@@ -1653,7 +1653,7 @@ function countOrder(cell: Cell, t: number): void {
   if (run.moves.length >= ORDER_MOVE_LIMIT) {
     if (!run.full) {
       run.full = true;
-      setStat('Журнал захода полон — этот заход в таблицу не пойдёт', 'warn');
+      setStat('Журнал полон · заход мимо таблицы', 'warn');
     }
     return;
   }
@@ -2762,7 +2762,7 @@ sampleKeyEl.addEventListener('click', () => showSample(nextSample(sampleIndex)))
 zoomKeyEl.addEventListener('click', () => {
   paper.zoom();
   updateZoomKey();
-  setStat(paper.far ? 'Лист целиком · в величину шильдика' : 'Вблизи · двумя пальцами возят лист');
+  setStat(paper.far ? 'Лист целиком · как шильдик' : 'Вблизи · лист возят пальцами');
 });
 
 el<HTMLButtonElement>('tut-skip').addEventListener('click', () => stopTutorial());
@@ -3149,7 +3149,7 @@ function frame(now: number): void {
       showFails();
       sound.over(false);
       showResult(`Прибор сбоит · ${doneWord(session.run?.orders ?? 0)}`, session.score);
-      setStat('Запас сбоев исчерпан — заход окончен', 'warn');
+      setStat('Сбои кончились · заход окончен', 'warn');
       // Заход кончился — его и отдаём на проверку: счёт в таблицу ставит
       // сервер, переиграв присланные касания.
       if (orderRun) void finishOrder(orderRun);

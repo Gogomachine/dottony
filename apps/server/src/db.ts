@@ -1089,9 +1089,12 @@ export class Store {
    * Имена таблиц и колонок здесь — из замкнутого набора, а не из запроса
    * игрока: подставлять их в SQL строкой безопасно.
    */
-  private source(board: Board, period: BoardPeriod): { table: string; where: string } {
+  private source(board: Board, period: BoardPeriod, as = ''): { table: string; where: string } {
+    // Псевдоним нужен там, где таблица участвует в запросе дважды (`rank`):
+    // без него `day` не сказать, чей именно.
+    const of = as === '' ? '' : `${as}.`;
     return period === 'day'
-      ? { table: `${board}_days`, where: `day = date('now')` }
+      ? { table: `${board}_days`, where: `${of}day = date('now')` }
       : { table: `${board}_runs`, where: '1 = 1' };
   }
 
@@ -1105,14 +1108,28 @@ export class Store {
     return Number(result.rows[0]?.value ?? 0);
   }
 
-  /** Место в таблице: 1 + число рекордов строго выше. */
+  /**
+   * Место в таблице: 1 + число строк выше. «Выше» понимается ровно так же,
+   * как в `top`, — по счёту, а при равном счёте по времени: иначе на ничьей
+   * прибор называл игроку одно место, а в таблице подсвечивал чужую строку
+   * с тем же номером. Место в таблице — это место в таблице, и считаться
+   * оно должно её порядком, а не отдельным правилом.
+   */
   private async rank(board: Board, userId: string, period: BoardPeriod): Promise<number | null> {
     const mine = await this.best(board, userId, period);
     if (mine === 0) return null;
-    const { table, where } = this.source(board, period);
+    const { table } = this.source(board, period);
+    const mineWhere = this.source(board, period, 'me').where;
+    const rowWhere = this.source(board, period, 'r').where;
     const above = await this.client.execute({
-      sql: `SELECT COUNT(*) AS above FROM ${table} WHERE score > ? AND ${where}`,
-      args: [mine],
+      sql: `SELECT COUNT(*) AS above
+              FROM ${table} r, ${table} me
+             WHERE me.user_id = ? AND ${mineWhere} AND ${rowWhere}
+               AND (r.score > me.score
+                 OR (r.score = me.score
+                   AND (r.created_at < me.created_at
+                     OR (r.created_at = me.created_at AND r.rowid < me.rowid))))`,
+      args: [userId],
     });
     return Number(above.rows[0]!.above) + 1;
   }
@@ -1343,9 +1360,20 @@ export class Store {
   async puzzleRank(userId: string, day: string): Promise<number | null> {
     const mine = await this.puzzleOf(userId, day);
     if (mine === null || !mine.done) return null;
+    // «Выше» — то же, что в `puzzleTop`: счёт, а при равном счёте время.
+    // Доска у всех одна, и одинаковый счёт на ней — дело обычное; считать
+    // место другим правилом значило бы называть игроку номер, под которым
+    // в таблице стоит не он.
     const above = await this.client.execute({
-      sql: 'SELECT COUNT(*) AS above FROM puzzle_days WHERE day = ? AND done = 1 AND score > ?',
-      args: [day, mine.score],
+      sql: `SELECT COUNT(*) AS above
+              FROM puzzle_days r, puzzle_days me
+             WHERE me.user_id = ? AND me.day = ? AND r.day = me.day
+               AND me.done = 1 AND r.done = 1
+               AND (r.score > me.score
+                 OR (r.score = me.score
+                   AND (r.created_at < me.created_at
+                     OR (r.created_at = me.created_at AND r.rowid < me.rowid))))`,
+      args: [userId, day],
     });
     return Number(above.rows[0]!.above) + 1;
   }

@@ -4240,6 +4240,36 @@ describe('вызов дня', () => {
     expect((done.json() as PuzzleView).played).toMatchObject({ score, rank: 1, done: true });
   });
 
+  it('на ничьей место называют то же, под которым игрок стоит в таблице', async () => {
+    // Доска у всех одна, и одинаковый счёт на ней — дело обычное. Считать
+    // место числом тех, кто строго выше, значило бы называть игроку номер,
+    // под которым в таблице стоит не он: второй с тем же счётом услышал бы
+    // «первое место», а подсветка встала бы на чужую строку.
+    const day = puzzleDay(new Date());
+    const { moves, score } = playPuzzle(puzzleSeed(day));
+    const play = async (name: string): Promise<PuzzleView> => {
+      const headers = await player(name);
+      expect(
+        (await app.inject({ method: 'POST', url: '/api/puzzle/start', headers })).statusCode,
+      ).toBe(200);
+      const sent = await app.inject({ method: 'POST', url: '/api/puzzle', headers, payload: { moves } });
+      expect(sent.statusCode).toBe(200);
+      return sent.json() as PuzzleView;
+    };
+
+    const first = await play('Ада');
+    expect(first.played).toMatchObject({ score, rank: 1 });
+
+    const second = await play('Боб');
+    expect(second.played).toMatchObject({ score, rank: 2 });
+    // Место из `played` и строка в таблице — одно и то же место.
+    expect(second.me).toMatchObject({ rank: 2, name: 'Боб', score });
+    expect(second.entries.map((entry) => [entry.rank, entry.name])).toEqual([
+      [1, 'Ада'],
+      [2, 'Боб'],
+    ]);
+  });
+
   it('заход без взятой попытки не засчитывается', async () => {
     // Прибор открывает доску дня только после записи. Заход, пришедший без
     // неё, сыгран не на той доске или не тем, кто его прислал.

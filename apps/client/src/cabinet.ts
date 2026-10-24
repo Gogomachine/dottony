@@ -413,7 +413,7 @@ export class Cabinet {
     // и раздел, вставший на место столбика, начинался выше экрана. Наверх
     // выводим не всю карточку, а строку возврата: на узком телефоне шапка
     // пропуска съедает окуляр целиком, и до самого раздела дело не доходит.
-    if (tab === null) this.overlay.querySelector('.modal')?.scrollTo({ top: 0 });
+    if (tab === null) this.overlay.querySelector('.badge-body')?.scrollTo({ top: 0 });
     else this.backEl.scrollIntoView({ block: 'start' });
     if (tab !== null) {
       const opened = this.navEl.querySelector<HTMLButtonElement>(`.nav[data-tab="${tab}"] b`);
