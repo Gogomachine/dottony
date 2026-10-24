@@ -71,19 +71,14 @@ export function saveSound(on: boolean): void {
  * Старый ключ читается на один раз: у тех, кто уже выбирал механику дуэли,
  * переключатель встанет в привычное положение, а не сбросится.
  */
-/**
- * Во что прибор поставлен: две механики игры и лаборатория.
- *
- * Лаборатория — не механика дуэли и никогда ею не станет, поэтому тип тут
- * свой, а не `DuelKind`: там, где спрашивают «на чём драться», третьего
- * значения быть не должно вовсе.
- */
-export type DeviceMode = 'chain' | 'order' | 'lab';
+/** Во что прибор поставлен: одна из двух механик. */
+export type DeviceMode = 'chain' | 'order';
 
 export function loadKind(): DeviceMode {
   const saved = readStore(DEVICE_KIND_KEY) ?? readStore(KIND_KEY);
-  if (saved === 'order') return 'order';
-  return saved === 'lab' ? 'lab' : 'chain';
+  // Третьим положением была лаборатория. Её больше нет, и тем, у кого
+  // переключатель остался стоять на ней, прибор возвращает цепочки.
+  return saved === 'order' ? 'order' : 'chain';
 }
 
 export function saveKind(kind: DeviceMode): void {

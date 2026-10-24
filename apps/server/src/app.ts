@@ -30,9 +30,6 @@ import {
   type AdminFindResponse,
   type BanInfo,
   type AdminLogResponse,
-  PetriDialsRequestSchema,
-  PetriShelfRequestSchema,
-  PetriTellRequestSchema,
   type AdminNoticesResponse,
   type AdminReportsResponse,
   type DuelKind,
@@ -102,20 +99,6 @@ import { Bot, makeLinkToken, parseStart, type BotUpdate } from './bot.js';
 import { orderTempo, replayOrder } from './order.js';
 import { replaySprint } from './sprint.js';
 import { judgeRun } from './judge.js';
-import {
-  breedLab,
-  feedLab,
-  labTell,
-  labView,
-  openLab,
-  seedLab,
-  setLabDials,
-  shelveLab,
-  storeLab,
-  tellLab,
-  type Lab,
-} from './petri.js';
-import { TELL_HOUR, TELL_UNTIL, labDay, labHour, type LabView } from '@doton/petri';
 import { Store, type BoardPeriod } from './db.js';
 import {
   INVITE_LIMIT,
@@ -894,100 +877,6 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     };
   });
 
-  // ---------- PETRIDOT ----------
-
-  /*
-   * Второй прибор той же компании: лабораторный инкубатор с общим кошельком.
-   *
-   * Все двери устроены одинаково — открыть лабораторию (она же досчитает
-   * пропущенные сутки), что-то сделать и вернуть её целиком. Отдавать в
-   * ответ кусок значило бы заставлять клиент собирать состояние из двух
-   * источников, а прибор показывает три стекла разом.
-   */
-  const labAnswer = async (userId: string, lab: Lab): Promise<LabView> =>
-    labView(lab, await store.tokensOf(userId));
-
-  app.get('/api/petri', async (request) => {
-    const user = await requireUser(request);
-    const lab = await openLab(store, user.sub);
-    return labView(lab, await store.tokensOf(user.sub));
-  });
-
-  /** Посев: первая точка бесплатно, дальше за жетоны. */
-  app.post('/api/petri/seed', async (request, reply) => {
-    const user = await requireUser(request);
-    const lab = await openLab(store, user.sub);
-    const seeded = await seedLab(store, user.sub, lab);
-    if (typeof seeded === 'string') return reply.code(409).send({ error: seeded });
-    return labAnswer(user.sub, await openLab(store, user.sub));
-  });
-
-  /**
-   * Тумблеры. Их выставляют сколько угодно раз за сутки: считается то, как
-   * они стоят к концу дня, а не сколько раз их трогали.
-   */
-  app.post('/api/petri/dials', async (request, reply) => {
-    const user = await requireUser(request);
-    const parsed = PetriDialsRequestSchema.safeParse(request.body);
-    if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
-    const lab = await openLab(store, user.sub);
-    return labAnswer(user.sub, await setLabDials(store, user.sub, lab, parsed.data));
-  });
-
-  /** Кормёжка. Вторая за сутки — уже перекорм, и она тоже считается. */
-  app.post('/api/petri/feed', async (request, reply) => {
-    const user = await requireUser(request);
-    const lab = await openLab(store, user.sub);
-    const fed = await feedLab(store, user.sub, lab);
-    if (typeof fed === 'string') return reply.code(409).send({ error: fed });
-    return labAnswer(user.sub, fed);
-  });
-
-  /** Переложить взрослого на свободное стекло хранения. */
-  app.post('/api/petri/store', async (request, reply) => {
-    const user = await requireUser(request);
-    const lab = await openLab(store, user.sub);
-    const stored = await storeLab(store, user.sub, lab);
-    if (typeof stored === 'string') return reply.code(409).send({ error: stored });
-    return labAnswer(user.sub, stored);
-  });
-
-  /** Отправить в коллекцию — из инкубатора или со стекла хранения. */
-  app.post('/api/petri/shelf', async (request, reply) => {
-    const user = await requireUser(request);
-    const parsed = PetriShelfRequestSchema.safeParse(request.body);
-    if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
-    const lab = await openLab(store, user.sub);
-    const shelved = await shelveLab(store, user.sub, lab, parsed.data.id);
-    if (typeof shelved === 'string') return reply.code(409).send({ error: shelved });
-    return labAnswer(user.sub, shelved);
-  });
-
-  /**
-   * Напоминание о суточном сбросе. Выключается одним нажатием и навсегда:
-   * прибор пишет в чужой мессенджер, и право прекратить это должно быть
-   * там же, где сама лаборатория, а не в переписке с ботом.
-   */
-  app.post('/api/petri/tell', async (request, reply) => {
-    const user = await requireUser(request);
-    const parsed = PetriTellRequestSchema.safeParse(request.body);
-    if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
-    const lab = await openLab(store, user.sub);
-    return labAnswer(user.sub, await tellLab(store, user.sub, lab, parsed.data.on));
-  });
-
-  /**
-   * Скрестить двоих со стёкол хранения. Результат считает сервер: клиент его
-   * только показывает.
-   */
-  app.post('/api/petri/breed', async (request, reply) => {
-    const user = await requireUser(request);
-    const lab = await openLab(store, user.sub);
-    const bred = await breedLab(store, user.sub, lab);
-    if (typeof bred === 'string') return reply.code(409).send({ error: bred });
-    return labAnswer(user.sub, bred);
-  });
-
   /**
    * Взнос за вход — в тот турнир, который сейчас принимает: сегодняшний,
    * пока он не закрылся, и завтрашний после закрытия. Записаться заранее
@@ -1135,54 +1024,6 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   );
   tourneyClock.unref?.();
   app.addHook('onClose', () => clearInterval(tourneyClock));
-
-  /**
-   * Напоминание о суточном сбросе.
-   *
-   * В полночь у всех стёкол сбрасываются тумблеры и обнуляется кормёжка —
-   * и с этого мига начинаются небрежные сутки у того, кто не зайдёт. Это
-   * единственное, о чём лаборатория пишет сама: не «возвращайся играть», а
-   * «твои условия сброшены, существо ждёт».
-   *
-   * Кандидатов отбирает база грубо, а решает лаборатория: перед письмом
-   * стекло досчитывается до «сейчас», иначе прибор напомнил бы об уходе за
-   * тем, кто этой ночью вылупился, вырос или погиб. Досчёт заодно и
-   * записывается — судьба прошедших суток не ждёт, пока хозяин заглянет.
-   *
-   * Отметка `told` ставится в любом случае, даже когда письма не было: раз
-   * в сутки прибор думает о каждом стекле один раз.
-   */
-  async function tellLabs(): Promise<void> {
-    if (!bot) return;
-    const now = new Date();
-    const hour = labHour(now);
-    // Не ночью. Спящий хостинг может проснуться в любой час, и «сегодня
-    // надо зайти», пришедшее в три ночи, — не напоминание, а побудка.
-    if (hour < TELL_HOUR || hour >= TELL_UNTIL) return;
-    const today = labDay(now);
-    const open = bot.miniAppLink('lab');
-    for (const row of await store.petriToTell(today)) {
-      const lab = await openLab(store, row.userId, now);
-      const text = labTell(lab.inc);
-      if (text !== null) {
-        await bot.sendMessage(row.chat, text, open ? { text: '🔬 Открыть лабораторию', url: open } : undefined);
-      }
-      await store.petriTold(row.userId, today);
-    }
-  }
-
-  // Разослать напоминания прямо сейчас. Ленивой двери у них нет — в отличие
-  // от турнирных итогов, которые всё равно наступают при первом взгляде, —
-  // и без этого шва проверить, кому прибор пишет, можно было бы только
-  // подождав пять минут настоящего времени.
-  app.decorate('tellLabsNow', tellLabs);
-
-  const labClock = setInterval(
-    () => void tellLabs().catch((error: unknown) => app.log.error(error, 'petri tell failed')),
-    5 * 60_000,
-  );
-  labClock.unref?.();
-  app.addHook('onClose', () => clearInterval(labClock));
 
   // ---------- Служба ----------
 

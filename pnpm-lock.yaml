@@ -13,9 +13,6 @@ importers:
       '@doton/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@doton/petri':
-        specifier: workspace:*
-        version: link:../../packages/petri
       '@doton/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
@@ -32,9 +29,6 @@ importers:
       '@doton/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@doton/petri':
-        specifier: workspace:*
-        version: link:../../packages/petri
       '@doton/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
@@ -74,19 +68,6 @@ importers:
         version: 3.2.7(@types/node@22.20.1)(tsx@4.23.1)
 
   packages/core:
-    devDependencies:
-      typescript:
-        specifier: ^5.6.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.0.0
-        version: 3.2.7(@types/node@22.20.1)(tsx@4.23.1)
-
-  packages/petri:
-    dependencies:
-      '@doton/core':
-        specifier: workspace:*
-        version: link:../core
     devDependencies:
       typescript:
         specifier: ^5.6.0
