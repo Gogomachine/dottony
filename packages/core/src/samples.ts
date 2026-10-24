@@ -1,4 +1,4 @@
-import { ART_LEN, ART_SIZE, isArt } from './art.js';
+import { ART_LEN, ART_SIZE, isArt, regrowArt } from './art.js';
 
 /**
  * Образцы для листа: готовые картинки из точек, которые можно обвести.
@@ -25,19 +25,32 @@ import { ART_LEN, ART_SIZE, isArt } from './art.js';
 export interface Sample {
   /** Название — оно же подпись в приборной строке, пока образец на стекле. */
   name: string;
-  /** Рисунок в той же записи, что и свой шильдик: сто знаков. */
+  /** Рисунок в той же записи, что и свой шильдик. */
   art: string;
 }
 
-/** Собирает строку образца из десяти рядов — так его видно прямо в коде. */
+/**
+ * Собирает строку образца из рядов — так его видно прямо в коде.
+ *
+ * Ряды кладутся квадратом любой стороны не больше нынешней: образцы ниже
+ * рисовались для листа в десять клеток, и перерисовывать их под выросшую
+ * сетку незачем — рисунок от этого не станет лучше. Меньший квадрат
+ * ложится в середину листа, как и всякая старая запись (см. `regrowArt`).
+ */
 function rows(...lines: string[]): string {
+  const side = lines.length;
   const art = lines.join('');
   // Ошибиться на клетку в такой записи легче лёгкого, а увидеть это на
   // стекле — трудно: сломанный образец просто съедет на ряд.
-  if (lines.length !== ART_SIZE || art.length !== ART_LEN) {
-    throw new Error(`образец не ${ART_SIZE}×${ART_SIZE}`);
+  if (side === 0 || art.length !== side * side || side > ART_SIZE) {
+    throw new Error(`образец не квадрат или больше ${ART_SIZE}×${ART_SIZE}`);
   }
-  return art;
+  if (side === ART_SIZE) return art;
+  const grown = regrowArt(art);
+  if (grown === null || grown.length !== ART_LEN) {
+    throw new Error(`образец не ложится в ${ART_SIZE}×${ART_SIZE}`);
+  }
+  return grown;
 }
 
 export const SAMPLES: readonly Sample[] = [

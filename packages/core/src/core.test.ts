@@ -43,6 +43,7 @@ import {
 } from './marks.js';
 import {
   ART_LEN,
+  regrowArt,
   ART_PAINTS,
   ART_SIZE,
   artEmptyCells,
@@ -1242,3 +1243,27 @@ function anyChain(board: Board, cfg: GameConfig): Cell[] | null {
   }
   return null;
 }
+
+describe('рисунок на пропуск', () => {
+  it('старая запись переносится в середину нынешнего листа', () => {
+    // Сторона листа выросла, и записи, сделанные до этого, короче. Это
+    // купленные шильдики — выбрасывать их нельзя.
+    const old = 10;
+    const was = Array.from({ length: old * old }, (_, i) => (i === 0 ? '1' : '.')).join('');
+    const now = regrowArt(was);
+    expect(now).not.toBeNull();
+    expect(now!.length).toBe(ART_LEN);
+    const cells = decodeArt(now!);
+    const shift = Math.floor((ART_SIZE - old) / 2);
+    // Левый верхний угол старого листа лёг со сдвигом — рисунок в середине.
+    expect(cells[shift]![shift]).toBe(1);
+    expect(cells[0]![0]).toBeNull();
+    // Закрашенных клеток столько же, сколько было.
+    expect(artPainted(now!)).toBe(1);
+
+    // Нынешнюю запись переносить некуда, и мусор — тоже.
+    expect(regrowArt('.'.repeat(ART_LEN))).toBeNull();
+    expect(regrowArt('не рисунок')).toBeNull();
+    expect(regrowArt(`${'z'.repeat(4)}`)).toBeNull();
+  });
+});

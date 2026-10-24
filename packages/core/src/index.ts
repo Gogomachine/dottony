@@ -42,6 +42,7 @@ export type { Mark, MarkKind } from './marks.js';
 export {
   ART_SIZE,
   ART_LEN,
+  regrowArt,
   ART_PAINTS,
   artEmptyCells,
   encodeArt,

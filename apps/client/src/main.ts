@@ -130,6 +130,7 @@ const miniPartEls = [
 const ticksEl = el<HTMLDivElement>('ticks');
 const stampEl = el<HTMLButtonElement>('paper-stamp');
 const sampleKeyEl = el<HTMLButtonElement>('paper-sample');
+const zoomKeyEl = el<HTMLButtonElement>('paper-zoom');
 const statEl = el<HTMLDivElement>('stat');
 const chainCountEl = el<HTMLDivElement>('chain-count');
 const seedEl = el<HTMLSpanElement>('seed');
@@ -2124,6 +2125,8 @@ function startDrawing(): void {
   ticksEl.hidden = true;
   stampEl.hidden = false;
   sampleKeyEl.hidden = false;
+  zoomKeyEl.hidden = false;
+  updateZoomKey();
   sampleKeyEl.classList.toggle('arm', sampleAt(sampleIndex) !== null);
   paper.setSample(sampleAt(sampleIndex)?.art ?? null);
   armStamp(false);
@@ -2153,6 +2156,7 @@ function stopDrawing(): void {
   ticksEl.hidden = false;
   stampEl.hidden = true;
   sampleKeyEl.hidden = true;
+  zoomKeyEl.hidden = true;
   armStamp(false);
   scoreLabelEl.textContent = 'Потенциал';
   miniCache = '';
@@ -2463,6 +2467,17 @@ function showPalette(on: boolean): void {
   for (const part of miniPartEls) part.hidden = on;
 }
 
+/**
+ * Клавиша отдаления подписана тем, что сделает, — как и переключатель
+ * механики: клавиша это действие, а не состояние.
+ */
+function updateZoomKey(): void {
+  zoomKeyEl.textContent = paper.far ? 'Приблизить' : 'Отдалить';
+  // Отдалённый лист — это взгляд со стороны, и клавиша об этом говорит
+  // тем же способом, что и занесённая рука на пропуске.
+  zoomKeyEl.classList.toggle('arm', paper.far);
+}
+
 /** Приборная строка листа: сколько закрашено и сколько набрано пальцем. */
 function updatePaperHud(): void {
   scoreEl.textContent = String(paper.painted);
@@ -2711,6 +2726,11 @@ paletteEl.addEventListener('click', (event) => {
 
 stampEl.addEventListener('click', () => void stampPass());
 sampleKeyEl.addEventListener('click', () => showSample(nextSample(sampleIndex)));
+zoomKeyEl.addEventListener('click', () => {
+  paper.zoom();
+  updateZoomKey();
+  setStat(paper.far ? 'Лист целиком · в величину шильдика' : 'Вблизи · двумя пальцами возят лист');
+});
 
 el<HTMLButtonElement>('tut-skip').addEventListener('click', () => stopTutorial());
 // Показ листают руками: «Дальше» на последнем шаге его и закрывает.

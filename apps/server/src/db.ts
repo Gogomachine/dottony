@@ -1,6 +1,7 @@
 import { randomInt } from 'node:crypto';
 import { createClient, type Client } from '@libsql/client';
 import {
+  ART_LEN,
   cleanMarks,
   goldMark,
   isArt,
@@ -10,6 +11,7 @@ import {
   markById,
   newRating,
   PLACEMENT_GAMES,
+  regrowArt,
   STICKER_PRICE,
   type Rating,
 } from '@doton/core';
@@ -529,6 +531,7 @@ export class Store {
       'CREATE UNIQUE INDEX IF NOT EXISTS idx_users_friend_code ON users (friend_code)',
     );
     await this.backfillFriendCodes();
+    await this.regrowArt();
 
     // Старые аккаунты знали только Telegram — переносим их в общий вид.
     // INSERT OR IGNORE делает перенос повторяемым.
@@ -2422,6 +2425,29 @@ export class Store {
     });
     const art = rows.rows[0]?.art;
     return isArt(art) ? art : null;
+  }
+
+  /**
+   * Перенести старые рисунки в выросшую сетку.
+   *
+   * Сторона листа однажды стала больше, и записи, сделанные до этого,
+   * короче нынешней: прибор прочёл бы их как чистый лист, а это купленные
+   * шильдики. Кладём рисунок в середину нового листа — там он и был.
+   *
+   * Не переносится только то, что не похоже на рисунок вовсе: такое
+   * гасим — пустое место честнее мусора на чужом экране.
+   */
+  private async regrowArt(): Promise<void> {
+    const rows = await this.client.execute(
+      `SELECT id, art FROM users WHERE art IS NOT NULL AND length(art) <> ${ART_LEN}`,
+    );
+    for (const row of rows.rows) {
+      const grown = regrowArt(String(row.art));
+      await this.client.execute({
+        sql: 'UPDATE users SET art = ? WHERE id = ?',
+        args: [grown, String(row.id)],
+      });
+    }
   }
 
   async setArt(id: string, art: string): Promise<void> {

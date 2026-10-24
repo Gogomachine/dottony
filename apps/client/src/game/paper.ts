@@ -36,6 +36,17 @@ export const PAPER_PAINTS = ART_PAINTS;
 /** Красит цепочка от двух клеток: одна клетка — это ещё не движение. */
 export const PAPER_MIN = 2;
 
+/**
+ * Сколько клеток видно вблизи.
+ *
+ * Ровно столько, сколько их было на всём листе до того, как он вырос:
+ * двадцать восемь точек на клетку — та самая мерка, при которой палец
+ * ведёт цепочку уверенно, а не задевает соседей. Вблизи рисуют, отдалив —
+ * смотрят: отдалённый лист показывает рисунок разом и сразу в натуральную
+ * величину шильдика.
+ */
+export const PAPER_NEAR = 10;
+
 /** Клетка листа: номер краски либо чистое место. */
 export type PaperCell = ArtCell;
 
@@ -74,6 +85,20 @@ export class Paper {
   private pad = 0;
   private drawing = false;
   private bound = false;
+  /**
+   * Вблизи ли лист. По умолчанию да: лист открывают, чтобы рисовать, а
+   * рисовать на отдалённом неудобно — клетка там с ноготь.
+   */
+  private near = true;
+  /**
+   * Левый верхний угол видимого окна, в клетках. Дробный нарочно: окно
+   * едет за пальцем плавно, а не прыжками по клетке.
+   */
+  private view = { r: (ART_SIZE - PAPER_NEAR) / 2, c: (ART_SIZE - PAPER_NEAR) / 2 };
+  /** Пальцы на стекле: двумя лист возят, одним — рисуют. */
+  private readonly points = new Map<number, { x: number; y: number }>();
+  private panning = false;
+  private panFrom: { x: number; y: number } | null = null;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -84,6 +109,42 @@ export class Paper {
     this.ctx = canvas.getContext('2d')!;
     this.cells = load();
     this.resize();
+  }
+
+  /** Отдалён ли лист — по этому слову подписана клавиша. */
+  get far(): boolean {
+    return !this.near;
+  }
+
+  /**
+   * Отдалить или приблизить.
+   *
+   * Приближаемся туда, где рисовали: к последней взятой клетке, а если
+   * палец листа ещё не касался — к середине. Приближение «куда-нибудь»
+   * означало бы, что после каждого взгляда на рисунок целиком место надо
+   * искать заново.
+   */
+  zoom(): void {
+    this.near = !this.near;
+    if (this.near) {
+      const at = this.chain[this.chain.length - 1] ?? { r: ART_SIZE / 2, c: ART_SIZE / 2 };
+      this.look(at.r - PAPER_NEAR / 2, at.c - PAPER_NEAR / 2);
+    }
+    this.resize();
+  }
+
+  /** Поставить окно, не выпуская его за край листа. */
+  private look(r: number, c: number): void {
+    const span = ART_SIZE - this.window;
+    this.view = {
+      r: Math.max(0, Math.min(span, r)),
+      c: Math.max(0, Math.min(span, c)),
+    };
+  }
+
+  /** Сколько клеток видно сейчас. */
+  private get window(): number {
+    return this.near ? PAPER_NEAR : ART_SIZE;
   }
 
   /** Сколько клеток закрашено — единственное число, которое лист считает. */
@@ -133,11 +194,30 @@ export class Paper {
     this.chain = [];
   }
 
+  /**
+   * Везёт окно за ведущим пальцем.
+   *
+   * Цепочка длиннее видимого окна — обычное дело на выросшем листе, и
+   * прерывать её ради того, чтобы подвинуть лист второй рукой, значит
+   * рисовать урывками. Край окна поэтому толкает его сам.
+   */
+  private follow(cell: Cell): void {
+    if (!this.near) return;
+    const edge = 1;
+    let { r, c } = this.view;
+    if (cell.r - r < edge) r = cell.r - edge;
+    if (cell.r - r > PAPER_NEAR - 1 - edge) r = cell.r - PAPER_NEAR + 1 + edge;
+    if (cell.c - c < edge) c = cell.c - edge;
+    if (cell.c - c > PAPER_NEAR - 1 - edge) c = cell.c - PAPER_NEAR + 1 + edge;
+    this.look(r, c);
+  }
+
   bind(): void {
     if (this.bound) return;
     this.bound = true;
     this.canvas.addEventListener('pointerdown', this.onDown);
     this.canvas.addEventListener('pointermove', this.onMove);
+    this.canvas.addEventListener('wheel', this.onWheel, { passive: false });
     window.addEventListener('pointerup', this.onUp);
     window.addEventListener('pointercancel', this.onUp);
   }
@@ -146,13 +226,27 @@ export class Paper {
     if (!this.bound) return;
     this.bound = false;
     this.drawing = false;
+    this.points.clear();
+    this.panning = false;
     this.canvas.removeEventListener('pointerdown', this.onDown);
     this.canvas.removeEventListener('pointermove', this.onMove);
+    this.canvas.removeEventListener('wheel', this.onWheel);
     window.removeEventListener('pointerup', this.onUp);
     window.removeEventListener('pointercancel', this.onUp);
   }
 
   private readonly onDown = (event: PointerEvent): void => {
+    this.points.set(event.pointerId, this.local(event));
+    // Второй палец — это уже не рисование, а возка листа. Начатую цепочку
+    // при этом снимаем: пальцы разъехались, и что именно вёл первый из
+    // них, уже не скажешь.
+    if (this.points.size > 1) {
+      this.panning = true;
+      this.panFrom = this.middle();
+      this.drawing = false;
+      this.chain = [];
+      return;
+    }
     const cell = this.hit(event);
     if (!cell) {
       // Мимо листа — набранное снимаем: это и есть отказ от цепочки.
@@ -166,6 +260,15 @@ export class Paper {
   };
 
   private readonly onMove = (event: PointerEvent): void => {
+    if (this.points.has(event.pointerId)) this.points.set(event.pointerId, this.local(event));
+    if (this.panning) {
+      const now = this.middle();
+      const from = this.panFrom;
+      this.panFrom = now;
+      if (from === null || this.cell === 0) return;
+      this.look(this.view.r - (now.y - from.y) / this.cell, this.view.c - (now.x - from.x) / this.cell);
+      return;
+    }
     if (!this.drawing) return;
     const cell = this.hit(event);
     if (!cell) return;
@@ -175,19 +278,51 @@ export class Paper {
     if (!last || sameCell(last, cell) || !neighbours(last, cell)) return;
     if (this.chain.some((taken) => sameCell(taken, cell))) return;
     this.chain.push(cell);
+    this.follow(cell);
     this.onStep(this.chain.length - 1);
   };
 
-  private readonly onUp = (): void => {
+  private readonly onUp = (event?: PointerEvent): void => {
+    if (event) this.points.delete(event.pointerId);
+    else this.points.clear();
+    if (this.points.size < 2) {
+      this.panning = false;
+      this.panFrom = null;
+    }
     this.drawing = false;
   };
 
-  private hit(event: PointerEvent): Cell | null {
+  /**
+   * Колесо возит лист, а не страницу: на столе второго пальца нет, и
+   * прокрутка — единственное, чем окно двигают, не трогая рисунок.
+   */
+  private readonly onWheel = (event: WheelEvent): void => {
+    if (!this.near || this.cell === 0) return;
+    event.preventDefault();
+    this.look(this.view.r + event.deltaY / this.cell, this.view.c + event.deltaX / this.cell);
+  };
+
+  private local(event: PointerEvent): { x: number; y: number } {
     const box = this.canvas.getBoundingClientRect();
-    const x = event.clientX - box.left;
-    const y = event.clientY - box.top;
-    const c = Math.floor((x - this.pad) / this.cell);
-    const r = Math.floor((y - this.pad) / this.cell);
+    return { x: event.clientX - box.left, y: event.clientY - box.top };
+  }
+
+  /** Середина между пальцами — за ней и едет окно. */
+  private middle(): { x: number; y: number } {
+    let x = 0;
+    let y = 0;
+    for (const point of this.points.values()) {
+      x += point.x;
+      y += point.y;
+    }
+    const count = Math.max(1, this.points.size);
+    return { x: x / count, y: y / count };
+  }
+
+  private hit(event: PointerEvent): Cell | null {
+    const point = this.local(event);
+    const c = Math.floor((point.x - this.pad) / this.cell + this.view.c);
+    const r = Math.floor((point.y - this.pad) / this.cell + this.view.r);
     if (r < 0 || r >= PAPER_SIZE || c < 0 || c >= PAPER_SIZE) return null;
     return { r, c };
   }
@@ -200,7 +335,10 @@ export class Paper {
     this.canvas.height = Math.round(size * dpr);
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.pad = size * 0.04;
-    this.cell = (size - this.pad * 2) / PAPER_SIZE;
+    this.cell = (size - this.pad * 2) / this.window;
+    // Окно могло оказаться за краем: отдалённый лист стоит в нуле, а
+    // приближённый — там, где его оставили.
+    this.look(this.view.r, this.view.c);
   }
 
   render(): void {
@@ -209,19 +347,43 @@ export class Paper {
     if (size === 0 || this.cell === 0) return;
     ctx.clearRect(0, 0, size, size);
 
-    // Волосяная сетка платы — та же, что под точками в игре.
+    /*
+     * Волосяная сетка платы — та же, что под точками в игре, но рисуется
+     * по видимому окну: лист больше окуляра, и линии «от края до края»
+     * обещали бы лист ровно по экрану.
+     */
     ctx.strokeStyle = this.theme.gridLine;
     ctx.lineWidth = 1;
     ctx.beginPath();
-    for (let i = 1; i < PAPER_SIZE; i++) {
-      const x = this.pad + i * this.cell;
-      ctx.moveTo(x, this.pad);
-      ctx.lineTo(x, size - this.pad);
-      const y = this.pad + i * this.cell;
-      ctx.moveTo(this.pad, y);
-      ctx.lineTo(size - this.pad, y);
+    const first = Math.floor(this.view.c);
+    const firstRow = Math.floor(this.view.r);
+    for (let i = 0; i <= this.window + 1; i++) {
+      const x = this.pad + (first + i - this.view.c) * this.cell;
+      if (first + i >= 0 && first + i <= PAPER_SIZE) {
+        ctx.moveTo(x, this.pad);
+        ctx.lineTo(x, size - this.pad);
+      }
+      const y = this.pad + (firstRow + i - this.view.r) * this.cell;
+      if (firstRow + i >= 0 && firstRow + i <= PAPER_SIZE) {
+        ctx.moveTo(this.pad, y);
+        ctx.lineTo(size - this.pad, y);
+      }
     }
     ctx.stroke();
+
+    /*
+     * Край листа. Вблизи окно часто целиком внутри листа, и без края
+     * непонятно, кончился лист или просто не доехали: пустая клетка и
+     * «за листом» выглядят одинаково — чёрным стеклом.
+     */
+    const edge = {
+      x: this.pad + (0 - this.view.c) * this.cell,
+      y: this.pad + (0 - this.view.r) * this.cell,
+      w: PAPER_SIZE * this.cell,
+    };
+    ctx.strokeStyle = this.theme.gridLine;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(edge.x, edge.y, edge.w, edge.w);
 
     const radius = this.cell * DOT;
 
@@ -240,6 +402,7 @@ export class Paper {
         for (let c = 0; c < PAPER_SIZE; c++) {
           const under = this.sample[r]?.[c] ?? null;
           if (under === null || this.cells[r]![c] !== null) continue;
+          if (!this.shown({ r, c })) continue;
           const paint = PAPER_PAINTS[under]?.css;
           if (paint === undefined) continue;
           const center = this.center({ r, c });
@@ -280,6 +443,7 @@ export class Paper {
     const taken = new Set(this.chain.map((cell) => `${cell.r},${cell.c}`));
     for (let r = 0; r < PAPER_SIZE; r++) {
       for (let c = 0; c < PAPER_SIZE; c++) {
+        if (!this.shown({ r, c })) continue;
         const center = this.center({ r, c });
         const color = this.cells[r]![c] ?? null;
         const paint = color === null ? null : (PAPER_PAINTS[color]?.css ?? null);
@@ -303,9 +467,19 @@ export class Paper {
 
   private center(cell: Cell): { x: number; y: number } {
     return {
-      x: this.pad + cell.c * this.cell + this.cell / 2,
-      y: this.pad + cell.r * this.cell + this.cell / 2,
+      x: this.pad + (cell.c - this.view.c) * this.cell + this.cell / 2,
+      y: this.pad + (cell.r - this.view.r) * this.cell + this.cell / 2,
     };
+  }
+
+  /** Видна ли клетка сейчас: за окном рисовать нечего. */
+  private shown(cell: Cell): boolean {
+    return (
+      cell.c >= this.view.c - 1 &&
+      cell.c <= this.view.c + this.window &&
+      cell.r >= this.view.r - 1 &&
+      cell.r <= this.view.r + this.window
+    );
   }
 }
 

@@ -17,6 +17,7 @@ import {
   STICKER_PRICE,
   SLOT_PRICES,
   ART_LEN,
+  regrowArt,
   TOURNEY_ENTRY,
   TOURNEY_ROUNDS,
   SHIFT_BONUS,
@@ -532,6 +533,40 @@ describe('миграции', () => {
     // Повторный запуск сносить уже нечего — и он не падает.
     await store.migrate();
     expect(await left()).toEqual([]);
+    store.close();
+  });
+
+  it('переносит нарисованные шильдики в выросшую сетку', async () => {
+    // Сторона листа стала больше, и записи, сделанные до этого, короче.
+    // Это купленные шильдики — прочесть их как чистый лист нельзя.
+    const url = `file:${join(tmpdir(), `dotoscope-art-${randomUUID()}.db`)}`;
+    const legacy = createClient({ url });
+    const old = `1${'.'.repeat(99)}`;
+    await legacy.batch(
+      [
+        `CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT NOT NULL, tg_id TEXT UNIQUE, art TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')))`,
+        `INSERT INTO users (id, name, art) VALUES ('u-art', 'Ада', '${old}')`,
+        `INSERT INTO users (id, name, art) VALUES ('u-junk', 'Боб', 'не рисунок')`,
+        `INSERT INTO users (id, name, art) VALUES ('u-none', 'Вера', NULL)`,
+      ],
+      'write',
+    );
+    legacy.close();
+
+    const store = new Store({ url });
+    await store.migrate();
+    const grown = await store.artOf('u-art');
+    expect(grown).not.toBeNull();
+    expect(grown!.length).toBe(ART_LEN);
+    // Рисунок лёг в середину нового листа — там он и был.
+    expect(grown).toBe(regrowArt(old));
+    // Мусор гасим: пустое место честнее мусора на чужом экране.
+    await expect(store.artOf('u-junk')).resolves.toBeNull();
+    await expect(store.artOf('u-none')).resolves.toBeNull();
+    // Повторный запуск уже перенесённое не трогает.
+    await store.migrate();
+    await expect(store.artOf('u-art')).resolves.toBe(grown);
     store.close();
   });
 
