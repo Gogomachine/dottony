@@ -1048,20 +1048,49 @@ const BOARD_POLL_MS = 10_000;
 let boardCache = '';
 let boardPoll: number | null = null;
 
-/** Снимок таблицы для сравнения: имена, очки и своя строка. */
-function boardSignature(view: PuzzleView): string {
-  const rows = view.entries.map((entry) => `${entry.rank}:${entry.name}:${entry.score}`).join('|');
-  const mine = view.played ? `${view.played.score}:${view.played.rank}:${view.played.done}` : '-';
-  return `${view.day}#${rows}#${mine}`;
+/**
+ * Снимок таблицы для сравнения.
+ *
+ * Перерисовка сбрасывает прокрутку, а спрашиваем мы часто: трогаем список,
+ * только когда в нём правда что-то изменилось. Хвост — своя строка: она
+ * меняется и тогда, когда верхушка стоит на месте.
+ */
+function boardSignature(
+  entries: readonly { rank: number; name: string; score: number }[],
+  mine: string,
+): string {
+  return `${entries.map((entry) => `${entry.rank}:${entry.name}:${entry.score}`).join('|')}#${mine}`;
+}
+
+/**
+ * Держать открытую таблицу живой: пока окно открыто, прибор переспрашивает
+ * сервер.
+ *
+ * Опрос останавливает себя сам, увидев закрытое окно или другую таблицу:
+ * гасят окна в полудюжине мест, и помнить про таймер в каждом из них
+ * значило бы однажды про него забыть.
+ */
+function pollBoard(kind: 'sprint' | 'order' | 'puzzle', draw: () => Promise<unknown>): void {
+  if (boardPoll !== null) clearInterval(boardPoll);
+  boardPoll = window.setInterval(() => {
+    if (overlay.hidden || openBoard !== kind) {
+      if (boardPoll !== null) clearInterval(boardPoll);
+      boardPoll = null;
+      return;
+    }
+    void draw();
+  }, BOARD_POLL_MS);
 }
 
 /** Нарисовать таблицу дня по свежему ответу. */
 function renderPuzzleBoard(view: PuzzleView): void {
   puzzleToday = view;
   updateMenuPuzzle();
-  const signature = boardSignature(view);
-  // Перерисовка сбрасывает прокрутку, а таблица спрашивается каждые десять
-  // секунд: трогаем её, только когда в ней правда что-то изменилось.
+  const played = view.played;
+  const signature = boardSignature(
+    view.entries,
+    `${view.day}:${played ? `${played.score}:${played.rank}:${played.done}` : '-'}`,
+  );
   if (signature === boardCache) return;
   boardCache = signature;
   overNoteEl.hidden = false;
@@ -1104,41 +1133,46 @@ async function showPuzzleBoard(): Promise<void> {
   };
   if (boardPoll !== null) clearInterval(boardPoll);
   if (!(await draw())) return;
-  boardPoll = window.setInterval(() => {
-    if (overlay.hidden || openBoard !== 'puzzle') {
-      if (boardPoll !== null) clearInterval(boardPoll);
-      boardPoll = null;
-      return;
-    }
-    void draw();
-  }, BOARD_POLL_MS);
+  pollBoard('puzzle', draw);
 }
 
 async function showSprintBoard(period: BoardPeriod = boardPeriod): Promise<void> {
   boardPeriod = period;
   showOverModal({ title: 'Рекорды · цепочки', note: 'Загружаю таблицу…', viewing: true });
   showBoardTabs('sprint');
-  try {
-    const board = await getSprintBoard(period);
-    if (board.entries.length === 0) {
+  boardCache = '';
+  const draw = async (): Promise<boolean> => {
+    try {
+      const board = await getSprintBoard(boardPeriod);
+      const signature = boardSignature(
+        board.entries,
+        `${boardPeriod}:${board.me ? `${board.me.score}:${board.me.rank}` : '-'}`,
+      );
+      if (signature === boardCache) return true;
+      boardCache = signature;
       overNoteEl.hidden = false;
-      overNoteEl.textContent =
-        period === 'day'
-          ? 'Сегодня ещё никто не заходил. Три минуты на максимум потенциала — и ты первый.'
-          : 'Таблица пока пуста. Три минуты на максимум потенциала — и ты в ней.';
+      if (board.entries.length === 0) {
+        overNoteEl.textContent =
+          boardPeriod === 'day'
+            ? 'Сегодня ещё никто не заходил. Три минуты на максимум потенциала — и ты первый.'
+            : 'Таблица пока пуста. Три минуты на максимум потенциала — и ты в ней.';
+        boardListEl.hidden = true;
+        return true;
+      }
+      overNoteEl.textContent = board.me
+        ? `${boardPeriod === 'day' ? 'Сегодня' : 'Твой рекорд'} ${groupDigits(board.me.score)} · ${board.me.rank}-е место`
+        : 'Сыграй цепочки, чтобы попасть в таблицу.';
+      renderSprintBoard(board);
+      return true;
+    } catch {
+      overNoteEl.hidden = false;
+      overNoteEl.textContent = 'Таблица цепочек недоступна. Попробуй позже.';
       boardListEl.hidden = true;
-      return;
+      return false;
     }
-    overNoteEl.hidden = false;
-    overNoteEl.textContent = board.me
-      ? `${period === 'day' ? 'Сегодня' : 'Твой рекорд'} ${groupDigits(board.me.score)} · ${board.me.rank}-е место`
-      : 'Сыграй цепочки, чтобы попасть в таблицу.';
-    renderSprintBoard(board);
-  } catch {
-    overNoteEl.hidden = false;
-    overNoteEl.textContent = 'Таблица цепочек недоступна. Попробуй позже.';
-    boardListEl.hidden = true;
-  }
+  };
+  if (!(await draw())) return;
+  pollBoard('sprint', draw);
 }
 
 function renderSprintBoard(board: SprintLeaderboardResponse): void {
@@ -1657,27 +1691,39 @@ async function showOrderBoard(period: BoardPeriod = boardPeriod): Promise<void> 
   boardPeriod = period;
   showOverModal({ title: 'Рекорды · тап', note: 'Загружаю таблицу…', viewing: true });
   showBoardTabs('order');
-  try {
-    const board = await getOrderBoard(period);
-    if (board.entries.length === 0) {
+  boardCache = '';
+  const draw = async (): Promise<boolean> => {
+    try {
+      const board = await getOrderBoard(boardPeriod);
+      const signature = boardSignature(
+        board.entries,
+        `${boardPeriod}:${board.me ? `${board.me.score}:${board.me.rank}` : '-'}`,
+      );
+      if (signature === boardCache) return true;
+      boardCache = signature;
       overNoteEl.hidden = false;
-      overNoteEl.textContent =
-        period === 'day'
-          ? 'Сегодня заказов ещё никто не закрывал. Закрой хоть один — и ты первый.'
-          : 'Таблица пока пуста. Считается счёт захода: 25 точек цвета окна за одно касание.';
+      if (board.entries.length === 0) {
+        overNoteEl.textContent =
+          boardPeriod === 'day'
+            ? 'Сегодня заказов ещё никто не закрывал. Закрой хоть один — и ты первый.'
+            : 'Таблица пока пуста. Считается счёт захода: 25 точек цвета окна за одно касание.';
+        boardListEl.hidden = true;
+        return true;
+      }
+      overNoteEl.textContent = board.me
+        ? `${boardPeriod === 'day' ? 'Сегодня' : 'Твой рекорд'} ${groupDigits(board.me.score)} · ${board.me.rank}-е место`
+        : 'Сыграй тап, чтобы попасть в таблицу.';
+      renderOrderBoard(board);
+      return true;
+    } catch {
+      overNoteEl.hidden = false;
+      overNoteEl.textContent = 'Таблица тапа недоступна. Попробуй позже.';
       boardListEl.hidden = true;
-      return;
+      return false;
     }
-    overNoteEl.hidden = false;
-    overNoteEl.textContent = board.me
-      ? `${period === 'day' ? 'Сегодня' : 'Твой рекорд'} ${groupDigits(board.me.score)} · ${board.me.rank}-е место`
-      : 'Сыграй тап, чтобы попасть в таблицу.';
-    renderOrderBoard(board);
-  } catch {
-    overNoteEl.hidden = false;
-    overNoteEl.textContent = 'Таблица тапа недоступна. Попробуй позже.';
-    boardListEl.hidden = true;
-  }
+  };
+  if (!(await draw())) return;
+  pollBoard('order', draw);
 }
 
 function renderOrderBoard(board: OrderLeaderboardResponse): void {
@@ -2549,9 +2595,6 @@ function applyKind(): void {
     const row = document.querySelector<HTMLElement>(`#menu-list li[data-go="${go}"]`);
     if (row) row.hidden = deviceKind === 'puzzle';
   }
-  // Таблица дня — вещь пазла: в других положениях её не показываем, там и
-  // доски дня нет.
-  el<HTMLButtonElement>('menu-result').hidden = deviceKind !== 'puzzle';
   // Пазл спрашивает у сервера своё состояние: сыграна ли сегодняшняя
   // попытка и на сколько. Без этого строка меню врала бы до первого захода
   // в таблицу.
@@ -2603,11 +2646,22 @@ const MENU_ACTIONS: Record<string, () => void> = {
     void startDaily();
   },
   free: () => startFreeBoard(),
-  // Таблица дня: живая, пока открыта. Смотреть её ходят и до своей
-  // попытки — посмотреть на доску дня со стороны она не мешает.
+  /*
+   * Таблица того, во что прибор поставлен сейчас, — живая, пока открыта.
+   *
+   * Клавиша одна на все положения, и это правильно: вопрос у игрока один —
+   * «как там сегодня», — а какая таблица на него отвечает, решает
+   * переключатель, а не он. В цепочках и тапе открываем дневную: вечная
+   * лежит в кабинете, и за ней ходят реже.
+   */
   result: () => {
     closeMenu();
-    void showPuzzleBoard();
+    if (deviceKind === 'puzzle') {
+      void showPuzzleBoard();
+      return;
+    }
+    boardFromCabinet = false;
+    void (deviceKind === 'order' ? showOrderBoard('day') : showSprintBoard('day'));
   },
   rules: () => {
     rulesSheet.hidden = false;
