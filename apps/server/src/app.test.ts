@@ -479,6 +479,40 @@ describe('миграции', () => {
     store.close();
   });
 
+  it('сносит стёкла лаборатории вместе с выращенным', async () => {
+    // Режима с питомцами больше нет, и держать их строки незачем: таблица,
+    // которую никто не открывает, однажды всплывёт в выгрузке данных
+    // игрока, и объяснить её будет нечем.
+    const url = `file:${join(tmpdir(), `dotoscope-petri-${randomUUID()}.db`)}`;
+    const legacy = createClient({ url });
+    await legacy.batch(
+      [
+        `CREATE TABLE petri_labs (user_id TEXT PRIMARY KEY, seed INTEGER NOT NULL, day TEXT NOT NULL)`,
+        `CREATE TABLE petri_creatures (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, place TEXT NOT NULL)`,
+        `INSERT INTO petri_labs (user_id, seed, day) VALUES ('u1', 42, '2026-03-15')`,
+        `INSERT INTO petri_creatures (id, user_id, place) VALUES ('c1', 'u1', 'inc')`,
+      ],
+      'write',
+    );
+    legacy.close();
+
+    const store = new Store({ url });
+    await store.migrate();
+    const left = async (): Promise<string[]> => {
+      const client = createClient({ url });
+      const rows = await client.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'petri%'",
+      );
+      client.close();
+      return rows.rows.map((row) => String(row.name));
+    };
+    expect(await left()).toEqual([]);
+    // Повторный запуск сносить уже нечего — и он не падает.
+    await store.migrate();
+    expect(await left()).toEqual([]);
+    store.close();
+  });
+
   it('переносит старые аккаунты в таблицу личностей', async () => {
     const url = `file:${join(tmpdir(), `dotoscope-identities-${randomUUID()}.db`)}`;
     const legacy = createClient({ url });

@@ -477,6 +477,21 @@ export class Store {
     // бы со счётом. У матчей, сыгранных до заявок, колонка пуста.
     await this.addColumnIfMissing('duels', 'kind', "TEXT NOT NULL DEFAULT 'chain'");
     await this.addColumnIfMissing('duels', 'claims', 'TEXT');
+    /*
+     * Лаборатории PETRIDOT больше нет, и всё выращенное уходит вместе с ней.
+     *
+     * Не «перестали читать», а стёрли: таблица, которую никто не открывает,
+     * однажды всплывает в выгрузке или в отчёте о данных игрока, и объяснить,
+     * почему прибор хранит существ от режима, которого в нём нет, будет
+     * нечем. Кошелька это не касается — жетоны общие, и потраченное на
+     * посев назад не берётся.
+     *
+     * `IF EXISTS` делает снос повторяемым: со второго запуска сносить нечего.
+     */
+    await this.client.batch(
+      ['DROP TABLE IF EXISTS petri_creatures', 'DROP TABLE IF EXISTS petri_labs'],
+      'write',
+    );
     await this.client.execute(
       'CREATE UNIQUE INDEX IF NOT EXISTS idx_users_friend_code ON users (friend_code)',
     );
