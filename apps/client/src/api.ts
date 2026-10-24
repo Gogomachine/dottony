@@ -15,6 +15,8 @@ import type {
   InviteInfo,
   MeResponse,
   MoveLog,
+  PuzzleMove,
+  PuzzleView,
   RatingLeaderboardResponse,
   ReplayResponse,
   SprintLeaderboardResponse,
@@ -373,6 +375,20 @@ export function tourneyRound(moves: MoveLog[]): Promise<TourneyResponse> {
     method: 'POST',
     body: JSON.stringify({ moves }),
   });
+}
+
+/**
+ * Пазл дня: одна дверь на всё — и посмотреть, и сыграть.
+ *
+ * Сид отсюда не уходит и обратно не принимается на веру: доску дня считают
+ * обе стороны порознь из самой даты.
+ */
+export function getPuzzle(): Promise<PuzzleView> {
+  return request<PuzzleView>('/api/puzzle');
+}
+
+export function sendPuzzle(moves: PuzzleMove[]): Promise<PuzzleView> {
+  return request<PuzzleView>('/api/puzzle', { method: 'POST', body: JSON.stringify({ moves }) });
 }
 
 /** Жалоба на соперника: называем его тем же кодом, что и при добавлении в друзья. */

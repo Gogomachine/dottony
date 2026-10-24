@@ -33,6 +33,10 @@ import {
   MARK_STREAK,
   tapGroup,
   DEFAULT_CONFIG,
+  PUZZLE_CONFIG,
+  PUZZLE_MOVES,
+  puzzleDay,
+  puzzleSeed,
   type Board,
   type Cell,
   type Claim,
@@ -41,6 +45,7 @@ import {
 } from '@doton/core';
 import type {
   AdminCard,
+  PuzzleView,
   AdminFindResponse,
   AdminLogResponse,
   AdminNoticesResponse,
@@ -62,6 +67,7 @@ import { Store } from './db.js';
 import { replayOrder } from './order.js';
 import { SIGNUP_LIMIT } from './limits.js';
 import { replaySprint } from './sprint.js';
+import { replayPuzzle } from './puzzle.js';
 import { verifyTelegramInitData } from './telegram.js';
 
 const BOT_TOKEN = '12345:test-bot-token';
@@ -107,6 +113,22 @@ function playHonestRun(seed: number, movesCount: number): { moves: MoveLog[]; sc
     board = result.board;
     score += result.points;
     moves.push({ path, t });
+  }
+  return { moves, score };
+}
+
+/** Честный лог пазла: ходы, сыгранные ядром на доске дня, без фаз. */
+function playPuzzle(seed: number, movesCount = PUZZLE_MOVES): { moves: MoveLog[]; score: number } {
+  let board = createBoard(seedRng(seed), PUZZLE_CONFIG);
+  const moves: MoveLog[] = [];
+  let score = 0;
+  for (let i = 0; i < movesCount; i++) {
+    const path = findAnyChain(board);
+    const result = applyMove(board, path, PUZZLE_CONFIG, null);
+    if (typeof result === 'string') throw new Error(result);
+    board = result.board;
+    score += result.points;
+    moves.push({ path, t: (i + 1) * 2 });
   }
   return { moves, score };
 }
@@ -4079,6 +4101,135 @@ describe('таблицы за день и за всё время', () => {
     expect((always.json() as { entries: unknown[] }).entries).toEqual([
       { rank: 1, name: 'Ада', score, orders, mark: null },
     ]);
+  });
+});
+
+describe('пазл дня', () => {
+  it('пересчитывает заход на доске дня и не принимает лишних ходов', () => {
+    const seed = puzzleSeed('2026-03-15');
+    const { moves, score } = playPuzzle(seed);
+    expect(replayPuzzle(seed, moves)).toMatchObject({ score, moves: PUZZLE_MOVES });
+
+    // Двадцать шестой ход не принимается: «двадцать пять» — это и есть игра.
+    const extra = playPuzzle(seed, PUZZLE_MOVES);
+    expect(replayPuzzle(seed, [...extra.moves, extra.moves[0]!])).toBe('too-many');
+
+    // Невозможный ход отклоняется так же, как в спринте.
+    expect(replayPuzzle(seed, [{ path: [{ r: 0, c: 0 }, { r: 5, c: 5 }, { r: 0, c: 1 }], t: 1 }])).toBe(
+      'invalid-move',
+    );
+
+    // Метрономный темп виден и здесь: часов у пазла нет, а рука всё равно
+    // ведёт цепочки рывками.
+    const rushed = moves.map((move) => ({ ...move, t: 1 }));
+    expect(replayPuzzle(seed, rushed)).toBe('bad-timing');
+  });
+
+  it('чужая доска не подходит: счёт считается только на своей', () => {
+    // Сид не присылают вовсе, но проверим и само правило: ходы с другой
+    // доски на доске дня не складываются.
+    const mine = puzzleSeed('2026-03-15');
+    const alien = playPuzzle(puzzleSeed('2026-03-16'));
+    const out = replayPuzzle(mine, alien.moves);
+    // Либо ход невозможен, либо счёт выходит другой — но не тот же самый.
+    if (typeof out !== 'string') expect(out.score).not.toBe(alien.score);
+  });
+});
+
+describe('вызов дня', () => {
+  let app: FastifyInstance;
+
+  beforeEach(async () => {
+    app = await buildApp({ databaseUrl: ':memory:', jwtSecret: 'test-jwt' });
+  });
+
+  afterEach(async () => {
+    await app.close();
+  });
+
+  async function player(name: string): Promise<Record<string, string>> {
+    const auth = await app.inject({ method: 'POST', url: '/api/auth/guest', payload: { name } });
+    return { authorization: `Bearer ${(auth.json() as { token: string }).token}` };
+  }
+
+  const look = async (headers?: Record<string, string>): Promise<PuzzleView> =>
+    (
+      await app.inject({ method: 'GET', url: '/api/puzzle', ...(headers ? { headers } : {}) })
+    ).json() as PuzzleView;
+
+  it('доска дня одна на всех и считается из даты, а не из базы', async () => {
+    const day = puzzleDay(new Date());
+    const anon = await look();
+    expect(anon.day).toBe(day);
+    expect(anon.seed).toBe(puzzleSeed(day));
+    expect(anon.moves).toBe(PUZZLE_MOVES);
+    // Гостю отдаётся таблица, но не строка «я»: её неоткуда взять.
+    expect(anon.played).toBeNull();
+    expect(anon.me).toBeNull();
+
+    const headers = await player('Ада');
+    expect((await look(headers)).seed).toBe(anon.seed);
+  });
+
+  it('попытка одна в день: вторая не принимается', async () => {
+    const headers = await player('Ада');
+    const day = puzzleDay(new Date());
+    const { moves, score } = playPuzzle(puzzleSeed(day));
+
+    const first = await app.inject({ method: 'POST', url: '/api/puzzle', headers, payload: { moves } });
+    expect(first.statusCode).toBe(200);
+    const view = first.json() as PuzzleView;
+    // Счёт считает сервер на своей доске — он обязан сойтись с ядром.
+    expect(view.played).toMatchObject({ score, rank: 1 });
+    expect(view.entries).toHaveLength(1);
+    expect(view.me).toMatchObject({ rank: 1, name: 'Ада', score });
+
+    const second = await app.inject({
+      method: 'POST',
+      url: '/api/puzzle',
+      headers,
+      payload: { moves: moves.slice(0, 3) },
+    });
+    expect(second.statusCode).toBe(409);
+    expect(second.json()).toEqual({ error: 'played' });
+    // И счёт в таблице остался от первой попытки.
+    expect((await look(headers)).played).toMatchObject({ score });
+  });
+
+  it('таблица дня ставит выше того, у кого больше очков', async () => {
+    const day = puzzleDay(new Date());
+    const seed = puzzleSeed(day);
+    const long = playPuzzle(seed);
+    const short = playPuzzle(seed, 4);
+    expect(long.score).toBeGreaterThan(short.score);
+
+    const ada = await player('Ада');
+    const bob = await player('Боб');
+    await app.inject({ method: 'POST', url: '/api/puzzle', headers: bob, payload: { moves: short.moves } });
+    const view = (
+      await app.inject({ method: 'POST', url: '/api/puzzle', headers: ada, payload: { moves: long.moves } })
+    ).json() as PuzzleView;
+
+    expect(view.entries.map((entry) => entry.name)).toEqual(['Ада', 'Боб']);
+    expect(view.played).toMatchObject({ rank: 1 });
+    // Тот, кто сыграл слабее, видит своё место в своём же ответе.
+    expect((await look(bob)).played).toMatchObject({ rank: 2, score: short.score });
+  });
+
+  it('чужой счёт не принимается: сервер считает ходы сам', async () => {
+    const headers = await player('Ада');
+    const seed = puzzleSeed(puzzleDay(new Date()));
+    const { moves } = playPuzzle(seed, 5);
+    const sent = await app.inject({
+      method: 'POST',
+      url: '/api/puzzle',
+      headers,
+      // Присланный счёт прибор не читает вовсе — в схеме его просто нет.
+      payload: { moves, score: 999999 },
+    });
+    expect(sent.statusCode).toBe(200);
+    const view = sent.json() as PuzzleView;
+    expect(view.played!.score).toBeLessThan(999999);
   });
 });
 

@@ -25,10 +25,11 @@ import {
   type OrderRun,
   type OrderState,
   type PhaseState,
+  PUZZLE_MOVES,
   type Color,
 } from '@doton/core';
 
-export type Mode = 'sprint' | 'duel' | 'order';
+export type Mode = 'sprint' | 'duel' | 'order' | 'puzzle';
 
 // Длительность спринта задаёт ядро — клиент и сервер меряют заход одним
 // числом. Переэкспорт, чтобы экран не лез в ядро за одной константой.
@@ -110,7 +111,8 @@ export class Session {
     this.mode = mode;
     this.board = createBoard(seedRng(seed), cfg);
     // Время матча важнее режима: заказы бывают и бесконечными (соло), и
-    // на три минуты (дуэль), а спринт всегда свой.
+    // на три минуты (дуэль), а спринт всегда свой. У пазла часов нет
+    // вовсе — он кончается ходами.
     this.duration =
       mode === 'sprint' ? SPRINT_SECONDS : (duration ?? (mode === 'duel' ? DUEL_FALLBACK : Infinity));
     this.timeLeft = this.duration;
@@ -136,6 +138,17 @@ export class Session {
   /** Партия идёт на время. */
   get timed(): boolean {
     return Number.isFinite(this.duration);
+  }
+
+  /**
+   * Сколько ходов осталось; `Infinity` — режим считает не ходы.
+   *
+   * Счётчик берётся с поля, а не ведётся сессией: ядро и так считает ходы,
+   * и второй счётчик рядом с первым однажды разошёлся бы с ним — ровно на
+   * том ходу, который не прошёл проверку.
+   */
+  get movesLeft(): number {
+    return this.mode === 'puzzle' ? Math.max(0, PUZZLE_MOVES - this.board.moveCount) : Infinity;
   }
 
   phase(): PhaseState {
@@ -251,6 +264,12 @@ export class Session {
     this.syncOrder();
     // Заход заказов кончается не по часам, а по запасу сбоев.
     if (this.over) return true;
+    // А пазл — ходами. Время над доской игрок тратит своё: часы идут, но
+    // ничего не решают, и партия кончается ровно на двадцать пятом ходу.
+    if (this.movesLeft === 0) {
+      this.over = true;
+      return true;
+    }
     if (!this.timed) return false;
     this.timeLeft = Math.max(0, this.duration - this.elapsed);
     if (this.timeLeft === 0) {

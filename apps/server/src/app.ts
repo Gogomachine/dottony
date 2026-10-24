@@ -24,6 +24,7 @@ import {
   InviteRequestSchema,
   RenameRequestSchema,
   SubmitOrderRequestSchema,
+  SubmitPuzzleRequestSchema,
   SubmitSprintRequestSchema,
   TelegramAuthRequestSchema,
   type AdminCard,
@@ -49,6 +50,7 @@ import {
   type RatingLeaderboardResponse,
   type ClaimLog,
   type ReplayResponse,
+  type PuzzleView,
   type SprintLeaderboardResponse,
   type SubmitOrderResponse,
   type SubmitSprintResponse,
@@ -65,6 +67,9 @@ import {
   TOURNEY_ROUND_SKEW,
   SHIFT_BONUS,
   SPRINT_SECONDS,
+  PUZZLE_MOVES,
+  puzzleDay,
+  puzzleSeed,
   tourneyDay,
   tourneyEntryDay,
   tourneyNext,
@@ -99,6 +104,7 @@ import { Bot, makeLinkToken, parseStart, type BotUpdate } from './bot.js';
 import { orderTempo, replayOrder } from './order.js';
 import { replaySprint } from './sprint.js';
 import { judgeRun } from './judge.js';
+import { replayPuzzle } from './puzzle.js';
 import { Store, type BoardPeriod } from './db.js';
 import {
   INVITE_LIMIT,
@@ -1437,6 +1443,100 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     }
 
     return { entries, me };
+  });
+
+  // ---------- Пазл ----------
+
+  /*
+   * Ежедневный пазл: доска дня одна на всех, двадцать пять ходов, попытка
+   * одна. Дверей две — посмотреть и сыграть, — и обе возвращают пазл
+   * целиком: показывать его кусками значило бы собирать состояние из двух
+   * ответов, которые разъедутся ровно в тот миг, когда попытка засчитается.
+   *
+   * Сид сюда не присылают и отсюда не принимают на веру: доска считается из
+   * даты (см. `puzzleSeed` ядра) обеими сторонами порознь.
+   */
+  const puzzleView = async (userId: string | null, day: string): Promise<PuzzleView> => {
+    const rows = await store.puzzleTop(day, LEADERBOARD_SIZE);
+    const entries = rows.map((row, index) => ({
+      rank: index + 1,
+      name: row.name,
+      score: row.score,
+      mark: row.mark,
+      ...artField(row.art),
+    }));
+    const view: PuzzleView = {
+      day,
+      seed: puzzleSeed(day),
+      moves: PUZZLE_MOVES,
+      played: null,
+      entries,
+      me: null,
+    };
+    if (userId === null) return view;
+    const [played, rank, marks] = await Promise.all([
+      store.puzzleOf(userId, day),
+      store.puzzleRank(userId, day),
+      store.marksOf(userId),
+    ]);
+    if (played === null || rank === null) return view;
+    const mark = marks.find((id) => id !== null) ?? null;
+    const art = isOwnMark(mark) ? artField(await store.artOf(userId)) : {};
+    const name = entries.find((entry) => entry.rank === rank)?.name ?? '';
+    return {
+      ...view,
+      played: { score: played.score, rank },
+      me: { rank, name, score: played.score, mark, ...art },
+    };
+  };
+
+  /** Доска дня и таблица. Без токена — просто таблица, без строки «я». */
+  app.get('/api/puzzle', async (request): Promise<PuzzleView> => {
+    const day = puzzleDay(new Date());
+    try {
+      const user = await requireUser(request);
+      return await puzzleView(user.sub, day);
+    } catch {
+      // нет или битый токен — гость смотрит доску и таблицу анонимно
+      return await puzzleView(null, day);
+    }
+  });
+
+  /**
+   * Попытка вызова дня. Сервер переигрывает ходы ядром на **своей** доске
+   * дня: присланному счёту тут веры не больше, чем присланному сиду.
+   *
+   * Вторая попытка за тот же день не принимается — в этом вся ставка. Отказ
+   * при этом честный: прибор говорит «сегодня уже сыграно», а не делает вид,
+   * что записал.
+   */
+  app.post('/api/puzzle', async (request, reply) => {
+    const user = await requireUser(request);
+    const parsed = SubmitPuzzleRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
+
+    const day = puzzleDay(new Date());
+    if ((await store.puzzleOf(user.sub, day)) !== null) {
+      return reply.code(409).send({ error: 'played' });
+    }
+
+    const replay = replayPuzzle(puzzleSeed(day), parsed.data.moves);
+    if (typeof replay === 'string') return reply.code(400).send({ error: replay });
+
+    const saved = await store.puzzleSave(
+      user.sub,
+      day,
+      replay.score,
+      JSON.stringify(parsed.data.moves),
+    );
+    if (!saved) return reply.code(409).send({ error: 'played' });
+
+    // Попытка одна на день, и в таблицу идёт она же: смотреть есть смысл
+    // на каждую, а не только на рекордную.
+    await notice(user.sub, 'пазл', replay, parsed.data.moves);
+    const { shift } = await payToken(user.sub);
+    const view = await puzzleView(user.sub, day);
+    return { ...view, ...(shift > 0 ? { shift } : {}) };
   });
 
   // ---------- Заказы ----------

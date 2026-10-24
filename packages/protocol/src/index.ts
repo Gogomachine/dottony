@@ -25,6 +25,33 @@ export const SubmitSprintRequestSchema = z.object({
   moves: z.array(MoveLogSchema).min(1).max(400),
 });
 
+/**
+ * Заход пазла на проверку.
+ *
+ * Сид не присылают — в отличие от спринта: доска дня одна на всех, и сервер
+ * знает её сам. Присланному сиду тут верить нельзя вовсе, иначе «вызов дня»
+ * играли бы на той доске, которая больше понравилась.
+ *
+ * Потолок ходов стоит и здесь, хотя он же проверяется правилами: лишние
+ * четыреста ходов не должны даже доезжать до разбора.
+ */
+export const PuzzleMoveSchema = z.object({
+  path: z.array(CellSchema).min(3).max(64),
+  /**
+   * Секунда хода от начала попытки.
+   *
+   * Потолок тут суточный, а не десятиминутный, как у ходов на время: в
+   * пазле часов нет вовсе, и над доской сидят столько, сколько считают
+   * нужным. Секунды при этом всё равно едут на сервер — по ним видно руку,
+   * даже когда они ни на что не влияют.
+   */
+  t: z.number().min(0).max(86_400),
+});
+
+export const SubmitPuzzleRequestSchema = z.object({
+  moves: z.array(PuzzleMoveSchema).min(1).max(25),
+});
+
 export const NameSchema = z.string().trim().min(1).max(24);
 
 export const GuestAuthRequestSchema = z.object({ name: NameSchema });
@@ -371,6 +398,7 @@ export const TelegramAuthRequestSchema = z.object({
  */
 export type Cell = z.infer<typeof CellSchema>;
 export type MoveLog = z.infer<typeof MoveLogSchema>;
+export type PuzzleMove = z.infer<typeof PuzzleMoveSchema>;
 export type OrderMove = z.infer<typeof OrderMoveSchema>;
 
 export interface AuthResponse {
@@ -422,6 +450,27 @@ export interface SprintEntry {
 }
 
 export interface SprintLeaderboardResponse {
+  entries: SprintEntry[];
+  me: SprintEntry | null;
+}
+
+/**
+ * Пазл целиком: доска дня, своя попытка и таблица.
+ *
+ * Одна дверь на всё — и посмотреть, и сыграть: показывать пазл кусками
+ * значило бы собирать его состояние из двух ответов, которые разъедутся
+ * ровно в тот миг, когда попытка засчитается.
+ */
+export interface PuzzleView extends ShiftPaid {
+  /** День доски — дата UTC. */
+  day: string;
+  /** Сид доски дня. Клиент считает его и сам, но верить тут — серверу. */
+  seed: number;
+  /** Сколько ходов даётся. */
+  moves: number;
+  /** Сыгранная сегодня попытка; null — ещё не играл. */
+  played: { score: number; rank: number } | null;
+  /** Таблица дня. */
   entries: SprintEntry[];
   me: SprintEntry | null;
 }

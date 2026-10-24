@@ -224,6 +224,25 @@ export class Store {
            PRIMARY KEY (user_id, day)
          )`,
         `CREATE INDEX IF NOT EXISTS idx_sprint_days ON sprint_days (day, score DESC)`,
+        /*
+         * Пазл дня: по строке на игрока за день, и попытка одна.
+         *
+         * Не «лучший заход за сегодня», как у спринта с заказами, а именно
+         * первый: в этом вся ставка. Поэтому и запись идёт без обновления —
+         * вторая попытка за тот же день просто не ложится.
+         *
+         * Ходы лежат рядом со счётом: засчитанный результат должен
+         * оставаться доказуемым и после того, как его засчитали.
+         */
+        `CREATE TABLE IF NOT EXISTS puzzle_days (
+           user_id TEXT NOT NULL REFERENCES users(id),
+           day TEXT NOT NULL,
+           score INTEGER NOT NULL,
+           moves TEXT NOT NULL,
+           created_at TEXT NOT NULL DEFAULT (datetime('now')),
+           PRIMARY KEY (user_id, day)
+         )`,
+        `CREATE INDEX IF NOT EXISTS idx_puzzle_days ON puzzle_days (day, score DESC)`,
         // Заказы: у игрока хранится только лучший заход. Ходы лежат рядом
         // с числом — рекорд должен оставаться доказуемым и после того, как
         // его засчитали.
@@ -1246,6 +1265,78 @@ export class Store {
       mark: row.mark,
       ...this.ownArt(row.mark, row.art),
     }));
+  }
+
+  /**
+   * Записать попытку пазла. `false` — за этот день уже играли.
+   *
+   * Одна попытка в день держится здесь, а не проверкой до записи: между
+   * «посмотрели, что не играл» и «записали» помещается второй такой же
+   * запрос, и в таблицу легли бы обе попытки. Ключ таблицы не помещает
+   * ничего.
+   */
+  async puzzleSave(
+    userId: string,
+    day: string,
+    score: number,
+    movesJson: string,
+  ): Promise<boolean> {
+    const result = await this.client.execute({
+      sql: `INSERT INTO puzzle_days (user_id, day, score, moves)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT (user_id, day) DO NOTHING`,
+      args: [userId, day, score, movesJson],
+    });
+    return result.rowsAffected > 0;
+  }
+
+  /** Сыгранная попытка этого дня; null — ещё не играл. */
+  async puzzleOf(userId: string, day: string): Promise<{ score: number } | null> {
+    const rows = await this.client.execute({
+      sql: 'SELECT score FROM puzzle_days WHERE user_id = ? AND day = ?',
+      args: [userId, day],
+    });
+    const row = rows.rows[0];
+    return row ? { score: Number(row.score) } : null;
+  }
+
+  /** Место в таблице дня; null — в этот день не играл. */
+  async puzzleRank(userId: string, day: string): Promise<number | null> {
+    const mine = await this.puzzleOf(userId, day);
+    if (mine === null) return null;
+    const above = await this.client.execute({
+      sql: 'SELECT COUNT(*) AS above FROM puzzle_days WHERE day = ? AND score > ?',
+      args: [day, mine.score],
+    });
+    return Number(above.rows[0]!.above) + 1;
+  }
+
+  /** Таблица дня. При равных очках выше тот, кто сыграл раньше. */
+  async puzzleTop(
+    day: string,
+    limit: number,
+  ): Promise<{ id: string; name: string; score: number; mark: string | null; art?: string }[]> {
+    const [result, holders] = await Promise.all([
+      this.client.execute({
+        sql: `SELECT u.id, u.name, u.marks, u.art, r.score AS score
+                FROM puzzle_days r JOIN users u ON u.id = r.user_id
+               WHERE r.day = ?
+               ORDER BY r.score DESC, r.created_at ASC, r.rowid ASC
+               LIMIT ?`,
+        args: [day, limit],
+      }),
+      this.champions(),
+    ]);
+    return result.rows.map((row) => {
+      const mark = this.firstMark(row.marks, holders.get(String(row.id)) ?? []);
+      return {
+        id: String(row.id),
+        name: String(row.name),
+        score: Number(row.score),
+        mark,
+        ...this.ownArt(mark, row.art),
+      };
+    });
   }
 
   async createUser(id: string, name: string, identity: Identity): Promise<UserRow> {

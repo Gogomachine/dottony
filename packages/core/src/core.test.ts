@@ -69,6 +69,13 @@ import {
 } from './tourney.js';
 import { nextInt, seedRng } from './rng.js';
 import {
+  PUZZLE_CONFIG,
+  PUZZLE_MOVES,
+  puzzleDay,
+  puzzleDayShift,
+  puzzleSeed,
+} from './puzzle.js';
+import {
   DEFAULT_CONFIG,
   type Board,
   type Cell,
@@ -1150,3 +1157,88 @@ describe('турнир', () => {
     expect(tourneyDayShift('2026-01-01', -1)).toBe('2025-12-31');
   });
 });
+
+describe('ежедневный пазл', () => {
+  it('день берётся всемирный, и соседние дни не похожи друг на друга', () => {
+    // Доска лежит сутки и ждёт — у такого не бывает «местного» дня: иначе
+    // доска дня у соседей по таблице оказывается вчерашней.
+    expect(puzzleDay(new Date('2026-03-15T00:30:00Z'))).toBe('2026-03-15');
+    expect(puzzleDay(new Date('2026-03-15T23:59:00Z'))).toBe('2026-03-15');
+    expect(puzzleDayShift('2026-03-31', 1)).toBe('2026-04-01');
+
+    // Сид — из самой даты: клиент разворачивает доску сам, сервер считает
+    // её независимо, и совпасть они обязаны без всякой пересылки.
+    expect(puzzleSeed('2026-03-15')).toBe(puzzleSeed('2026-03-15'));
+
+    // Соседние даты различаются одним знаком — расклады не должны ходить
+    // рядом. Тридцать дней подряд: все сиды разные и разбросаны по шкале.
+    const seeds = Array.from({ length: 30 }, (_, i) => puzzleSeed(puzzleDayShift('2026-03-01', i)));
+    expect(new Set(seeds).size).toBe(30);
+    const halves = seeds.filter((seed) => seed < 0x80000000).length;
+    expect(halves).toBeGreaterThan(6);
+    expect(halves).toBeLessThan(24);
+  });
+
+  it('в пазле нет ничего, что считает секунды', () => {
+    // Фаза приходит раз в сорок пять секунд. В партии, где время стоит,
+    // она либо не придёт никогда, либо будет идти вечно, — поэтому её нет.
+    expect(PUZZLE_CONFIG.features.phases).toBe(false);
+    expect(PUZZLE_CONFIG.features.claim).toBe(false);
+    // Перегрузка остаётся: она считает ходы, а не секунды.
+    expect(PUZZLE_CONFIG.features.surge).toBe(true);
+    expect(PUZZLE_MOVES).toBe(25);
+  });
+
+  it('доска дня собирается из сида и выходит играбельной', () => {
+    // Двадцать пять ходов должны находиться на каждой доске, какой бы она
+    // ни выпала: пазл, где ходы кончились раньше срока, — не пазл.
+    for (let i = 0; i < 40; i++) {
+      const day = puzzleDayShift('2026-03-01', i);
+      let board = createBoard(seedRng(puzzleSeed(day)), PUZZLE_CONFIG);
+      for (let move = 0; move < PUZZLE_MOVES; move++) {
+        const best = longestChain(board, PUZZLE_CONFIG);
+        expect(best).toBeGreaterThanOrEqual(PUZZLE_CONFIG.minChain);
+        // Играем жадно самой короткой допустимой цепочкой — худший случай
+        // для того, кто боится, что поле «высохнет».
+        const path = anyChain(board, PUZZLE_CONFIG);
+        expect(path).not.toBeNull();
+        const out = applyMove(board, path!, PUZZLE_CONFIG, null);
+        expect(typeof out).not.toBe('string');
+        if (typeof out === 'string') return;
+        board = out.board;
+      }
+    }
+  });
+});
+
+/** Любая допустимая цепочка на поле; null — ходов нет вовсе. */
+function anyChain(board: Board, cfg: GameConfig): Cell[] | null {
+  const at = (r: number, c: number): number | undefined => board.grid[r]?.[c]?.color;
+  for (let r = 0; r < cfg.rows; r++) {
+    for (let c = 0; c < cfg.cols; c++) {
+      const color = at(r, c);
+      if (color === undefined) continue;
+      const path: Cell[] = [{ r, c }];
+      const seen = new Set([`${r},${c}`]);
+      // Ведём жадно в первого попавшегося соседа того же цвета.
+      while (path.length < cfg.minChain) {
+        const last = path[path.length - 1]!;
+        let step: Cell | null = null;
+        for (let dr = -1; dr <= 1 && step === null; dr++) {
+          for (let dc = -1; dc <= 1 && step === null; dc++) {
+            if (dr === 0 && dc === 0) continue;
+            const next = { r: last.r + dr, c: last.c + dc };
+            if (at(next.r, next.c) !== color) continue;
+            if (seen.has(`${next.r},${next.c}`)) continue;
+            step = next;
+          }
+        }
+        if (step === null) break;
+        path.push(step);
+        seen.add(`${step.r},${step.c}`);
+      }
+      if (path.length >= cfg.minChain) return path;
+    }
+  }
+  return null;
+}

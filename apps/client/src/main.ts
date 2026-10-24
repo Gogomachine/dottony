@@ -2,6 +2,9 @@ import {
   cleanMarks,
   markById,
   DEFAULT_CONFIG,
+  PUZZLE_MOVES,
+  puzzleDay,
+  puzzleSeed,
   nextSample,
   sampleAt,
   OWN_MARK,
@@ -17,6 +20,8 @@ import type {
   MeResponse,
   TourneyResponse,
   MoveLog,
+  PuzzleMove,
+  PuzzleView,
   OrderLeaderboardResponse,
   OrderMove,
   RatingLeaderboardResponse,
@@ -37,6 +42,7 @@ import {
   dropInvite,
   getRatingBoard,
   getReplay,
+  getPuzzle,
   getSprintBoard,
   hasAuth,
   inviteFriend,
@@ -51,6 +57,7 @@ import {
   tourneyRound,
   tourneyStart,
   submitOrder,
+  sendPuzzle,
   submitSprint,
   whenBanned,
   ApiError,
@@ -205,7 +212,7 @@ let deviceKind: DeviceMode = loadKind();
  * `order`: по нему сервер принимает заходы, и переименование подписей его не
  * касается. Игроку эти режимы называются механикой: «Цепочки» и «Тап».
  */
-const SOLO: Record<DuelKind, Mode> = { chain: 'sprint', order: 'order' };
+const SOLO: Record<DeviceMode, Mode> = { chain: 'sprint', order: 'order', puzzle: 'puzzle' };
 let mode: Mode = SOLO[deviceKind];
 
 /**
@@ -226,12 +233,22 @@ const sound = new Sound({ muted: !loadSound() });
 const cfg: GameConfig = { ...DEFAULT_CONFIG, features: { ...DEFAULT_CONFIG.features } };
 
 /**
- * Ставит способ хода по режиму. Касанием играют только заказы: там весь
- * смысл в том, что размер группы задаёт поле, а не игрок. Дай там вести
- * цепочку пальцем — и «25 за раз» отмерялось бы по счётчику, без ставки.
+ * Ставит правила партии по режиму. Их два набора, и оба меняются здесь,
+ * потому что конфиг один на всё: сессия, ввод и рендер читают его вместе.
+ *
+ * Касанием играют только заказы: там весь смысл в том, что размер группы
+ * задаёт поле, а не игрок. Дай там вести цепочку пальцем — и «25 за раз»
+ * отмерялось бы по счётчику, без ставки.
+ *
+ * В пазле выключается всё, что считает секунды: фаза приходит раз в сорок
+ * пять секунд, а над доской без часов сидят сколько хотят — она либо не
+ * придёт никогда, либо будет идти вечно. Правило то же, что у сервера
+ * (`PUZZLE_CONFIG` ядра): пересчёт обязан сойтись с игрой.
  */
-function syncTap(): void {
+function syncRules(): void {
   cfg.features.tap = mode === 'order';
+  cfg.features.phases = mode !== 'puzzle';
+  cfg.features.claim = mode !== 'puzzle';
 }
 
 /**
@@ -240,6 +257,21 @@ function syncTap(): void {
  * заход от сида и считает счёт сам.
  */
 let sprintRun: { seed: number; moves: MoveLog[] } | null = null;
+
+/**
+ * Журнал рейтинговой попытки пазла. Сида в нём нет нарочно: доска дня одна
+ * на всех, и сервер считает её сам — присланному сиду там веры нет.
+ *
+ * `null` значит «идёт свободная доска»: её никуда не отправляют, и писать
+ * нечего.
+ */
+let puzzleRun: { moves: PuzzleMove[] } | null = null;
+
+/** Идёт ли сейчас вызов дня, а не свободная доска. */
+let puzzleRated = false;
+
+/** Что сервер рассказал про сегодняшний пазл: доска, попытка, таблица. */
+let puzzleToday: PuzzleView | null = null;
 
 /**
  * Журнал захода заказов. Ход здесь — одно касание, и по журналу сервер
@@ -289,7 +321,7 @@ function startGame(seed?: number): void {
   stopDrawing();
   // Способ хода ставим до партии: сессия, ввод и рендер читают один конфиг,
   // и режим заказов меняет его для себя.
-  syncTap();
+  syncRules();
   session = newSession(seed);
   // Новый образец снимает запрет ввода: партия другая, запрет от старой не её.
   if (!replay) input.enabled = true;
@@ -300,6 +332,8 @@ function startGame(seed?: number): void {
   // Заход цепочек пишется весь: без журнала рекорд нечем подтвердить.
   sprintRun =
     session.mode === 'sprint' && !replay ? { seed: session.seed, moves: [] } : null;
+  // Вызов дня — тоже: его счёт ставит сервер, переиграв присланные ходы.
+  puzzleRun = session.mode === 'puzzle' && puzzleRated && !replay ? { moves: [] } : null;
   renderer.resetAnims();
   updateStreak(0);
   // Третье поле приборной строки занимают дуэль и заказы; заказы поднимут
@@ -385,6 +419,21 @@ function updateHud(): void {
     return;
   }
 
+  // Пазл меряется ходами: часов у него нет, и шкала делений показывает
+  // остаток ходов — то же место, тот же смысл, другая единица.
+  if (session.mode === 'puzzle') {
+    const left = session.movesLeft;
+    timeLabelEl.textContent = 'Ходы';
+    timeEl.textContent = String(left);
+    const lit = Math.round((left / PUZZLE_MOVES) * TICKS);
+    const low = left <= 3;
+    timeFieldEl.className = `field right${low ? ' warn' : ''}`;
+    tickEls.forEach((tick, i) => {
+      tick.className = `tick${i < lit ? (low ? ' warn' : ' on') : ''}`;
+    });
+    return;
+  }
+
   timeLabelEl.textContent = 'Время';
   const total = Math.ceil(session.timeLeft);
   timeEl.textContent = `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
@@ -431,6 +480,29 @@ function showMini(state: MiniState): void {
 }
 
 function updateMini(): void {
+  /*
+   * В пазле резонанса нет вовсе — ни фаз, ни заявки: они считают секунды, а
+   * секунд там не считает никто. Экранчик при этом не гасим: он говорит,
+   * какая под стеклом доска, — спутать сегодняшнюю со свободной дороже
+   * всего, потому что попытка одна.
+   */
+  if (session.mode === 'puzzle') {
+    const day = puzzleToday?.day ?? puzzleDay(new Date());
+    const key = `z${puzzleRated ? day : 'free'}`;
+    if (key === miniCache) return;
+    miniCache = key;
+    showMini({
+      text: puzzleRated
+        ? `Вызов дня · <b>${day.slice(8)}.${day.slice(5, 7)}</b>`
+        : 'Свободная доска',
+      cd: '--',
+      color: null,
+      fill: 0,
+    });
+    tintScope(null);
+    return;
+  }
+
   // В заказах экранчик занят окном резонанса: цвет, отсчёт и то, что нужно
   // снять за раз. Заявок в этом режиме нет — их место здесь и заняло окно.
   const order = session.order();
@@ -583,7 +655,7 @@ function startTutorial(): void {
   miniCache = '';
   updateKeys();
   // Обучение показывает ту механику, в которой стоит прибор.
-  tutorial.start(deviceKind);
+  tutorial.start(gameKind());
 }
 
 /** Возврат к прибору: показ кончился или его закрыли кнопкой. */
@@ -705,6 +777,131 @@ async function finishTourneyRound(moves: MoveLog[], score: number): Promise<void
     };
     resultSubEl.textContent =
       (error instanceof ApiError ? rules[error.code] : undefined) ?? 'Заход не дошёл до турнира';
+  }
+}
+
+
+// ---------- Пазл дня ----------
+
+/**
+ * Два пазла, и разница между ними только в учёте: вызов дня идёт на доске
+ * дня и один раз, свободная доска — любая и сколько угодно. Правила, поле
+ * и двадцать пять ходов у них общие.
+ */
+function startPuzzle(rated: boolean): void {
+  puzzleRated = rated;
+  closeWindows();
+  menuEl.hidden = true;
+  // Доска дня считается из даты, а не спрашивается у сервера: прибор
+  // разворачивает её сразу, даже без сети. Сервер считает её независимо и
+  // той же формулой — сойтись они обязаны без всякой пересылки.
+  const day = puzzleToday?.day ?? puzzleDay(new Date());
+  setMode('puzzle', rated ? (puzzleToday?.seed ?? puzzleSeed(day)) : undefined);
+  setStat(
+    rated
+      ? 'Вызов дня: двадцать пять ходов, попытка одна'
+      : 'Свободная доска: двадцать пять ходов, попыток сколько угодно',
+  );
+}
+
+/** Сколько ходов осталось — словами прибора для строки состояния. */
+function movesWord(left: number): string {
+  const two = left % 100;
+  const last = left % 10;
+  if (two >= 11 && two <= 14) return `${left} ходов`;
+  if (last === 1) return `${left} ход`;
+  if (last >= 2 && last <= 4) return `${left} хода`;
+  return `${left} ходов`;
+}
+
+/**
+ * Попытка кончилась. Свободная доска на этом и заканчивается — она никуда
+ * не идёт; вызов дня уходит на сервер, и место в таблице называет он.
+ */
+async function finishPuzzle(score: number): Promise<void> {
+  const run = puzzleRun;
+  puzzleRun = null;
+  if (run === null) {
+    showResult('Доска разобрана', score);
+    resultSubEl.textContent = 'Свободно · попыток сколько угодно';
+    return;
+  }
+
+  showResult('Вызов дня', score);
+  resultSubEl.textContent = 'Считаю место…';
+  if (!apiAvailable || run.moves.length === 0) {
+    resultSubEl.textContent = 'Попытка не дошла до таблицы';
+    return;
+  }
+  // Попытка идёт в общую таблицу — имя тут спросить уместно.
+  if (!hasAuth()) {
+    try {
+      await ensureAuth(guestName);
+    } catch {
+      return;
+    }
+  }
+
+  try {
+    const view = await sendPuzzle(run.moves);
+    puzzleToday = view;
+    const place = view.played ? `${view.played.rank}-е место` : 'вне таблицы';
+    const shift = view.shift ? ` · смена +${view.shift}` : '';
+    resultSubEl.textContent = `${place} из ${view.entries.length}${shift}`;
+    updateMenuPuzzle();
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) resetAuth();
+    const spent = error instanceof ApiError && error.code === 'played';
+    resultSubEl.textContent = spent
+      ? 'Сегодняшняя попытка уже сыграна'
+      : 'Попытка не дошла до таблицы';
+  }
+}
+
+/** Спрашивает сервер о сегодняшнем пазле: доска, своя попытка, таблица. */
+async function refreshPuzzle(): Promise<void> {
+  if (!apiAvailable) return;
+  try {
+    puzzleToday = await getPuzzle();
+  } catch {
+    // Нет сети — играем по своей дате: доска от этого не меняется.
+    puzzleToday = null;
+  }
+  updateMenuPuzzle();
+}
+
+/** Строки пазла в панели режима: сыграно ли сегодня и на сколько. */
+function updateMenuPuzzle(): void {
+  const played = puzzleToday?.played ?? null;
+  const state = el<HTMLElement>('menu-daily-state');
+  const note = el<HTMLElement>('menu-daily-note');
+  state.textContent = played ? groupDigits(played.score) : 'не сыгран';
+  note.textContent = played
+    ? `Сыграно · ${played.rank}-е место. Доска новая завтра.`
+    : 'Одна доска на всех, 25 ходов, одна попытка в день.';
+}
+
+/** Таблица дня — тем же окном, что и остальные таблицы прибора. */
+async function showPuzzleBoard(): Promise<void> {
+  showOverModal({ title: 'Вызов дня', note: 'Загружаю таблицу…', viewing: true });
+  try {
+    const view = await getPuzzle();
+    puzzleToday = view;
+    updateMenuPuzzle();
+    overNoteEl.hidden = false;
+    if (view.entries.length === 0) {
+      overNoteEl.textContent = 'Сегодня доску ещё никто не разбирал. Двадцать пять ходов — и ты первый.';
+      boardListEl.hidden = true;
+      return;
+    }
+    overNoteEl.textContent = view.played
+      ? `Сегодня ${groupDigits(view.played.score)} · ${view.played.rank}-е место`
+      : 'Сыграй вызов дня, чтобы попасть в таблицу.';
+    renderSprintBoard({ entries: view.entries, me: view.me });
+  } catch {
+    overNoteEl.hidden = false;
+    overNoteEl.textContent = 'Таблица дня недоступна. Попробуй позже.';
+    boardListEl.hidden = true;
   }
 }
 
@@ -1531,6 +1728,9 @@ const input = new ChainInput(
     if (sprintRun) {
       sprintRun.moves.push({ path: path.map((cell) => ({ ...cell })), t: Number(elapsed.toFixed(3)) });
     }
+    if (puzzleRun) {
+      puzzleRun.moves.push({ path: path.map((cell) => ({ ...cell })), t: Number(elapsed.toFixed(3)) });
+    }
     if (inDuel) duel.move(cfg.features.tap ? [path[0]!] : path);
     renderer.animateMove(oldGrid, result);
     updateStreak(result.streak);
@@ -1619,9 +1819,11 @@ function showResult(cap: string, score: number): void {
 function openMenu(): void {
   resultEl.hidden = true;
   menuEl.hidden = false;
-  // Текущий режим отмечаем, а не предлагаем заново: игрок уже в нём.
+  // Текущий режим отмечаем, а не предлагаем заново: игрок уже в нём. У
+  // пазла режим один на две строки — отмечаем ту доску, что сейчас в окуляре.
+  const here = mode === 'puzzle' ? (puzzleRated ? 'daily' : 'free') : mode;
   for (const item of menuEl.querySelectorAll<HTMLElement>('.menu-list li')) {
-    item.classList.toggle('on', item.dataset.go === mode);
+    item.classList.toggle('on', item.dataset.go === here);
   }
   // Подпись должна говорить правду: партии может уже не быть, а в дуэли
   // и вызове дня часы за заслонкой продолжают идти.
@@ -2008,12 +2210,14 @@ function updatePaperHud(): void {
   }
 }
 
-function setMode(next: Mode): void {
+function setMode(next: Mode, seed?: number): void {
   stopDrawing();
   if (inDuel) endDuel();
   stopReplay();
   mode = next;
-  startGame();
+  // Образец задаёт только вызов дня: доска там общая. Во всех остальных
+  // режимах его выбирает прибор — потому и необязателен.
+  startGame(seed);
 }
 
 /**
@@ -2021,7 +2225,7 @@ function setMode(next: Mode): void {
  * его так же, как саму механику: отдельные имена вроде «спринта» приходилось
  * держать в голове рядом с механикой, ничего к ней не добавляя.
  */
-const KIND_NAME: Record<DeviceMode, string> = { chain: 'Цепочки', order: 'Тап' };
+const KIND_NAME: Record<DeviceMode, string> = { chain: 'Цепочки', order: 'Тап', puzzle: 'Пазл' };
 
 /**
  * Чем прибор занят — верхняя строка подвала.
@@ -2031,10 +2235,25 @@ const KIND_NAME: Record<DeviceMode, string> = { chain: 'Цепочки', order: 
  * стоит в шапке (`DOTOSCOPE · MODEL 36`). А вот занятие меняется, и внизу
  * корпуса ему самое место: над номером того, над чем прибор занят.
  */
-const KIND_DOING: Record<DeviceMode, string> = { chain: 'цепочки', order: 'тап' };
+const KIND_DOING: Record<DeviceMode, string> = { chain: 'цепочки', order: 'тап', puzzle: 'пазл' };
 
-/** Переключатель ходит по кругу: цепочки → тап → цепочки. */
-const KIND_RING: readonly DeviceMode[] = ['chain', 'order'];
+/**
+ * Переключатель ходит по кругу: цепочки → тап → пазл → цепочки.
+ *
+ * Третье положение — не третья механика: играют в пазле теми же цепочками.
+ * Но игра там другая — без часов, одной доской на всех, — и живёт она на
+ * той же клавише нарочно: «во что я сейчас играю» спрашивается в одном
+ * месте, а не в двух.
+ */
+const KIND_RING: readonly DeviceMode[] = ['chain', 'order', 'puzzle'];
+
+/**
+ * На какой механике играть, когда спрашивают дуэль, турнир или показ.
+ * Пазл механикой не бывает: драться в нём нечем, а цепочки под ним те же.
+ */
+function gameKind(): DuelKind {
+  return deviceKind === 'puzzle' ? 'chain' : deviceKind;
+}
 
 /** Длительность дуэли по механике — для подписей; часы всё равно ставит сервер. */
 const KIND_DUEL_TIME: Record<DuelKind, string> = { chain: '1:30', order: '3:00' };
@@ -2056,8 +2275,18 @@ function updateKeys(): void {
   const locked = inDuel || replay !== null || !tutEl.hidden || inTourneyRound;
   kindKey.toggleAttribute('disabled', locked);
   kindKey.firstChild!.nodeValue = `⇄ ${KIND_NAME[other(deviceKind)]}`;
-  resetKey.toggleAttribute('disabled', locked);
-  resetKey.title = session.over ? 'Повторить' : session.started ? 'Сброс' : 'Новый образец';
+  // Начатый вызов дня запирает клавишу образца так же, как заход турнира:
+  // попытка одна, и «новый образец» посреди неё означал бы, что доску дня
+  // можно разглядывать сколько угодно раз.
+  const inDaily = puzzleRun !== null && session.started && !session.over;
+  resetKey.toggleAttribute('disabled', locked || inDaily);
+  resetKey.title = session.over
+    ? session.mode === 'puzzle' && puzzleRated
+      ? 'Свободная доска'
+      : 'Повторить'
+    : session.started
+      ? 'Сброс'
+      : 'Новый образец';
 }
 
 function other(kind: DeviceMode): DeviceMode {
@@ -2081,13 +2310,19 @@ function applyKind(): void {
   for (const [go, kind] of [
     ['sprint', 'chain'],
     ['order', 'order'],
+    ['daily', 'puzzle'],
+    ['free', 'puzzle'],
   ] as const) {
     const row = document.querySelector<HTMLElement>(`#menu-list li[data-go="${go}"]`);
     if (row) row.hidden = deviceKind !== kind;
   }
-  el<HTMLSpanElement>('duel-when').textContent = KIND_DUEL_TIME[deviceKind];
+  // Пазл спрашивает у сервера своё состояние: сыграна ли сегодняшняя
+  // попытка и на сколько. Без этого строка меню врала бы до первого захода
+  // в таблицу.
+  if (deviceKind === 'puzzle') void refreshPuzzle();
+  el<HTMLSpanElement>('duel-when').textContent = KIND_DUEL_TIME[gameKind()];
   el<HTMLElement>('duel-kind-note').textContent =
-    `${KIND_NAME[deviceKind]} · ${KIND_DUEL_TIME[deviceKind]}`;
+    `${KIND_NAME[gameKind()]} · ${KIND_DUEL_TIME[gameKind()]}`;
   updateKeys();
 }
 
@@ -2112,6 +2347,17 @@ const MENU_ACTIONS: Record<string, () => void> = {
   draw: () => {
     startDrawing();
   },
+  // Вызов дня: пока не сыгран — это попытка, после — таблица. Клавиша
+  // одна и та же, потому что и дело одно: «как там сегодняшняя доска».
+  daily: () => {
+    if (puzzleToday?.played) {
+      closeMenu();
+      void showPuzzleBoard();
+      return;
+    }
+    startPuzzle(true);
+  },
+  free: () => startPuzzle(false),
   rules: () => {
     rulesSheet.hidden = false;
   },
@@ -2180,7 +2426,7 @@ el<HTMLButtonElement>('duel-cancel').addEventListener('click', () => {
 el<HTMLButtonElement>('duel-quick').addEventListener('click', () => {
   duelSheet.hidden = true;
   menuEl.hidden = true;
-  void startDuel(undefined, deviceKind);
+  void startDuel(undefined, gameKind());
 });
 
 // Позвать друга — значит выбрать его в списке: кода никто не диктует, а
@@ -2284,6 +2530,9 @@ kindKey.addEventListener('click', () => {
   deviceKind = other(deviceKind);
   saveKind(deviceKind);
   applyKind();
+  // В пазле переключатель открывает свободную доску, а не вызов дня:
+  // попытка одна, и начинаться она должна нажатием, а не поворотом ручки.
+  if (deviceKind === 'puzzle') puzzleRated = false;
   setMode(SOLO[deviceKind]);
   openMenu();
 });
@@ -2304,6 +2553,12 @@ resetKey.addEventListener('click', () => {
     paper.clear();
     setStat('Чистый лист');
     updatePaperHud();
+    return;
+  }
+  // Сыгранный вызов дня не повторяют: доска дня одна и попытка одна, —
+  // поэтому та же клавиша открывает свободную.
+  if (session.mode === 'puzzle' && puzzleRated) {
+    startPuzzle(false);
     return;
   }
   startGame();
@@ -2365,7 +2620,7 @@ const cabinet = new Cabinet({
 async function inviteToRoom(friendCode: string): Promise<void> {
   const room = makeRoomCode();
   showRoomCode(false);
-  await startDuel(room, deviceKind);
+  await startDuel(room, gameKind());
   try {
     const { where } = await inviteFriend(friendCode, room);
     // Говорим, куда именно позвали: «в игре» и «в Telegram» — разные
@@ -2525,6 +2780,10 @@ function frame(now: number): void {
     } else if (inDuel) {
       // Итог объявляет сервер — ждём его сообщения, чтобы счёт сошёлся.
       showOverModal({ title: 'Дуэль', note: 'Время вышло, считаем результат…' });
+    } else if (session.mode === 'puzzle') {
+      // Ходы кончились — это и есть конец партии: часов у пазла нет.
+      sound.over(false);
+      void finishPuzzle(session.score);
     } else if (session.mode === 'order' && !inDuel) {
       // Заказы кончаются не временем, а запасом: об этом и говорим. Запас
       // дорисовываем сам: обычное обновление приборной строки мёртвый

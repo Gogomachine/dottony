@@ -88,3 +88,10 @@ export {
   LEAGUES,
 } from './rating.js';
 export type { Rating, Outcome, League } from './rating.js';
+export {
+  PUZZLE_MOVES,
+  PUZZLE_CONFIG,
+  puzzleDay,
+  puzzleDayShift,
+  puzzleSeed,
+} from './puzzle.js';
