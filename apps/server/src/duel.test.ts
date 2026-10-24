@@ -83,16 +83,16 @@ describe('Duel', () => {
   it('шлёт каждому корпус соперника целиком, а не свой', () => {
     const a = recorder('a', 'Ада');
     const b = recorder('b', 'Боб');
-    a.marks = ['e-run', null, 's0'];
-    b.marks = ['e-lg2', 'e-big', null];
+    a.marks = ['s0'];
+    b.marks = ['s15'];
     const duel = new Duel(seed, a, b);
     duel.announce();
 
-    expect(a.last('matched')).toMatchObject({ opponentMarks: ['e-lg2', 'e-big', null] });
-    expect(b.last('matched')).toMatchObject({ opponentMarks: ['e-run', null, 's0'] });
+    expect(a.last('matched')).toMatchObject({ opponentMarks: ['s15'] });
+    expect(b.last('matched')).toMatchObject({ opponentMarks: ['s0'] });
 
     // И после обрыва — тоже соперника: снимок восстанавливает весь экран.
-    expect(duel.snapshot('a')).toMatchObject({ opponentMarks: ['e-lg2', 'e-big', null] });
+    expect(duel.snapshot('a')).toMatchObject({ opponentMarks: ['s15'] });
   });
 
   it('оправа полосы едет к сопернику вместе с шильдиками', () => {
@@ -114,14 +114,14 @@ describe('Duel', () => {
     const a = recorder('a', 'Ада');
     const b = recorder('b', 'Боб');
     const art = `${'12'.repeat(3)}${'.'.repeat(ART_LEN - 6)}`;
-    a.marks = [OWN_MARK, null, null];
+    a.marks = [OWN_MARK];
     a.art = art;
     const duel = new Duel(seed, a, b);
     duel.announce();
 
     // Номер своего шильдика у всех один — без картинки соперник увидел бы
     // пустое стекло вместо рисунка.
-    expect(b.last('matched')).toMatchObject({ opponentMarks: [OWN_MARK, null, null], opponentArt: art });
+    expect(b.last('matched')).toMatchObject({ opponentMarks: [OWN_MARK], opponentArt: art });
     expect(duel.snapshot('b')).toMatchObject({ opponentArt: art });
     // Кто своего шильдика не носит — тому и поля не шлём.
     expect(a.last('matched')).not.toHaveProperty('opponentArt');
@@ -132,7 +132,7 @@ describe('Duel', () => {
     const a = recorder('a', 'Ада');
     const duel = new Duel(seed, a, recorder('b', 'Боб'));
     duel.announce();
-    expect(a.last('matched')).toMatchObject({ opponentMarks: [null, null, null] });
+    expect(a.last('matched')).toMatchObject({ opponentMarks: [null] });
   });
 
   it('засчитывает ход и сообщает счёт сопернику', () => {
@@ -571,7 +571,7 @@ describe('признак рейтингового матча', () => {
       seed: 777,
       score: 300,
       log: [{ t: 1, points: 300 }],
-      marks: ['e-run', null, null],
+      marks: ['s15'],
     };
     const { maker, fire, result } = make({ findGhost: async () => ghost });
     maker.join(recorder('p'));
@@ -707,7 +707,7 @@ describe('призраки', () => {
     name: 'Ада',
     seed: 777,
     score: 300,
-    marks: ['e-run', null, null],
+    marks: ['s15'],
     log: [
       { t: 1, points: 100 },
       { t: 2, points: 200 },

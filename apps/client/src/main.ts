@@ -100,6 +100,8 @@ import {
   loadMarks,
   loadSound,
   loadThemeName,
+  kindOpen,
+  OPEN_KINDS,
   saveKind,
   saveMarks,
   saveSound,
@@ -2519,14 +2521,45 @@ const KIND_NAME: Record<DeviceMode, string> = { chain: 'Цепочки', order: 
 const KIND_DOING: Record<DeviceMode, string> = { chain: 'цепочки', order: 'тап', puzzle: 'пазл' };
 
 /**
- * Переключатель ходит по кругу: цепочки → тап → пазл → цепочки.
+ * Переключатель ходит по кругу по открытым положениям. Сейчас открыто одно
+ * — пазл, — и круг из одного положения означает, что переключать нечего:
+ * клавиша `⇄` тогда не висит на корпусе мёртвой (см. `updateKeys`).
  *
- * Третье положение — не третья механика: играют в пазле теми же цепочками.
- * Но игра там другая — без часов, одной доской на всех, — и живёт она на
- * той же клавише нарочно: «во что я сейчас играю» спрашивается в одном
- * месте, а не в двух.
+ * Список берётся из `theme.ts`: там же его читает и память прибора, иначе
+ * он включался бы в положении, которого в меню уже нет.
  */
-const KIND_RING: readonly DeviceMode[] = ['chain', 'order', 'puzzle'];
+const KIND_RING: readonly DeviceMode[] = OPEN_KINDS;
+
+/** Есть ли что переключать: на одном открытом положении клавиши `⇄` нет. */
+const CAN_SWITCH = KIND_RING.length > 1;
+
+/**
+ * Убирает из прибора всё, что говорит о закрытых положениях: абзацы правил
+ * про их режимы и вкладку турнира в кабинете. Турнир играется на цепочках —
+ * пока их нет на корпусе, дверь в него открывала бы прибор в режиме,
+ * которого в меню не найти.
+ *
+ * Разметка помечена `data-shut="<положения через пробел>"`: видно, пока
+ * открыто хоть одно из названных — резонанс есть и в цепочках, и в тапе, и
+ * вернуть его должно любое из них. Так вся развеска живёт в одном месте с
+ * текстом, а не списком идентификаторов здесь.
+ */
+function shutClosed(): void {
+  for (const block of document.querySelectorAll<HTMLElement>('[data-shut]')) {
+    block.hidden = !named(block.dataset.shut).some((kind) => kindOpen(kind));
+  }
+  // Обратная пометка: видно, пока названное закрыто. Ею помечено то, что
+  // стоит на месте спрятанного, — подпись клавиши, например: показывать
+  // обе разом нельзя, а держать вторую в коде было бы вёрсткой в скрипте.
+  for (const block of document.querySelectorAll<HTMLElement>('[data-until]')) {
+    block.hidden = named(block.dataset.until).some((kind) => kindOpen(kind));
+  }
+}
+
+/** Положения из пометки: через пробел, пустые отбрасываем. */
+function named(list: string | undefined): DeviceMode[] {
+  return (list ?? '').split(' ').filter((kind) => kind !== '') as DeviceMode[];
+}
 
 /**
  * На какой механике играть, когда спрашивают дуэль, турнир или показ.
@@ -2554,8 +2587,13 @@ function updateKeys(): void {
   // Заход турнира тоже запирает сброс: раунд уже потрачен, и «новый
   // образец» посреди него означал бы бесконечные попытки за один раунд.
   const locked = inDuel || replay !== null || !tutEl.hidden || inTourneyRound;
+  // Переключать нечего — клавиши нет вовсе: подписать её некуда (она
+  // подписана тем, куда переключит), а запертая навсегда клавиша на корпусе
+  // читается как поломка прибора.
+  kindKey.hidden = !CAN_SWITCH;
+  document.documentElement.dataset.keys = CAN_SWITCH ? '3' : '2';
   kindKey.toggleAttribute('disabled', locked);
-  kindKey.firstChild!.nodeValue = `⇄ ${KIND_NAME[other(deviceKind)]}`;
+  if (CAN_SWITCH) kindKey.firstChild!.nodeValue = `⇄ ${KIND_NAME[other(deviceKind)]}`;
   // Начатый вызов дня запирает клавишу образца так же, как заход турнира:
   // попытка одна, и «новый образец» посреди неё означал бы, что доску дня
   // можно разглядывать сколько угодно раз.
@@ -3150,6 +3188,9 @@ function frame(now: number): void {
   requestAnimationFrame(frame);
 }
 
+// Закрытые режимы убираем раньше первой отрисовки: их абзацы и двери не
+// должны мелькнуть даже на кадр.
+shutClosed();
 // Механику прибор помнит с прошлого раза: включается там, где выключили.
 applyKind();
 startGame();

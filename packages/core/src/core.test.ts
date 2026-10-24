@@ -20,6 +20,7 @@ import {
 import {
   cleanMarks,
   goldMark,
+  HIDDEN_MARKS,
   isGoldMark,
   leagueMark,
   markAllowed,
@@ -39,7 +40,6 @@ import {
   slotItem,
   slotItemPrice,
   slotPrice,
-  SLOT_PRICES,
 } from './marks.js';
 import {
   ART_LEN,
@@ -820,24 +820,20 @@ describe('шильдики', () => {
     expect(markAllowed('нет-такого', ['нет-такого'])).toBe(false);
   });
 
-  it('ячейки открываются по порядку и стоят по каталогу', () => {
-    // Первая есть у всех и не продаётся; купить можно только следующую.
-    expect(openSlots([])).toBe(1);
+  it('ячейка на корпусе одна и не продаётся', () => {
+    // Единственная ячейка есть у всех и не стоит ничего: продавать право
+    // показать себя значило бы продавать вход.
+    expect(MARK_SLOTS).toBe(1);
+    expect(openSlots([])).toBe(MARK_SLOTS);
     expect(slotPrice(0)).toBeNull();
-    expect(nextSlot([])).toBe(slotItem(1));
-    expect(slotItemPrice(slotItem(1)!)).toBe(SLOT_PRICES[1]);
-
-    const second = [slotItem(1)!];
-    expect(openSlots(second)).toBe(2);
-    expect(nextSlot(second)).toBe(slotItem(2));
-
-    // Третья без второй не открывает ничего: счёт идёт подряд.
-    expect(openSlots([slotItem(2)!])).toBe(1);
-    expect(openSlots([slotItem(1)!, slotItem(2)!])).toBe(MARK_SLOTS);
-    expect(nextSlot([slotItem(1)!, slotItem(2)!])).toBeNull();
-    // За пределами корпуса ячеек нет — ни номера, ни цены.
+    // Продавать нечего: следующей ячейки нет, и купить её не выйдет даже по
+    // номеру — за пределами корпуса ячеек не бывает ни по номеру, ни по цене.
+    expect(nextSlot([])).toBeNull();
     expect(slotItem(MARK_SLOTS)).toBeNull();
+    expect(slotItemPrice('slot-2')).toBeNull();
     expect(slotItemPrice('нет-такой')).toBeNull();
+    // Чужой купленный номер ячейки корпуса не расширяет.
+    expect(openSlots(['slot-2', 'slot-3'])).toBe(MARK_SLOTS);
   });
 
   it('даром не носится ничего: пустой корпус — это начало пути', () => {
@@ -847,50 +843,50 @@ describe('шильдики', () => {
     }
   });
 
-  it('отметку за игру носит только тот, кому её выдали', () => {
-    const earned = MARKS.find((mark) => mark.kind === 'earned')!;
-    expect(earned.needs).toBeTruthy();
-    expect(markAllowed(earned.id)).toBe(false);
-    expect(markAllowed(earned.id, [earned.id])).toBe(true);
-    // Чужая выданная отметка своей не делает.
-    expect(markAllowed(earned.id, ['e-нет'])).toBe(false);
+  it('в каталоге одни картинки: надписей на корпусе нет', () => {
+    // Отметки за игру и золото рисовались надписью — «ДЕНЬ ТАП», «#1
+    // ЦЕПОЧКИ». Пока их режимы спрятаны, подписывать нечем, и каталог
+    // состоит из того, что можно нарисовать: наклейки да свой лист.
+    for (const mark of MARKS) expect(['sticker', 'own']).toContain(mark.kind);
+    expect(MARKS.some((mark) => mark.kind === 'sticker')).toBe(true);
+    expect(MARKS.filter((mark) => mark.kind === 'own')).toHaveLength(1);
   });
 
-  it('надпись отметки собрана из того же порога, что и условие', () => {
-    const run = markById('e-run')!;
-    expect(run.glyph).toContain(String(MARK_STREAK));
-    expect(run.needs).toContain(String(MARK_STREAK));
-    const big = markById('e-big')!;
-    expect(big.glyph).toContain(String(MARK_BIG));
-    expect(big.needs).toContain(String(MARK_BIG));
-    // У каждой отметки за игру есть условие: каталог работает списком целей.
-    for (const mark of MARKS.filter((item) => item.kind === 'earned')) {
-      expect(mark.needs).toBeTruthy();
+  it('спрятанные отметки не носятся и не теряют своих правил', () => {
+    // Спрятаны — значит их нет в каталоге: ни поставить, ни получить по
+    // номеру. Даже выданная такая отметка на корпус не встанет.
+    for (const mark of HIDDEN_MARKS) {
+      expect(markById(mark.id)).toBeUndefined();
+      expect(markAllowed(mark.id, [mark.id])).toBe(false);
+      expect(cleanMarks([mark.id])).toEqual([null]);
     }
-  });
-
-  it('лига даёт отметку со второй ступени', () => {
+    // А правила остались целыми: по ним сервер выдаёт номера и сегодня, и
+    // в день, когда спрятанное вернётся на корпус.
+    expect(HIDDEN_MARKS.map((mark) => mark.id)).toContain(leagueMark(1));
     expect(leagueMark(0)).toBeNull();
-    expect(leagueMark(1)).toBe('e-lg1');
     expect(leagueMark(4)).toBe('e-lg4');
     expect(leagueMark(5)).toBeNull();
-    for (const tier of [1, 2, 3, 4]) expect(markById(leagueMark(tier)!)).toBeDefined();
+    const run = HIDDEN_MARKS.find((mark) => mark.id === 'e-run')!;
+    expect(run.glyph).toContain(String(MARK_STREAK));
+    expect(run.needs).toContain(String(MARK_STREAK));
+    const big = HIDDEN_MARKS.find((mark) => mark.id === 'e-big')!;
+    expect(big.glyph).toContain(String(MARK_BIG));
+    expect(big.needs).toContain(String(MARK_BIG));
+    // У каждой спрятанной отметки есть условие: каталог целей не потерян.
+    for (const mark of HIDDEN_MARKS) expect(mark.needs).toBeTruthy();
   });
 
-  it('золото носит только тот, кто держит таблицу прямо сейчас', () => {
+  it('золото узнаётся и пока его не носят: место меняет хозяина само', () => {
+    // Снимать золото у того, кто потерял место, нужно и сейчас — иначе в
+    // день возвращения оно оказалось бы у вчерашних хозяев.
     for (const board of ['order', 'sprint'] as const) {
       const id = goldMark(board);
-      const mark = markById(id)!;
-      expect(mark.kind).toBe('gold');
       expect(isGoldMark(id)).toBe(true);
-      // Как и отметку за игру, золото без выдачи не поставить.
-      expect(markAllowed(id)).toBe(false);
-      expect(markAllowed(id, [id])).toBe(true);
-      // Золото одной таблицы не даёт золота другой.
-      expect(markAllowed(id, [goldMark(board === 'order' ? 'sprint' : 'order')])).toBe(false);
+      expect(HIDDEN_MARKS.find((mark) => mark.id === id)?.kind).toBe('gold');
     }
     expect(goldMark('order')).not.toBe(goldMark('sprint'));
     expect(isGoldMark('e-order')).toBe(false);
+    expect(isGoldMark('s0')).toBe(false);
   });
 
   it('свой шильдик продаётся, но не выдаётся за игру', () => {
@@ -909,15 +905,17 @@ describe('шильдики', () => {
     expect(markAllowed(OWN_MARK, [OWN_MARK])).toBe(true);
   });
 
-  it('выбор приводится к корпусу: три ячейки, без повторов и выдумок', () => {
+  it('выбор приводится к корпусу: одна ячейка, без повторов и выдумок', () => {
     const free = MARKS.filter((mark) => mark.needs === undefined);
     const [a, b] = [free[0]!.id, free[1]!.id];
-    expect(cleanMarks([a, b])).toEqual([a, b, null]);
-    // Повтор и несуществующий номер гасят ячейку, а не занимают её.
-    expect(cleanMarks([a, a, 'нет-такого'])).toEqual([a, null, null]);
-    // Лишнее за край корпуса просто не помещается.
+    expect(cleanMarks([a])).toEqual([a]);
+    // Несуществующий номер гасит ячейку, а не занимает её.
+    expect(cleanMarks(['нет-такого'])).toEqual([null]);
+    // Лишнее за край корпуса просто не помещается — и старый выбор из трёх
+    // ячеек приводится к одной, а не отвергается целиком.
+    expect(cleanMarks([a, b])).toEqual([a]);
     expect(cleanMarks(free.slice(0, 5).map((mark) => mark.id))).toHaveLength(MARK_SLOTS);
-    expect(cleanMarks([])).toEqual([null, null, null]);
+    expect(cleanMarks([])).toEqual([null]);
   });
 });
 

@@ -80,10 +80,33 @@ export function saveSound(on: boolean): void {
  */
 export type DeviceMode = 'chain' | 'order' | 'puzzle';
 
+/**
+ * Какие положения переключателя сейчас открыты, в порядке обхода.
+ *
+ * Открыт один пазл. Цепочки и тап спрятаны к запуску нарочно: прибор, в
+ * котором первым делом выбирают из трёх игр, объясняет себя трижды, а
+ * показать его надо один раз — одной доской, одной на всех. Код обеих
+ * механик жив и покрыт тестами, спрятан только вход: они открываются
+ * по одной, когда в пазле станет тесно.
+ *
+ * Это единственное место, где они закрыты. Вернуть — вписать номер
+ * обратно в этот список: меню, подписи, клавиша переключателя и правила
+ * считают открытое отсюда.
+ */
+export const OPEN_KINDS: readonly DeviceMode[] = ['puzzle'];
+
+/** Открыто ли положение. Закрытое не предлагается и не показывается. */
+export function kindOpen(kind: DeviceMode): boolean {
+  return OPEN_KINDS.includes(kind);
+}
+
 export function loadKind(): DeviceMode {
   const saved = readStore(DEVICE_KIND_KEY) ?? readStore(KIND_KEY);
-  if (saved === 'order') return 'order';
-  return saved === 'puzzle' ? 'puzzle' : 'chain';
+  const was: DeviceMode = saved === 'order' ? 'order' : saved === 'puzzle' ? 'puzzle' : 'chain';
+  // Прибор, выключенный на спрятанном положении, включается на открытом:
+  // иначе он завёлся бы в режиме, которого в нём уже нет. Запомненное не
+  // стираем — положение вернётся вместе с режимом.
+  return kindOpen(was) ? was : (OPEN_KINDS[0] ?? 'puzzle');
 }
 
 export function saveKind(kind: DeviceMode): void {

@@ -15,7 +15,6 @@ import {
   startOrder,
   tapOrder,
   STICKER_PRICE,
-  SLOT_PRICES,
   ART_LEN,
   regrowArt,
   TOURNEY_ENTRY,
@@ -1713,7 +1712,7 @@ describe('API', () => {
     return 'e-order';
   }
 
-  it('шильдики: выбор сохраняется и приходит в карточку', async () => {
+  it('шильдики: выданная отметка на корпус не встаёт, пока её нет в каталоге', async () => {
     const token = await guestToken('Ада');
     const mine = await earnMark(token);
 
@@ -1721,21 +1720,25 @@ describe('API', () => {
       method: 'PUT',
       url: '/api/me/marks',
       headers: { authorization: `Bearer ${token}` },
-      // Вторым номером — некупленная наклейка: своё встаёт, чужое гаснет.
-      payload: { marks: [mine, 's0'] },
+      payload: { marks: [mine] },
     });
     expect(saved.statusCode).toBe(200);
-    expect(saved.json()).toEqual({ marks: [mine, null, null] });
+    // Отметка заслужена и записана, но рисовалась надписью — а надписей на
+    // корпусе больше нет. Сервер гасит ячейку, а не отказывает запросу.
+    expect(saved.json()).toEqual({ marks: [null] });
 
     const me = await app.inject({
       method: 'GET',
       url: '/api/me',
       headers: { authorization: `Bearer ${token}` },
     });
-    expect((me.json() as { marks: unknown }).marks).toEqual([mine, null, null]);
+    const card = me.json() as { marks: unknown; earned: string[] };
+    expect(card.marks).toEqual([null]);
+    // Выдача цела: вернётся каталог — вернётся и то, что в нём заслужили.
+    expect(card.earned).toContain(mine);
   });
 
-  it('шильдики: выдуманный номер и повтор не проходят', async () => {
+  it('шильдики: выдуманный номер гаснет, а список длиннее формы не проходит', async () => {
     const token = await guestToken('Мошенник');
     const put = async (marks: unknown): Promise<unknown> => {
       const response = await app.inject({
@@ -1747,15 +1750,17 @@ describe('API', () => {
       return response.json();
     };
 
-    const id = await earnMark(token);
-    // Номера не из каталога гасят ячейку, а не занимают её.
-    expect(await put([id, 'p999', id])).toEqual({ marks: [id, null, null] });
-    // Больше трёх корпус не примет вовсе.
+    // Номера не из каталога гасят ячейку, а не занимают её. Лишнее за край
+    // корпуса не помещается: старая страница шлёт три номера, корпус берёт
+    // первый, и отказывать ей целиком не за что.
+    expect(await put(['p999'])).toEqual({ marks: [null] });
+    expect(await put(['s0', 'p999', 's1'])).toEqual({ marks: [null] });
+    // А вот списка длиннее формы прибор не примет вовсе.
     const тесно = await app.inject({
       method: 'PUT',
       url: '/api/me/marks',
       headers: { authorization: `Bearer ${token}` },
-      payload: { marks: [id, id, id, id] },
+      payload: { marks: ['s0', 's0', 's0', 's0'] },
     });
     expect(тесно.statusCode).toBe(400);
   });
@@ -1841,7 +1846,7 @@ describe('API', () => {
     }
   });
 
-  it('ячейки: вторая покупается, третья только после неё, закрытая не носит', async () => {
+  it('ячейки: корпус носит одну, и продавать больше нечего', async () => {
     const file = join(tmpdir(), `doton-slots-${randomUUID()}.db`);
     const shop = await buildApp({ databaseUrl: `file:${file}`, jwtSecret: 'test-jwt' });
     const db = createClient({ url: `file:${file}` });
@@ -1877,30 +1882,22 @@ describe('API', () => {
         return me.json() as { slots: number; tokens: number };
       };
 
-      // Даром открыта одна ячейка.
-      expect((await card()).slots).toBe(1);
+      // Ячейка у всех одна, и она даром.
+      expect((await card()).slots).toBe(MARK_SLOTS);
 
-      await db.execute(`UPDATE users SET tokens = ${SLOT_PRICES[1]! + SLOT_PRICES[2]! + 2 * STICKER_PRICE + 2}`);
+      await db.execute(`UPDATE users SET tokens = ${2 * STICKER_PRICE + 2}`);
       expect((await buy('s0')).statusCode).toBe(200);
       expect((await buy('s1')).statusCode).toBe(200);
       // Две наклейки есть, а ячейка одна: вторая гаснет, а не занимает место.
-      expect(await wear(['s0', 's1'])).toEqual({ marks: ['s0', null, null] });
+      expect(await wear(['s0', 's1'])).toEqual({ marks: ['s0'] });
 
-      // Третью ячейку в обход второй не продают.
-      expect((await buy(slotItem(2)!)).statusCode).toBe(400);
-      expect((await card()).slots).toBe(1);
-
-      const second = await buy(slotItem(1)!);
-      expect(second.statusCode).toBe(200);
-      expect(second.json()).toMatchObject({ slots: 2 });
-      expect(await wear(['s0', 's1'])).toEqual({ marks: ['s0', 's1', null] });
-
-      const third = await buy(slotItem(2)!);
-      expect(third.statusCode).toBe(200);
-      expect(third.json()).toMatchObject({ slots: 3 });
-      // Купленную ячейку второй раз не продают.
-      expect((await buy(slotItem(2)!)).statusCode).toBe(400);
-      // Жетоны сняты ровно по каталогу.
+      // Ячеек больше нет, и продать их нельзя: ни по порядку, ни в обход.
+      expect(slotItem(1)).toBeNull();
+      for (const id of ['slot-2', 'slot-3']) {
+        expect((await buy(id)).statusCode).toBe(400);
+      }
+      expect((await card()).slots).toBe(MARK_SLOTS);
+      // Жетоны сняты ровно по каталогу — за две наклейки и ни за что больше.
       expect((await card()).tokens).toBe(2);
     } finally {
       db.close();
@@ -3029,7 +3026,7 @@ describe('API', () => {
       expect(bare.earned).toEqual([]);
       expect(bare.tokens).toBe(0);
       expect(bare.slots).toBe(1);
-      expect(bare.marks).toEqual([null, null, null]);
+      expect(bare.marks).toEqual([null]);
       expect(bare.frame).toBeNull();
       expect(bare.art).toBeNull();
 
@@ -3098,7 +3095,7 @@ describe('API', () => {
         headers,
         payload: { marks: [OWN_MARK] },
       });
-      expect(worn.json()).toEqual({ marks: [OWN_MARK, null, null] });
+      expect(worn.json()).toEqual({ marks: [OWN_MARK] });
 
       // В таблице рядом с номером едет и картинка — иначе шильдик приехал бы
       // сопернику пустым.
@@ -3167,7 +3164,7 @@ describe('API', () => {
         headers: { authorization: `Bearer ${token}` },
         payload: { marks: ['s0', 's1'] },
       });
-      expect(worn.json()).toEqual({ marks: ['s0', null, null] });
+      expect(worn.json()).toEqual({ marks: ['s0'] });
 
       // Второй раз ту же наклейку не продают, и жетоны за неё не берут.
       const again = await buy();
@@ -3177,7 +3174,10 @@ describe('API', () => {
         url: '/api/me',
         headers: { authorization: `Bearer ${token}` },
       });
-      expect((me.json() as { tokens: number }).tokens).toBe(3);
+      const card = me.json() as { tokens: number; marks: (string | null)[] };
+      expect(card.tokens).toBe(3);
+      // Выбор не только принят, но и сохранён: карточка показывает корпус.
+      expect(card.marks).toEqual(['s0']);
     } finally {
       db.close();
       await shop.close();
@@ -3196,14 +3196,6 @@ describe('API', () => {
       headers: { authorization: `Bearer ${token}` },
     });
     expect((before.json() as { earned: string[] }).earned).toEqual([]);
-    // Пока не выдана — на корпус её не поставить.
-    const early = await app.inject({
-      method: 'PUT',
-      url: '/api/me/marks',
-      headers: { authorization: `Bearer ${token}` },
-      payload: { marks: ['e-order'] },
-    });
-    expect(early.json()).toEqual({ marks: [null, null, null] });
 
     await app.inject({
       method: 'POST',
@@ -3220,14 +3212,6 @@ describe('API', () => {
     // Заход тут единственный, поэтому вместе с отметкой дня приезжает и
     // золото вечной таблицы — проверяем именно отметку дня.
     expect((after.json() as { earned: string[] }).earned).toContain('e-order');
-
-    const put = await app.inject({
-      method: 'PUT',
-      url: '/api/me/marks',
-      headers: { authorization: `Bearer ${token}` },
-      payload: { marks: ['e-order'] },
-    });
-    expect(put.json()).toEqual({ marks: ['e-order', null, null] });
   });
 
   it('шильдики: золото вечной таблицы снимается, как только тебя обогнали', async () => {
@@ -3255,34 +3239,33 @@ describe('API', () => {
       return response.json() as { earned: string[]; marks: (string | null)[] };
     };
 
-    // Первое место в вечной таблице — золото выдано и его можно надеть.
+    // Первое место в вечной таблице — золото у того, кто его держит.
     await send(ada, weak);
     expect((await me(ada)).earned).toContain('g-order');
+    // Носить его сейчас нельзя: надписей на корпусе нет, и каталог его не
+    // знает. Но хозяин считается по таблице и теперь — иначе в день, когда
+    // золото вернётся на корпус, оно оказалось бы у вчерашних хозяев.
     const put = await app.inject({
       method: 'PUT',
       url: '/api/me/marks',
       headers: { authorization: `Bearer ${ada}` },
       payload: { marks: ['g-order'] },
     });
-    expect(put.json()).toEqual({ marks: ['g-order', null, null] });
+    expect(put.json()).toEqual({ marks: [null] });
 
-    // Боб обошёл — золото переехало к нему, у Ады корпус погас.
+    // Боб обошёл — золото переехало к нему.
     await send(bob, strong);
-    const adaNow = await me(ada);
-    expect(adaNow.earned).not.toContain('g-order');
-    expect(adaNow.marks).toEqual([null, null, null]);
+    expect((await me(ada)).earned).not.toContain('g-order');
     expect((await me(bob)).earned).toContain('g-order');
 
-    // И в таблице у Ады золота тоже нет — соперник видит то же самое.
+    // И в таблице у Ады шильдика нет — соперник видит то же самое.
     const board = await app.inject({ method: 'GET', url: '/api/order/leaderboard' });
     const entries = (board.json() as { entries: { name: string; mark: string | null }[] }).entries;
     expect(entries.find((entry) => entry.name === 'Ада')?.mark).toBeNull();
 
-    // Место вернулось — вернулось и золото: выбор в базе никто не стирал.
+    // Место вернулось — вернулось и золото: его никто не выдавал и не снимал.
     await send(ada, strongest);
-    const adaBack = await me(ada);
-    expect(adaBack.earned).toContain('g-order');
-    expect(adaBack.marks).toEqual(['g-order', null, null]);
+    expect((await me(ada)).earned).toContain('g-order');
   });
 
   it('шильдики: повторить чужой рекорд мало — на ничьей золото не переезжает', async () => {

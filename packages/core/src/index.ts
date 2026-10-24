@@ -15,6 +15,7 @@ export {
 export type { OrderState, OrderRun, OrderFire, OrderTap } from './order.js';
 export {
   MARKS,
+  HIDDEN_MARKS,
   MARK_SLOTS,
   MARK_STREAK,
   MARK_BIG,

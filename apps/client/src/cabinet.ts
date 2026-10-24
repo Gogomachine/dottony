@@ -49,6 +49,13 @@ import {
 import { brandLockup } from './brand';
 import { dayName, renderRounds, tourneyAction, tourneyNote, tourneyWhen } from './tourney';
 import { markChip } from './plate';
+import { kindOpen } from './theme';
+
+/**
+ * Есть ли на корпусе механика, на которой играют вдвоём. Дуэль идёт на
+ * механике и на часах: пока цепочки и тап спрятаны, звать друга некуда.
+ */
+const CAN_DUEL = kindOpen('chain') || kindOpen('order');
 
 /**
  * Личный кабинет: кто я, какая лига, что сыграно.
@@ -737,7 +744,10 @@ export class Cabinet {
       slot.addEventListener('click', () => void this.pickSlot(index));
       this.slotsEl.appendChild(slot);
     }
-    this.slotHintEl.textContent = `Ячейка ${this.slot + 1} · выберите шильдик`;
+    // Номер ячейки называем, только когда их больше одной: в приборе с
+    // одной ячейкой «Ячейка 1» — это не подсказка, а описание самого себя.
+    this.slotHintEl.textContent =
+      MARK_SLOTS > 1 ? `Ячейка ${this.slot + 1} · выберите шильдик` : 'Выберите шильдик';
     for (const pick of this.catalogEl.querySelectorAll<HTMLElement>('.pick')) {
       pick.classList.toggle('on', pick.dataset.mark === marks[this.slot]);
       // Чужое видно всегда: каталог заодно и список того, к чему идти —
@@ -1098,7 +1108,11 @@ export class Cabinet {
           ? `${friend.record.won}:${friend.record.played - friend.record.won}`
           : '';
 
+      // Позвать можно только туда, где играют вдвоём: дуэль идёт на
+      // механике и на часах. Пока механик на корпусе нет, кнопки нет тоже —
+      // иначе она открывала бы прибор в режиме, которого в меню не найти.
       const invite = item.children[3] as HTMLButtonElement;
+      invite.hidden = !CAN_DUEL;
       invite.addEventListener('click', () => {
         this.hide();
         this.handlers.onInvite(friend.code);

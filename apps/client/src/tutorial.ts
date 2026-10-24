@@ -7,6 +7,7 @@ import {
   createBoard,
   orderReward,
   phaseStateAt,
+  PUZZLE_MOVES,
   seedRng,
   tapGroup,
   DEFAULT_CONFIG,
@@ -17,6 +18,7 @@ import {
 } from '@doton/core';
 import type { DuelKind } from '@doton/protocol';
 import { miniState, orderMini, type MiniState } from './game/mini';
+import { kindOpen } from './theme';
 import type { Renderer } from './game/renderer';
 
 /**
@@ -79,6 +81,13 @@ export interface TutorialHud {
   /** Сценарий кончился или прерван. */
   finish(): void;
 }
+
+/**
+ * Есть ли на корпусе хоть одна механика с часами. От неё зависит половина
+ * показа: заявка, резонанс и рассказ о режимах — всё это про цепочки и тап.
+ * Пока открыт один пазл, показ о них молчит.
+ */
+const PHASED = kindOpen('chain') || kindOpen('order');
 
 /** Прерывание сценария: обучение закрыли на середине. */
 const HALT = Symbol('halt');
@@ -454,8 +463,10 @@ export class Tutorial {
           () => this.chainAct(),
           () => this.flashAct(),
           () => this.cascadeAct(),
-          () => this.claimAct(),
-          () => this.resonanceAct(),
+          // Заявка и резонанс живут в цепочках и тапе: они считают секунды,
+          // а в пазле секунд не считает никто. Пока обе механики спрятаны,
+          // показ о них молчит — объяснять нечего и негде применить.
+          ...(PHASED ? [() => this.claimAct(), () => this.resonanceAct()] : []),
           () => this.modesAct(),
           () => this.doneAct(),
         ];
@@ -822,6 +833,17 @@ export class Tutorial {
     this.reset(this.step + 1);
     this.hud.score(this.score, 0);
     this.idleInstruments();
+    // Пока на корпусе один пазл, рассказывать о часах, сопернике и второй
+    // механике нечего: показ заканчивается тем, что игрок увидит в меню.
+    if (!PHASED) {
+      this.hud.time('Ходы', String(PUZZLE_MOVES));
+      this.say(
+        'Режимы',
+        `Вызов дня — одна доска для всех и ${PUZZLE_MOVES} ходов: попытка одна в день, счёт идёт в таблицу дня. Свободно — тот же пазл на случайной доске, попыток сколько угодно и мимо таблицы. Рисование — лист: там рисуют себе шильдик.`,
+      );
+      await this.wait(0.1);
+      return;
+    }
     this.hud.time('Время', '3:00');
     this.hud.versus('Соперник', 2430);
     this.say(
