@@ -164,7 +164,6 @@ const resultSubEl = el<HTMLSpanElement>('result-sub');
 const kindKey = el<HTMLDivElement>('key-kind');
 const resetKey = el<HTMLButtonElement>('reset-key');
 const duelSheet = el<HTMLDivElement>('duel-sheet');
-const rulesSheet = el<HTMLDivElement>('rules-sheet');
 const banSheet = el<HTMLDivElement>('ban-sheet');
 const tourneySheet = el<HTMLDivElement>('tourney-sheet');
 const tourneyPoolEl = el<HTMLSpanElement>('tourney-pool');
@@ -649,7 +648,6 @@ function startTutorial(): void {
   menuEl.hidden = true;
   overlay.hidden = true;
   duelSheet.hidden = true;
-  rulesSheet.hidden = true;
   tourneySheet.hidden = true;
   // Показ ведут цепочкой: у него свои ходы, и рисоваться они должны линией.
   // Способ хода вернёт startGame() в конце показа.
@@ -2716,14 +2714,11 @@ const MENU_ACTIONS: Record<string, () => void> = {
     boardFromCabinet = false;
     void (deviceKind === 'order' ? showOrderBoard('day') : showSprintBoard('day'));
   },
-  rules: () => {
-    rulesSheet.hidden = false;
-  },
   tutorial: () => startTutorial(),
 };
 
 menuEl.addEventListener('click', (event) => {
-  // Режимы — строки списка, обучение с правилами — клавиши рядом: обходим
+  // Режимы — строки списка, обучение с таблицей — клавиши рядом: обходим
   // и то и другое одним слушателем по data-go.
   const item = (event.target as HTMLElement).closest<HTMLElement>('[data-go]');
   const action = item ? MENU_ACTIONS[item.dataset.go ?? ''] : undefined;
@@ -2780,9 +2775,6 @@ el<HTMLButtonElement>('tourney-close').addEventListener('click', () => {
 });
 tourneyGoEl.addEventListener('click', () => void tourneyGo());
 
-el<HTMLButtonElement>('rules-close').addEventListener('click', () => {
-  rulesSheet.hidden = true;
-});
 el<HTMLButtonElement>('duel-cancel').addEventListener('click', () => {
   duelSheet.hidden = true;
 });
@@ -2811,7 +2803,7 @@ function closeWindows(): boolean {
   // Все окна прибора, кроме одного: изъятый прибор не закрывается ничем —
   // клавишами из-под бана выхода нет, и это единственное окно, которое
   // остаётся на экране, чем бы игрок ни нажал.
-  for (const sheet of [duelSheet, rulesSheet, tourneySheet]) {
+  for (const sheet of [duelSheet, tourneySheet]) {
     if (sheet.hidden) continue;
     sheet.hidden = true;
     closed = true;
