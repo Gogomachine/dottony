@@ -306,6 +306,17 @@
       color: var(--silk-2);
       box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 1px 0 rgba(255, 255, 255, 0.28);
     }
+    /*
+      Место под свой рисунок, пока он не нарисован: пустое стекло в пунктире.
+      Квадрат тот же, что у рисунка, — купленный шильдик не меняет размера
+      от того, нарисовано на нём или ещё нет.
+    */
+    .mark.own.blank {
+      width: calc(13px * var(--mark-scale));
+      box-shadow: none;
+      border: 1px dashed var(--edge);
+      background: transparent;
+    }
     /* Своя картинка на наклейке. Квадрат и своё стекло вокруг — рисунок
        не должен решать, какого размера будет шильдик на корпусе. */
     .mark .art {
@@ -1653,7 +1664,12 @@
       background: var(--case-2);
     }
     .history li.playable { cursor: pointer; }
-    .history .mark { width: 5px; height: 22px; border-radius: 3px; background: var(--silk-2); }
+    /*
+      Полоска исхода слева. `min-width` здесь не для красоты: тем же словом
+      `mark` зовётся шильдик, а у него своя ширина в семнадцать пунктов —
+      без этой строки полоска вырастала до неё и наезжала на имя соседа.
+    */
+    .history .mark { width: 5px; min-width: 5px; height: 22px; border-radius: 3px; background: var(--silk-2); }
     .history li.win .mark { background: #2f9e68; }
     .history li.loss .mark { background: var(--acc); }
     .history .who { display: flex; flex-direction: column; min-width: 0; }

@@ -118,7 +118,10 @@ export function markChip(mark: Mark, art: string | null = null): HTMLElement {
   const chip = document.createElement('i');
   chip.className = `mark ${mark.kind}`;
   if (isOwnMark(mark.id)) {
-    if (art === null) chip.textContent = mark.glyph;
+    // Нарисованного ещё нет — показываем пустой лист, а не слово «свой»:
+    // надписей на корпусе прибор больше не носит, и место под рисунок
+    // честнее показать пустым, чем подписать.
+    if (art === null) chip.classList.add('blank');
     else chip.appendChild(artPicture(art));
     return chip;
   }

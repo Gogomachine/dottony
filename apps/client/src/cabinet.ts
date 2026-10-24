@@ -605,10 +605,12 @@ export class Cabinet {
       pick.classList.toggle('locked', id !== '' && !this.earned.includes(id));
     }
     const worn = this.frame === null ? null : FRAMES.find((frame) => frame.id === this.frame);
+    // Про соперника говорим, только пока он в приборе есть: оправу видно и
+    // на своём корпусе, а обещать чужие глаза, когда дуэли нет, — врать.
     this.frameHintEl.textContent =
       worn === undefined || worn === null
         ? `Оправа полосы · ${FRAME_PRICE} жетонов`
-        : `Оправа «${worn.name.toLowerCase()}» · её видит соперник`;
+        : `Оправа «${worn.name.toLowerCase()}» · ${CAN_DUEL ? 'её видит соперник' : 'на корпусе'}`;
   }
 
   /**
@@ -629,7 +631,9 @@ export class Cabinet {
       await this.put(mark.id);
       return;
     }
-    // Невыданная отметка не молчит: нажатие рассказывает, за что дают.
+    // Шильдик без цены не продаётся, а рассказывает, за что его дают.
+    // Сейчас таких в каталоге нет вовсе — они вернутся вместе с отметками
+    // за игру, и до тех пор эта ветка сторожит пустое место.
     if (mark.price === undefined) {
       this.buying = null;
       this.slotHintEl.textContent = mark.needs ?? '';
@@ -750,8 +754,8 @@ export class Cabinet {
       MARK_SLOTS > 1 ? `Ячейка ${this.slot + 1} · выберите шильдик` : 'Выберите шильдик';
     for (const pick of this.catalogEl.querySelectorAll<HTMLElement>('.pick')) {
       pick.classList.toggle('on', pick.dataset.mark === marks[this.slot]);
-      // Чужое видно всегда: каталог заодно и список того, к чему идти —
-      // и целей за игру, и того, что лежит на прилавке.
+      // Чужое видно всегда: каталог заодно и витрина — по нему видно, что
+      // ещё можно купить, а не только то, что уже куплено.
       pick.classList.toggle('locked', !markAllowed(pick.dataset.mark ?? '', this.earned));
     }
   }
@@ -1099,9 +1103,14 @@ export class Cabinet {
         '<span class="vs"></span><button class="act">Позвать</button>';
       const who = item.children[1] as HTMLElement;
       (who.children[0] as HTMLElement).textContent = friend.name;
-      (who.children[1] as HTMLElement).textContent = friend.provisional
-        ? 'калибровка'
-        : `${friend.league} · ${friend.rating}`;
+      // Лига с рейтингом набираются дуэлями: пока их нет на корпусе, строка
+      // обещала бы игроку то, чего в приборе сейчас не достать, — и у всех
+      // друзей одинаково читалась бы «калибровкой».
+      (who.children[1] as HTMLElement).textContent = !CAN_DUEL
+        ? ''
+        : friend.provisional
+          ? 'калибровка'
+          : `${friend.league} · ${friend.rating}`;
       // Личный счёт важнее общего рейтинга: с друзьями меряются им.
       (item.children[2] as HTMLElement).textContent =
         friend.record.played > 0
