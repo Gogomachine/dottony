@@ -196,6 +196,39 @@ export function openInTelegram(url: string): boolean {
   return true;
 }
 
+/**
+ * Отдать строку в чат.
+ *
+ * В Telegram — его же окном выбора чата: мини-приложение не умеет слать
+ * сообщения за игрока, и не должно — выбирает он сам. Снаружи пробуем
+ * системное «поделиться», а если и его нет, кладём в буфер: сказать, что
+ * не вышло, хуже, чем дать скопировать.
+ *
+ * Возвращает, что именно получилось: прибору об этом надо сказать словами.
+ */
+export async function shareLine(text: string, url: string): Promise<'telegram' | 'shared' | 'copied' | 'no'> {
+  const link = `https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(text)}`;
+  if (openInTelegram(link)) return 'telegram';
+  const nav = navigator as Navigator & {
+    share?: (data: { text: string; url?: string }) => Promise<void>;
+  };
+  if (nav.share) {
+    try {
+      await nav.share({ text, url });
+      return 'shared';
+    } catch {
+      // Передумали на окне выбора — это не поломка, и говорить не о чем.
+      return 'no';
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(`${text}\n${url}`);
+    return 'copied';
+  } catch {
+    return 'no';
+  }
+}
+
 export function savedName(): string | null {
   return readStore(NAME_KEY);
 }

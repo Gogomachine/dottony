@@ -58,6 +58,7 @@ import {
   tourneyStart,
   submitOrder,
   sendPuzzle,
+  shareLine,
   startPuzzleRun,
   submitSprint,
   whenBanned,
@@ -169,6 +170,8 @@ const tourneyNoteEl = el<HTMLSpanElement>('tourney-note');
 const tourneyRoundsEl = el<HTMLDivElement>('tourney-rounds');
 const tourneyBoardEl = el<HTMLOListElement>('tourney-board');
 const tourneyGoEl = el<HTMLButtonElement>('tourney-go');
+const shareBtn = el<HTMLButtonElement>('over-share');
+const resultShareEl = el<HTMLButtonElement>('result-share');
 const addOpponentBtn = el<HTMLButtonElement>('add-opponent');
 const reportBtn = el<HTMLButtonElement>('report-opponent');
 const inviteBarEl = el<HTMLDivElement>('invite-bar');
@@ -937,6 +940,9 @@ async function finishPuzzle(score: number): Promise<void> {
     const place = view.played ? `${view.played.rank}-е место` : 'вне таблицы';
     const shift = view.shift ? ` · смена +${view.shift}` : '';
     resultSubEl.textContent = `${place} из ${view.entries.length}${shift}`;
+    // Доска дня у всех одна — это единственный итог прибора, который есть
+    // с чем сравнить, и единственный, о котором есть что сказать в чате.
+    resultShareEl.hidden = dailyLine(view) === null;
     updateMenuPuzzle();
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) resetAuth();
@@ -984,6 +990,49 @@ function updateMenuPuzzle(): void {
   note.textContent = `Сыграно · ${played.rank}-е место. Доска новая завтра.`;
 }
 
+/** Ссылка на прибор из настроек бота; null — бот не заведён. */
+let miniAppLink: string | null = null;
+
+/**
+ * Ссылка, которая откроет прибор сразу на нужном месте.
+ *
+ * Метка приходит в `startapp` и читается при запуске. Если формат ссылки
+ * когда-нибудь изменится, отдаём её как есть: лучше попасть в прибор без
+ * метки, чем никуда.
+ */
+function deviceLink(param: string): string {
+  if (miniAppLink === null) return location.origin;
+  return miniAppLink.endsWith('startapp=') ? miniAppLink + param : miniAppLink;
+}
+
+/**
+ * Что сказать в чате о сыгранной доске.
+ *
+ * Коротко и без поля: доска дня у всех одна, и показывать её тому, кто ещё
+ * не играл, — значит отдать ему ответ. Отдаётся только результат и
+ * приглашение; остальное он увидит сам.
+ */
+function dailyLine(view: PuzzleView): string | null {
+  const played = view.played;
+  if (played === null || !played.done) return null;
+  const day = `${view.day.slice(8)}.${view.day.slice(5, 7)}`;
+  const place = played.rank === null ? '' : ` · ${played.rank}-е место`;
+  return [
+    `Дотоскоп · вызов дня ${day}`,
+    `Потенциал ${groupDigits(played.score)}${place}`,
+    'Нужна помощь в исследовании.',
+  ].join('\n');
+}
+
+/** Отдать результат дня в чат — из итога или из таблицы. */
+async function shareDaily(): Promise<void> {
+  const view = puzzleToday;
+  const line = view === null ? null : dailyLine(view);
+  if (line === null) return;
+  const how = await shareLine(line, deviceLink('puzzle'));
+  if (how === 'copied') setStat('Скопировано — остаётся вставить в чат');
+}
+
 /** Таблица дня — тем же окном, что и остальные таблицы прибора. */
 async function showPuzzleBoard(): Promise<void> {
   showOverModal({ title: 'Вызов дня', note: 'Загружаю таблицу…', viewing: true });
@@ -997,6 +1046,7 @@ async function showPuzzleBoard(): Promise<void> {
       boardListEl.hidden = true;
       return;
     }
+    shareBtn.hidden = !view.played?.done;
     overNoteEl.textContent = view.played?.done
       ? `Сегодня ${groupDigits(view.played.score)} · ${view.played.rank}-е место`
       : view.played
@@ -1132,6 +1182,8 @@ function showOverModal(options: {
   openBoard = null;
   ratingLineEl.hidden = true;
   if (options.rating) showRatingChange(options.rating);
+  // Отдать в чат есть что только у доски дня: её поднимает сама таблица.
+  shareBtn.hidden = true;
   // Добавить соперника проще всего сразу после матча — потом искать код.
   addOpponentBtn.hidden = options.addFriend === undefined;
   // Пожаловаться — тоже: и то и другое про того, с кем только что играл.
@@ -1913,6 +1965,9 @@ el<HTMLButtonElement>('theme-toggle').addEventListener('click', function () {
 
 /** Итог соло-партии — крупным числом внутри окуляра. */
 function showResult(cap: string, score: number): void {
+  // Клавишу «в чат» поднимает только доигранный вызов дня: остальным
+  // заходам в чате сказать нечего — доска у них своя.
+  resultShareEl.hidden = true;
   resultCapEl.textContent = cap;
   resultBigEl.textContent = String(score);
   resultSubEl.textContent = `образец #${session.seed.toString(16)}`;
@@ -2684,6 +2739,9 @@ resetKey.addEventListener('click', () => {
   startGame();
 });
 
+shareBtn.addEventListener('click', () => void shareDaily());
+resultShareEl.addEventListener('click', () => void shareDaily());
+
 el<HTMLButtonElement>('mark-toggle').addEventListener('click', function () {
   const on = !loadMarks();
   saveMarks(on);
@@ -2956,6 +3014,18 @@ function invitedRoom(): string | null {
   return param !== null && param.startsWith('duel_') ? param.slice(5) : null;
 }
 
+/*
+ * Ссылка из чата ведёт к доске дня: переключатель ставим в пазл, а попытку
+ * человек возьмёт сам. Брать её за него нельзя — она одна, и открывший
+ * ссылку мог просто посмотреть, кто там сегодня в таблице.
+ */
+if (startParam() === 'puzzle' && deviceKind !== 'puzzle') {
+  deviceKind = 'puzzle';
+  saveKind(deviceKind);
+  applyKind();
+  setMode('puzzle');
+}
+
 const invited = invitedRoom();
 if (invited !== null) {
   // Показ и панель подождут: человека позвали в матч, он идёт в матч.
@@ -2996,7 +3066,10 @@ if (apiAvailable) watchInvites();
 // Имя бота говорит кабинету, что привязка Telegram вообще возможна.
 if (apiAvailable) {
   void getConfig()
-    .then((config) => cabinet.setMiniApp(config.miniApp))
+    .then((config) => {
+      miniAppLink = config.miniApp;
+      cabinet.setMiniApp(config.miniApp);
+    })
     .catch(() => {
       // Бот не настроен — привязку Telegram кабинет просто не покажет.
     });

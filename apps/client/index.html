@@ -709,6 +709,20 @@
       line-height: 1;
       font-variant-numeric: tabular-nums;
     }
+    .result .share {
+      margin-top: 14px;
+      background: var(--case-2);
+      border: 1px solid var(--edge);
+      border-radius: 8px;
+      padding: 9px 16px;
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--silk);
+      cursor: pointer;
+    }
+    .result .share[hidden] { display: none; }
     .result .sub {
       font-family: var(--mono);
       font-size: 9.5px;
@@ -1916,6 +1930,12 @@
         <span class="cap" id="result-cap">Наблюдение завершено</span>
         <span class="big" id="result-big">0</span>
         <span class="sub" id="result-sub"></span>
+        <!--
+          Доска дня у всех одна, и это единственный итог прибора, который
+          есть с чем сравнить. Поэтому клавиша стоит здесь и только здесь:
+          остальным заходам в чате сказать нечего.
+        -->
+        <button class="share" id="result-share" hidden>Отдать в чат</button>
       </div>
 
       <!-- Окна прибора живут внутри стекла: дуэль, правила, кабинет, итог. -->
@@ -2047,6 +2067,9 @@
             <p>Перезагрузка вкладки попытку не губит: прибор помнит сделанные ходы и
               возвращает к той же доске. А вот с другого устройства доиграть её не
               выйдет — ходы остались на первом.</p>
+            <p>Сыгранную доску можно <b>отдать в чат</b>: уходит счёт, место и ссылка на
+              прибор. Самой доски в сообщении нет — это был бы ответ тому, кто ещё не
+              играл.</p>
             <p><b>Свободно</b> — тот же пазл на случайной доске: попыток сколько
               угодно, но и в таблицу не идёт ничего. Это место, где разбираются, как
               он устроен, не тратя сегодняшнюю попытку.</p>
@@ -2249,6 +2272,12 @@
             <button data-period="all">За всё время</button>
           </div>
           <ol id="board-list" class="board-list" hidden></ol>
+          <!--
+            Отдать результат в чат. Стоит в таблице дня, а не только в
+            итоге: разобрал доску утром, позвал вечером — это один и тот же
+            разговор, и возвращаться за ним к итогу нечестно.
+          -->
+          <button id="over-share" hidden>Отдать в чат</button>
           <button id="add-opponent" hidden></button>
           <!--
             Жалоба на соперника. Стоит здесь и только здесь: после матча
