@@ -239,6 +239,16 @@ export class Store {
            day TEXT NOT NULL,
            score INTEGER NOT NULL,
            moves TEXT NOT NULL,
+           /*
+            * Доиграна ли попытка. Строка заводится в тот миг, когда игрок
+            * открыл доску дня, — на этом попытка и тратится; доигранной она
+            * становится, когда кончились ходы.
+            *
+            * Без этой колонки попытку пришлось бы считать по факту
+            * присылки, и бросить неудачный расклад можно было бы без
+            * всяких последствий.
+            */
+           done INTEGER NOT NULL DEFAULT 0,
            created_at TEXT NOT NULL DEFAULT (datetime('now')),
            PRIMARY KEY (user_id, day)
          )`,
@@ -496,6 +506,10 @@ export class Store {
     // бы со счётом. У матчей, сыгранных до заявок, колонка пуста.
     await this.addColumnIfMissing('duels', 'kind', "TEXT NOT NULL DEFAULT 'chain'");
     await this.addColumnIfMissing('duels', 'claims', 'TEXT');
+    // Попытка пазла стала тратиться в начале, а не при отправке. Те строки,
+    // что легли до этого правила, все доигранные — иначе их бы в таблице не
+    // было вовсе.
+    await this.addColumnIfMissing('puzzle_days', 'done', 'INTEGER NOT NULL DEFAULT 1');
     /*
      * Лаборатории PETRIDOT больше нет, и всё выращенное уходит вместе с ней.
      *
@@ -1268,44 +1282,66 @@ export class Store {
   }
 
   /**
-   * Записать попытку пазла. `false` — за этот день уже играли.
+   * Взять сегодняшнюю попытку. `false` — она уже взята.
    *
-   * Одна попытка в день держится здесь, а не проверкой до записи: между
-   * «посмотрели, что не играл» и «записали» помещается второй такой же
-   * запрос, и в таблицу легли бы обе попытки. Ключ таблицы не помещает
-   * ничего.
+   * Попытка тратится здесь, в начале, а не при отправке счёта: иначе
+   * неудачный расклад можно было бы бросить и начать заново, и «одна
+   * попытка в день» означала бы «сколько угодно попыток, одна присылка».
+   *
+   * Держится она ключом таблицы, а не проверкой до записи: между
+   * «посмотрели, что не брал» и «записали» помещается второй такой же
+   * запрос, и попыток стало бы две. Ключ не помещает ничего.
    */
-  async puzzleSave(
+  async puzzleStart(userId: string, day: string): Promise<boolean> {
+    const result = await this.client.execute({
+      sql: `INSERT INTO puzzle_days (user_id, day, score, moves, done)
+            VALUES (?, ?, 0, '[]', 0)
+            ON CONFLICT (user_id, day) DO NOTHING`,
+      args: [userId, day],
+    });
+    return result.rowsAffected > 0;
+  }
+
+  /**
+   * Дописать счёт взятой попытке. `false` — попытка не бралась или уже
+   * доиграна: доигранную не переписывают, в этом вся ставка.
+   */
+  async puzzleFinish(
     userId: string,
     day: string,
     score: number,
     movesJson: string,
   ): Promise<boolean> {
     const result = await this.client.execute({
-      sql: `INSERT INTO puzzle_days (user_id, day, score, moves)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT (user_id, day) DO NOTHING`,
-      args: [userId, day, score, movesJson],
+      sql: `UPDATE puzzle_days
+               SET score = ?, moves = ?, done = 1, created_at = datetime('now')
+             WHERE user_id = ? AND day = ? AND done = 0`,
+      args: [score, movesJson, userId, day],
     });
     return result.rowsAffected > 0;
   }
 
-  /** Сыгранная попытка этого дня; null — ещё не играл. */
-  async puzzleOf(userId: string, day: string): Promise<{ score: number } | null> {
+  /** Сегодняшняя попытка: взята ли и чем кончилась. null — не брал. */
+  async puzzleOf(userId: string, day: string): Promise<{ score: number; done: boolean } | null> {
     const rows = await this.client.execute({
-      sql: 'SELECT score FROM puzzle_days WHERE user_id = ? AND day = ?',
+      sql: 'SELECT score, done FROM puzzle_days WHERE user_id = ? AND day = ?',
       args: [userId, day],
     });
     const row = rows.rows[0];
-    return row ? { score: Number(row.score) } : null;
+    return row ? { score: Number(row.score), done: Number(row.done) === 1 } : null;
   }
 
-  /** Место в таблице дня; null — в этот день не играл. */
+  /**
+   * Место в таблице дня; null — попытка не доиграна или не бралась.
+   *
+   * Недоигранные в счёт не идут: место — это результат, а у брошенной
+   * попытки результата нет. Саму попытку это игроку не возвращает.
+   */
   async puzzleRank(userId: string, day: string): Promise<number | null> {
     const mine = await this.puzzleOf(userId, day);
-    if (mine === null) return null;
+    if (mine === null || !mine.done) return null;
     const above = await this.client.execute({
-      sql: 'SELECT COUNT(*) AS above FROM puzzle_days WHERE day = ? AND score > ?',
+      sql: 'SELECT COUNT(*) AS above FROM puzzle_days WHERE day = ? AND done = 1 AND score > ?',
       args: [day, mine.score],
     });
     return Number(above.rows[0]!.above) + 1;
@@ -1320,7 +1356,7 @@ export class Store {
       this.client.execute({
         sql: `SELECT u.id, u.name, u.marks, u.art, r.score AS score
                 FROM puzzle_days r JOIN users u ON u.id = r.user_id
-               WHERE r.day = ?
+               WHERE r.day = ? AND r.done = 1
                ORDER BY r.score DESC, r.created_at ASC, r.rowid ASC
                LIMIT ?`,
         args: [day, limit],

@@ -58,6 +58,7 @@ import {
   tourneyStart,
   submitOrder,
   sendPuzzle,
+  startPuzzleRun,
   submitSprint,
   whenBanned,
   ApiError,
@@ -788,20 +789,106 @@ async function finishTourneyRound(moves: MoveLog[], score: number): Promise<void
  * дня и один раз, свободная доска — любая и сколько угодно. Правила, поле
  * и двадцать пять ходов у них общие.
  */
-function startPuzzle(rated: boolean): void {
-  puzzleRated = rated;
+function startFreeBoard(): void {
+  puzzleRated = false;
   closeWindows();
   menuEl.hidden = true;
-  // Доска дня считается из даты, а не спрашивается у сервера: прибор
-  // разворачивает её сразу, даже без сети. Сервер считает её независимо и
-  // той же формулой — сойтись они обязаны без всякой пересылки.
-  const day = puzzleToday?.day ?? puzzleDay(new Date());
-  setMode('puzzle', rated ? (puzzleToday?.seed ?? puzzleSeed(day)) : undefined);
-  setStat(
-    rated
-      ? 'Вызов дня: двадцать пять ходов, попытка одна'
-      : 'Свободная доска: двадцать пять ходов, попыток сколько угодно',
-  );
+  setMode('puzzle');
+  setStat('Свободная доска: двадцать пять ходов, попыток сколько угодно');
+}
+
+/** Ключ недоигранной попытки: день и ходы, сделанные до перезагрузки. */
+const PUZZLE_RUN_KEY = 'doton.puzzle.run';
+
+/**
+ * Начать вызов дня.
+ *
+ * Попытка тратится **до** доски: сервер записывает её, и только потом
+ * прибор разворачивает расклад. Так строго нарочно — иначе неудачную доску
+ * бросают и начинают заново, и «одна попытка в день» означает «сколько
+ * угодно попыток, одна присылка».
+ *
+ * Поэтому же нет связи — нет и вызова дня: играть «в зачёт» вслепую, не
+ * зная, засчитают ли, хуже, чем не играть вовсе.
+ */
+async function startDaily(): Promise<void> {
+  if (!apiAvailable) {
+    setStat('Вызов дня живёт в таблице, а прибор сейчас без связи', 'warn');
+    return;
+  }
+  try {
+    await ensureAuth(guestName);
+  } catch {
+    setStat('Вызов дня требует входа — попробуй ещё раз', 'warn');
+    return;
+  }
+  let taken: PuzzleView;
+  try {
+    taken = await startPuzzleRun();
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) resetAuth();
+    if (error instanceof ApiError && error.code === 'played') {
+      // Попытка уже взята: либо доиграна, либо брошена. И то и другое —
+      // «сегодня всё», и честнее показать таблицу, чем молча ничего.
+      await refreshPuzzle();
+      closeMenu();
+      void showPuzzleBoard();
+      return;
+    }
+    setStat('Вызов дня не отвечает — попробуй позже', 'warn');
+    return;
+  }
+
+  puzzleToday = taken;
+  puzzleRated = true;
+  closeWindows();
+  menuEl.hidden = true;
+  setMode('puzzle', taken.seed);
+  // Ходы недоигранной попытки держим у себя: перезагруженная вкладка не
+  // должна стоить дня. Доска дня считается из даты, и те же ходы на ней
+  // дают то же самое поле.
+  writeStore(PUZZLE_RUN_KEY, JSON.stringify({ day: taken.day, moves: [] }));
+  updateMenuPuzzle();
+  setStat('Вызов дня: двадцать пять ходов, попытка одна');
+}
+
+/**
+ * Вернуться к начатой сегодня попытке.
+ *
+ * Поле не хранится — хранятся ходы: доска дня считается из даты, и те же
+ * ходы на ней дают то же самое положение. Переигрываем их молча, без
+ * показа и без записи в журнал: журнал у нас уже есть, он и есть источник.
+ *
+ * `false` — возвращаться не к чему: ходов не сохранено (другое устройство
+ * или чистое хранилище), и попытка потрачена впустую.
+ */
+function resumeDaily(): boolean {
+  const saved = readStore(PUZZLE_RUN_KEY);
+  if (saved === null || puzzleToday === null) return false;
+  let kept: { day: string; moves: PuzzleMove[] };
+  try {
+    kept = JSON.parse(saved) as { day: string; moves: PuzzleMove[] };
+  } catch {
+    return false;
+  }
+  if (kept.day !== puzzleToday.day) return false;
+
+  puzzleRated = true;
+  closeWindows();
+  menuEl.hidden = true;
+  setMode('puzzle', puzzleToday.seed);
+  for (const move of kept.moves) {
+    if (typeof session.tryMove(move.path) === 'string') return false;
+  }
+  // Часы продолжаются с того мига, на котором бросили: секунды в журнале
+  // обязаны идти вперёд, иначе сервер прочтёт их как метроном.
+  const last = kept.moves[kept.moves.length - 1]?.t ?? 0;
+  session.begin(Date.now() - last * 1000);
+  puzzleRun = { moves: [...kept.moves] };
+  renderer.resetAnims();
+  updateHud();
+  setStat(`Попытка дня продолжается · ${movesWord(session.movesLeft)}`);
+  return true;
 }
 
 /** Сколько ходов осталось — словами прибора для строки состояния. */
@@ -821,6 +908,8 @@ function movesWord(left: number): string {
 async function finishPuzzle(score: number): Promise<void> {
   const run = puzzleRun;
   puzzleRun = null;
+  // Возвращаться больше не к чему: ходы кончились, и доска дня доиграна.
+  if (run !== null) writeStore(PUZZLE_RUN_KEY, '');
   if (run === null) {
     showResult('Доска разобрана', score);
     resultSubEl.textContent = 'Свободно · попыток сколько угодно';
@@ -851,10 +940,14 @@ async function finishPuzzle(score: number): Promise<void> {
     updateMenuPuzzle();
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) resetAuth();
-    const spent = error instanceof ApiError && error.code === 'played';
-    resultSubEl.textContent = spent
-      ? 'Сегодняшняя попытка уже сыграна'
-      : 'Попытка не дошла до таблицы';
+    const code = error instanceof ApiError ? error.code : '';
+    const rules: Record<string, string> = {
+      played: 'Сегодняшняя попытка уже сыграна',
+      'not-started': 'Попытка не была взята — в таблицу не идёт',
+      'too-many': 'Ходов больше двадцати пяти — в зачёт не идёт',
+      'bad-timing': 'Ходы пришли быстрее, чем их можно сделать',
+    };
+    resultSubEl.textContent = rules[code] ?? 'Попытка не дошла до таблицы';
   }
 }
 
@@ -875,10 +968,20 @@ function updateMenuPuzzle(): void {
   const played = puzzleToday?.played ?? null;
   const state = el<HTMLElement>('menu-daily-state');
   const note = el<HTMLElement>('menu-daily-note');
-  state.textContent = played ? groupDigits(played.score) : 'не сыгран';
-  note.textContent = played
-    ? `Сыграно · ${played.rank}-е место. Доска новая завтра.`
-    : 'Одна доска на всех, 25 ходов, одна попытка в день.';
+  if (played === null) {
+    state.textContent = 'не сыгран';
+    note.textContent = 'Одна доска на всех, 25 ходов, одна попытка в день.';
+    return;
+  }
+  if (!played.done) {
+    // Попытка взята, но не доиграна: начать заново нельзя — только
+    // вернуться к своей же доске, если ходы при нас.
+    state.textContent = 'идёт';
+    note.textContent = 'Попытка дня начата. Доиграть можно только её — новая будет завтра.';
+    return;
+  }
+  state.textContent = groupDigits(played.score);
+  note.textContent = `Сыграно · ${played.rank}-е место. Доска новая завтра.`;
 }
 
 /** Таблица дня — тем же окном, что и остальные таблицы прибора. */
@@ -894,9 +997,11 @@ async function showPuzzleBoard(): Promise<void> {
       boardListEl.hidden = true;
       return;
     }
-    overNoteEl.textContent = view.played
+    overNoteEl.textContent = view.played?.done
       ? `Сегодня ${groupDigits(view.played.score)} · ${view.played.rank}-е место`
-      : 'Сыграй вызов дня, чтобы попасть в таблицу.';
+      : view.played
+        ? 'Сегодняшняя попытка начата и не доиграна — в таблицу она не идёт.'
+        : 'Сыграй вызов дня, чтобы попасть в таблицу.';
     renderSprintBoard({ entries: view.entries, me: view.me });
   } catch {
     overNoteEl.hidden = false;
@@ -1730,6 +1835,12 @@ const input = new ChainInput(
     }
     if (puzzleRun) {
       puzzleRun.moves.push({ path: path.map((cell) => ({ ...cell })), t: Number(elapsed.toFixed(3)) });
+      // Каждый ход — на диск: попытка потрачена, и перезагруженная вкладка
+      // не должна стоить дня.
+      writeStore(
+        PUZZLE_RUN_KEY,
+        JSON.stringify({ day: puzzleToday?.day ?? puzzleDay(new Date()), moves: puzzleRun.moves }),
+      );
     }
     if (inDuel) duel.move(cfg.features.tap ? [path[0]!] : path);
     renderer.animateMove(oldGrid, result);
@@ -2350,14 +2461,23 @@ const MENU_ACTIONS: Record<string, () => void> = {
   // Вызов дня: пока не сыгран — это попытка, после — таблица. Клавиша
   // одна и та же, потому что и дело одно: «как там сегодняшняя доска».
   daily: () => {
-    if (puzzleToday?.played) {
+    const played = puzzleToday?.played ?? null;
+    // Доигранная попытка показывает таблицу, недоигранная — возвращает к
+    // своей доске: попытка потрачена, и доиграть её можно только ту же.
+    if (played?.done) {
       closeMenu();
       void showPuzzleBoard();
       return;
     }
-    startPuzzle(true);
+    if (played !== null) {
+      if (resumeDaily()) return;
+      closeMenu();
+      void showPuzzleBoard();
+      return;
+    }
+    void startDaily();
   },
-  free: () => startPuzzle(false),
+  free: () => startFreeBoard(),
   rules: () => {
     rulesSheet.hidden = false;
   },
@@ -2558,7 +2678,7 @@ resetKey.addEventListener('click', () => {
   // Сыгранный вызов дня не повторяют: доска дня одна и попытка одна, —
   // поэтому та же клавиша открывает свободную.
   if (session.mode === 'puzzle' && puzzleRated) {
-    startPuzzle(false);
+    startFreeBoard();
     return;
   }
   startGame();

@@ -468,8 +468,13 @@ export interface PuzzleView extends ShiftPaid {
   seed: number;
   /** Сколько ходов даётся. */
   moves: number;
-  /** Сыгранная сегодня попытка; null — ещё не играл. */
-  played: { score: number; rank: number } | null;
+  /**
+   * Сегодняшняя попытка; null — ещё не брал.
+   *
+   * Взятая, но не доигранная — это `done: false`: места у неё нет, а начать
+   * заново уже нельзя. Попытка тратится в начале, а не при отправке.
+   */
+  played: { score: number; rank: number | null; done: boolean } | null;
   /** Таблица дня. */
   entries: SprintEntry[];
   me: SprintEntry | null;

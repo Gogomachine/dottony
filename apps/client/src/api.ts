@@ -387,6 +387,14 @@ export function getPuzzle(): Promise<PuzzleView> {
   return request<PuzzleView>('/api/puzzle');
 }
 
+/**
+ * Взять сегодняшнюю попытку. С этого мига она потрачена: прибор открывает
+ * доску дня только после того, как сервер её записал.
+ */
+export function startPuzzleRun(): Promise<PuzzleView> {
+  return request<PuzzleView>('/api/puzzle/start', { method: 'POST' });
+}
+
 export function sendPuzzle(moves: PuzzleMove[]): Promise<PuzzleView> {
   return request<PuzzleView>('/api/puzzle', { method: 'POST', body: JSON.stringify({ moves }) });
 }

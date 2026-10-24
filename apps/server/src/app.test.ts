@@ -4176,6 +4176,7 @@ describe('вызов дня', () => {
     const day = puzzleDay(new Date());
     const { moves, score } = playPuzzle(puzzleSeed(day));
 
+    expect((await app.inject({ method: 'POST', url: '/api/puzzle/start', headers })).statusCode).toBe(200);
     const first = await app.inject({ method: 'POST', url: '/api/puzzle', headers, payload: { moves } });
     expect(first.statusCode).toBe(200);
     const view = first.json() as PuzzleView;
@@ -4196,6 +4197,42 @@ describe('вызов дня', () => {
     expect((await look(headers)).played).toMatchObject({ score });
   });
 
+  it('попытка тратится в начале: брошенную доску заново не берут', async () => {
+    // Иначе неудачный расклад бросают и начинают сначала, и «одна попытка в
+    // день» означает «сколько угодно попыток, одна присылка».
+    const headers = await player('Ада');
+    const day = puzzleDay(new Date());
+
+    expect((await app.inject({ method: 'POST', url: '/api/puzzle/start', headers })).statusCode).toBe(200);
+    // Взятая, но не доигранная попытка видна как своя — и без места.
+    const taken = (await look(headers)).played;
+    expect(taken).toMatchObject({ done: false, rank: null });
+    // В таблицу она не идёт: место — это результат, а его ещё нет.
+    expect((await look(headers)).entries).toHaveLength(0);
+
+    // Второй раз ту же попытку не берут.
+    const again = await app.inject({ method: 'POST', url: '/api/puzzle/start', headers });
+    expect(again.statusCode).toBe(409);
+    expect(again.json()).toEqual({ error: 'played' });
+
+    // Доиграть её при этом можно — попытка потрачена, но не сгорела.
+    const { moves, score } = playPuzzle(puzzleSeed(day));
+    const done = await app.inject({ method: 'POST', url: '/api/puzzle', headers, payload: { moves } });
+    expect(done.statusCode).toBe(200);
+    expect((done.json() as PuzzleView).played).toMatchObject({ score, rank: 1, done: true });
+  });
+
+  it('заход без взятой попытки не засчитывается', async () => {
+    // Прибор открывает доску дня только после записи. Заход, пришедший без
+    // неё, сыгран не на той доске или не тем, кто его прислал.
+    const headers = await player('Ада');
+    const { moves } = playPuzzle(puzzleSeed(puzzleDay(new Date())), 5);
+    const sent = await app.inject({ method: 'POST', url: '/api/puzzle', headers, payload: { moves } });
+    expect(sent.statusCode).toBe(409);
+    expect(sent.json()).toEqual({ error: 'not-started' });
+    expect((await look(headers)).played).toBeNull();
+  });
+
   it('таблица дня ставит выше того, у кого больше очков', async () => {
     const day = puzzleDay(new Date());
     const seed = puzzleSeed(day);
@@ -4205,7 +4242,9 @@ describe('вызов дня', () => {
 
     const ada = await player('Ада');
     const bob = await player('Боб');
+    await app.inject({ method: 'POST', url: '/api/puzzle/start', headers: bob });
     await app.inject({ method: 'POST', url: '/api/puzzle', headers: bob, payload: { moves: short.moves } });
+    await app.inject({ method: 'POST', url: '/api/puzzle/start', headers: ada });
     const view = (
       await app.inject({ method: 'POST', url: '/api/puzzle', headers: ada, payload: { moves: long.moves } })
     ).json() as PuzzleView;
@@ -4220,6 +4259,7 @@ describe('вызов дня', () => {
     const headers = await player('Ада');
     const seed = puzzleSeed(puzzleDay(new Date()));
     const { moves } = playPuzzle(seed, 5);
+    await app.inject({ method: 'POST', url: '/api/puzzle/start', headers });
     const sent = await app.inject({
       method: 'POST',
       url: '/api/puzzle',

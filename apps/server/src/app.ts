@@ -1449,9 +1449,14 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
 
   /*
    * Ежедневный пазл: доска дня одна на всех, двадцать пять ходов, попытка
-   * одна. Дверей две — посмотреть и сыграть, — и обе возвращают пазл
-   * целиком: показывать его кусками значило бы собирать состояние из двух
-   * ответов, которые разъедутся ровно в тот миг, когда попытка засчитается.
+   * одна. Дверей три — посмотреть, взять попытку и доиграть, — и все
+   * возвращают пазл целиком: показывать его кусками значило бы собирать
+   * состояние из разных ответов, которые разъедутся ровно в тот миг, когда
+   * попытка засчитается.
+   *
+   * Попытка тратится на второй двери, в начале. Так строго нарочно: иначе
+   * неудачный расклад бросают и начинают заново, и «одна попытка в день»
+   * означает «сколько угодно попыток, одна присылка».
    *
    * Сид сюда не присылают и отсюда не принимают на веру: доска считается из
    * даты (см. `puzzleSeed` ядра) обеими сторонами порознь.
@@ -1479,13 +1484,18 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       store.puzzleRank(userId, day),
       store.marksOf(userId),
     ]);
-    if (played === null || rank === null) return view;
+    if (played === null) return view;
+    // Взятая, но не доигранная попытка — это тоже состояние, и прибор о нём
+    // говорит: места у неё нет, а начать заново уже нельзя.
+    if (!played.done || rank === null) {
+      return { ...view, played: { score: 0, rank: null, done: false } };
+    }
     const mark = marks.find((id) => id !== null) ?? null;
     const art = isOwnMark(mark) ? artField(await store.artOf(userId)) : {};
     const name = entries.find((entry) => entry.rank === rank)?.name ?? '';
     return {
       ...view,
-      played: { score: played.score, rank },
+      played: { score: played.score, rank, done: true },
       me: { rank, name, score: played.score, mark, ...art },
     };
   };
@@ -1503,12 +1513,30 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
 
   /**
-   * Попытка вызова дня. Сервер переигрывает ходы ядром на **своей** доске
-   * дня: присланному счёту тут веры не больше, чем присланному сиду.
+   * Взять сегодняшнюю попытку. С этого мига она потрачена — доиграна она
+   * или брошена, второй сегодня не будет.
    *
-   * Вторая попытка за тот же день не принимается — в этом вся ставка. Отказ
-   * при этом честный: прибор говорит «сегодня уже сыграно», а не делает вид,
-   * что записал.
+   * Дверь отдельная, потому что тратится попытка **до** игры: прибор
+   * открывает доску дня только после того, как сервер её записал. Нет
+   * связи — нет и вызова дня: играть «в зачёт» вслепую, не зная, засчитают
+   * ли, хуже, чем не играть вовсе.
+   */
+  app.post('/api/puzzle/start', async (request, reply) => {
+    const user = await requireUser(request);
+    const day = puzzleDay(new Date());
+    if (!(await store.puzzleStart(user.sub, day))) {
+      return reply.code(409).send({ error: 'played' });
+    }
+    return puzzleView(user.sub, day);
+  });
+
+  /**
+   * Доиграть взятую попытку. Сервер переигрывает ходы ядром на **своей**
+   * доске дня: присланному счёту тут веры не больше, чем присланному сиду.
+   *
+   * Попытка должна быть взята — иначе засчитывать нечего: прибор открывает
+   * доску дня только после записи, и заход, пришедший без неё, сыгран не на
+   * той доске или не тем, кто его прислал.
    */
   app.post('/api/puzzle', async (request, reply) => {
     const user = await requireUser(request);
@@ -1516,14 +1544,14 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
 
     const day = puzzleDay(new Date());
-    if ((await store.puzzleOf(user.sub, day)) !== null) {
-      return reply.code(409).send({ error: 'played' });
-    }
+    const taken = await store.puzzleOf(user.sub, day);
+    if (taken === null) return reply.code(409).send({ error: 'not-started' });
+    if (taken.done) return reply.code(409).send({ error: 'played' });
 
     const replay = replayPuzzle(puzzleSeed(day), parsed.data.moves);
     if (typeof replay === 'string') return reply.code(400).send({ error: replay });
 
-    const saved = await store.puzzleSave(
+    const saved = await store.puzzleFinish(
       user.sub,
       day,
       replay.score,
