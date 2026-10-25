@@ -2166,6 +2166,12 @@ function openMenu(): void {
 
 function closeMenu(): void {
   menuEl.hidden = true;
+  // Под панелью всё это время лежал лист — его подпись и возвращаем: партии
+  // под листом нет, и «наблюдение идёт» соврало бы. Палитру держит разметка.
+  if (drawing) {
+    sayPaper();
+    return;
+  }
   if (!session.over) setStat(session.started ? 'Наблюдение идёт' : 'Готов к наблюдению', session.started ? 'live' : '');
 }
 
@@ -2207,8 +2213,7 @@ function startDrawing(): void {
   // многоточием, и подсказка кончалась на полуслове. Если под листом лежит
   // образец, называем его: кольца на стекле сами по себе не говорят, что
   // это за зверь.
-  const under = sampleAt(sampleIndex);
-  setStat(under === null ? 'Цепочка, потом цвет' : `Образец · ${under.name}`);
+  sayPaper();
   updatePaperHud();
   updateKeys();
 }
@@ -2532,6 +2537,16 @@ async function stampPass(): Promise<void> {
 function showPalette(on: boolean): void {
   paletteEl.hidden = !on;
   for (const part of miniPartEls) part.hidden = on;
+}
+
+/**
+ * Что говорит прибор, пока открыт лист. Если под ним лежит образец —
+ * называем его: кольца на стекле сами по себе не говорят, что это за зверь.
+ * Коротко нарочно: в углу окуляра длинная строка обрезается многоточием.
+ */
+function sayPaper(): void {
+  const under = sampleAt(sampleIndex);
+  setStat(under === null ? 'Цепочка, потом цвет' : `Образец · ${under.name}`);
 }
 
 /**
