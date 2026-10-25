@@ -1012,6 +1012,14 @@ async function finishPuzzle(score: number): Promise<void> {
   }
 }
 
+/**
+ * Чтение дня, начатое последним. Его ждёт заставка включения: прибор
+ * считается подключённым, когда сервер не просто ответил, а сказал про
+ * сегодняшнюю доску, — иначе панель под снятой заставкой первым делом
+ * говорит «не сыгран» и тут же себя поправляет.
+ */
+let puzzleRead: Promise<void> = Promise.resolve();
+
 /** Спрашивает сервер о сегодняшнем пазле: доска, своя попытка, таблица. */
 async function refreshPuzzle(): Promise<void> {
   // Строки панели перерисовываем в любом случае: рекорд свободной доски
@@ -2762,7 +2770,7 @@ function applyKind(): void {
   // Пазл спрашивает у сервера своё состояние: сыграна ли сегодняшняя
   // попытка и на сколько. Без этого строка меню врала бы до первого захода
   // в таблицу.
-  if (deviceKind === 'puzzle') void refreshPuzzle();
+  if (deviceKind === 'puzzle') puzzleRead = refreshPuzzle();
   el<HTMLSpanElement>('duel-when').textContent = KIND_DUEL_TIME[gameKind()];
   el<HTMLElement>('duel-kind-note').textContent =
     `${KIND_NAME[gameKind()]} · ${KIND_DUEL_TIME[gameKind()]}`;
@@ -3322,18 +3330,25 @@ if (startParam() === 'puzzle' && deviceKind !== 'puzzle') {
   setMode('puzzle');
 }
 
-const invited = invitedRoom();
-if (invited !== null) {
-  // Показ и панель подождут: человека позвали в матч, он идёт в матч.
-  seenTutorial();
-  inviteNote = 'Подключаюсь к другу…';
-  void startDuel(invited);
-} else if (firstVisit()) {
-  // Первый запуск встречает показом, а не пустой панелью: правила проще
-  // увидеть, чем прочитать. Дальше обучение живёт пунктом меню.
-  startTutorial();
-} else {
-  openMenu();
+/**
+ * Первое, что видит игрок, когда заставка снята. Раньше это стояло прямо
+ * в заводе прибора, но показ нельзя начинать за закрытой заставкой: первые
+ * его секунды игрок увидел бы только по звуку.
+ */
+function enter(): void {
+  const invited = invitedRoom();
+  if (invited !== null) {
+    // Показ и панель подождут: человека позвали в матч, он идёт в матч.
+    seenTutorial();
+    inviteNote = 'Подключаюсь к другу…';
+    void startDuel(invited);
+  } else if (firstVisit()) {
+    // Первый запуск встречает показом, а не пустой панелью: правила проще
+    // увидеть, чем прочитать. Дальше обучение живёт пунктом меню.
+    startTutorial();
+  } else {
+    openMenu();
+  }
 }
 el<HTMLSpanElement>('brand').innerHTML = brandLockup(88);
 el<HTMLSpanElement>('menu-brand').innerHTML = brandLockup(96);
@@ -3359,17 +3374,72 @@ whenBanned(showBan);
 // серверу, что игрок здесь.
 if (apiAvailable) watchInvites();
 
-// Имя бота говорит кабинету, что привязка Telegram вообще возможна.
-if (apiAvailable) {
-  void getConfig()
-    .then((config) => {
+// ---------- Включение ----------
+
+/*
+ * Прибор подключается к серверу, и заставка стоит ровно столько, сколько
+ * это длится. Спящий сервер просыпается до минуты, и платит за это первый
+ * запрос — тот самый, которым прибор здоровается. Без заставки эта минута
+ * проходила на готовом с виду приборе: таблица дня пуста, жетонов ноль,
+ * вызов «не сыгран» — и всё это потом молча менялось на правду.
+ *
+ * Учётной записи при включении не заводим. Гостя прибор заводит с именем,
+ * а имя спрашивает окном — показывать его поверх заставки значило бы
+ * начинать знакомство с допроса. Поэтому будим сервер дверью без входа:
+ * той же, что называет имя бота кабинету.
+ */
+const bootEl = el<HTMLDivElement>('boot');
+const bootSubEl = el<HTMLSpanElement>('boot-sub');
+/** Сколько заставка держится, даже когда сервер ответил сразу. */
+const BOOT_MIN_MS = 420;
+/** Когда пора сказать, что пробуждение затянулось. */
+const BOOT_SLOW_MS = 6000;
+
+function wait(ms: number): Promise<void> {
+  return new Promise((done) => {
+    setTimeout(done, ms);
+  });
+}
+
+/** Снимает заставку и отдаёт прибор игроку. */
+function lift(): void {
+  bootEl.classList.add('gone');
+  // Убираем совсем, когда дотает: прозрачная заставка — всё ещё заставка,
+  // а под ней водят пальцем по доске.
+  setTimeout(() => {
+    bootEl.hidden = true;
+  }, 400);
+  enter();
+}
+
+async function connect(): Promise<void> {
+  const started = performance.now();
+  if (apiAvailable) {
+    const slow = setTimeout(() => {
+      bootSubEl.textContent = 'Аппарат спал — первое включение дольше';
+    }, BOOT_SLOW_MS);
+    try {
+      const [config] = await Promise.all([getConfig(), puzzleRead]);
+      // Имя бота говорит кабинету, что привязка Telegram вообще возможна.
       miniAppLink = config.miniApp;
       cabinet.setMiniApp(config.miniApp);
-    })
-    .catch(() => {
-      // Бот не настроен — привязку Telegram кабинет просто не покажет.
-    });
+    } catch {
+      // Сервер не ответил — это не повод не играть: доска, лист и показ
+      // живут на самом приборе. Говорим как есть и пускаем.
+      bootSubEl.textContent = 'Связи нет — прибор работает один';
+      await wait(1200);
+    } finally {
+      clearTimeout(slow);
+    }
+  }
+  // Мгновенный ответ тоже показываем: заставка, мелькнувшая на два кадра,
+  // читается как сбой, а не как включение.
+  const left = BOOT_MIN_MS - (performance.now() - started);
+  if (left > 0) await wait(left);
+  lift();
 }
+
+void connect();
 
 // Уход со страницы во время матча — техническое поражение, а не зависший матч.
 addEventListener('beforeunload', () => {
