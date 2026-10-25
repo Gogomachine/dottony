@@ -801,11 +801,38 @@ function startFreeBoard(): void {
   closeWindows();
   menuEl.hidden = true;
   setMode('puzzle');
-  setStat('Свободно · попыток сколько угодно');
+  // Есть что побить — говорим что: свободной доске счёт некуда ставить,
+  // кроме как против себя вчерашнего.
+  const best = freeBest();
+  setStat(best > 0 ? `Свободно · рекорд ${groupDigits(best)}` : 'Свободно · попыток сколько угодно');
 }
 
 /** Ключ недоигранной попытки: день и ходы, сделанные до перезагрузки. */
 const PUZZLE_RUN_KEY = 'doton.puzzle.run';
+
+/**
+ * Личный рекорд свободной доски.
+ *
+ * Живёт на самом приборе, а не на сервере, и это не экономия: свободная
+ * доска никуда не идёт, её счёт никто не пересчитывает, и ставить
+ * непроверенное число в общую память значило бы врать тем, кто в неё
+ * смотрит. Рекорд тут — спор с собой вчерашним, и честнее держать его
+ * там же, где лист: на самом приборе.
+ */
+const FREE_BEST_KEY = 'doton.free.best';
+
+function freeBest(): number {
+  const saved = Number(readStore(FREE_BEST_KEY) ?? 0);
+  return Number.isFinite(saved) && saved > 0 ? Math.floor(saved) : 0;
+}
+
+/** Записывает рекорд, если он побит; возвращает прежний — его называют в итоге. */
+function keepFreeBest(score: number): { best: number; beaten: boolean; was: number } {
+  const was = freeBest();
+  if (score <= was) return { best: was, beaten: false, was };
+  writeStore(FREE_BEST_KEY, String(score));
+  return { best: score, beaten: true, was };
+}
 
 /**
  * Начать вызов дня.
@@ -917,7 +944,13 @@ async function finishPuzzle(score: number): Promise<void> {
   puzzleRun = null;
   if (run === null) {
     showResult('Доска разобрана', score);
-    resultSubEl.textContent = 'Свободно · попыток сколько угодно';
+    const own = keepFreeBest(score);
+    resultSubEl.textContent = own.beaten
+      ? own.was > 0
+        ? `Личный рекорд · было ${groupDigits(own.was)}`
+        : 'Личный рекорд · первый'
+      : `Свободно · рекорд ${groupDigits(own.best)}`;
+    updateMenuPuzzle();
     return;
   }
 
@@ -977,6 +1010,9 @@ async function finishPuzzle(score: number): Promise<void> {
 
 /** Спрашивает сервер о сегодняшнем пазле: доска, своя попытка, таблица. */
 async function refreshPuzzle(): Promise<void> {
+  // Строки панели перерисовываем в любом случае: рекорд свободной доски
+  // лежит на самом приборе и связи не требует.
+  updateMenuPuzzle();
   if (!apiAvailable) return;
   try {
     puzzleToday = await getPuzzle();
@@ -989,6 +1025,11 @@ async function refreshPuzzle(): Promise<void> {
 
 /** Строки пазла в панели режима: сыграно ли сегодня и на сколько. */
 function updateMenuPuzzle(): void {
+  // Свободная доска показывает свой рекорд там же, где вызов дня — счёт:
+  // в правом поле строки. Нет рекорда — стоит, сколько даётся ходов.
+  const best = freeBest();
+  el<HTMLElement>('menu-free-state').textContent =
+    best > 0 ? `рекорд ${groupDigits(best)}` : `${PUZZLE_MOVES} ходов`;
   const played = puzzleToday?.played ?? null;
   const state = el<HTMLElement>('menu-daily-state');
   const note = el<HTMLElement>('menu-daily-note');
