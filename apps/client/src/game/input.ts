@@ -29,6 +29,16 @@ export class ChainInput {
   private on = true;
   private dragging = false;
   private touch = false;
+  /**
+   * Палец, который ведёт цепочку сейчас; null — поле свободно.
+   *
+   * Ведёт ровно один. На телефоне к стеклу прикладывают и ребро ладони, и
+   * второй палец — и без этого номера любое такое касание начинало цепочку
+   * заново с чужого места, а поднятая ладонь отправляла ход вместо
+   * игрока. Остальные пальцы поле просто не замечает: возить тут нечего,
+   * масштаб у окуляра один.
+   */
+  private lead: number | null = null;
 
   /** Поле принимает касания. Выключено в реплее и в стоп-кадре. */
   get enabled(): boolean {
@@ -78,13 +88,24 @@ export class ChainInput {
 
   private readonly onDown = (e: PointerEvent): void => {
     if (!this.on) return;
+    const touch = e.pointerType !== 'mouse';
+    const point = this.toLocal(e);
+    const cell = this.renderer.hitTest(point.x, point.y, touch);
+    /*
+     * Ведёт ровно один палец, и начатую цепочку второй не трогает.
+     *
+     * Исключение одно: ведущий ещё ничего не взял — лёг мимо точек, ребром
+     * ладони или краем стекла, — а этот лёг прямо на точку. Тогда ведёт он:
+     * иначе случайное касание запирало бы поле до тех пор, пока его не
+     * уберут, а убирают его обычно не глядя.
+     */
+    if (this.lead !== null && (this.chain.length > 0 || !cell)) return;
+    this.lead = e.pointerId;
     this.canvas.setPointerCapture(e.pointerId);
     this.dragging = true;
-    this.touch = e.pointerType !== 'mouse';
+    this.touch = touch;
     this.chain = [];
-    const point = this.toLocal(e);
     this.pointer = point;
-    const cell = this.renderer.hitTest(point.x, point.y, this.touch);
     if (!cell) return;
     if (this.tapping) {
       this.aim(cell);
@@ -96,7 +117,7 @@ export class ChainInput {
   };
 
   private readonly onMove = (e: PointerEvent): void => {
-    if (!this.dragging) return;
+    if (!this.dragging || e.pointerId !== this.lead) return;
     const from = this.pointer;
     const to = this.toLocal(e);
     this.pointer = to;
@@ -155,8 +176,14 @@ export class ChainInput {
     this.onExtend(this.chain.length);
   }
 
-  private readonly onUp = (): void => {
-    if (!this.dragging) return;
+  private readonly onUp = (e: PointerEvent): void => {
+    // Подняли не тот палец — цепочка ведётся дальше: ход отправляет тот,
+    // кто его вёл.
+    if (e.pointerId !== this.lead) return;
+    if (!this.dragging) {
+      this.lead = null;
+      return;
+    }
     if (this.chain.length >= this.cfg.minChain) {
       this.commit(this.chain);
     } else {
@@ -173,6 +200,7 @@ export class ChainInput {
 
   private clear(): void {
     this.dragging = false;
+    this.lead = null;
     this.chain = [];
     this.pointer = null;
   }
