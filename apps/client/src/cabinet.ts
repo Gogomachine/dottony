@@ -758,6 +758,11 @@ export class Cabinet {
       // ещё можно купить, а не только то, что уже куплено.
       pick.classList.toggle('locked', !markAllowed(pick.dataset.mark ?? '', this.earned));
     }
+    // Счётчик на закладке считает то же, что и каталог, — и считает его здесь,
+    // а не при чтении корпуса: покупка меняет каталог, не перечитывая его, и
+    // закладка иначе показывала бы «0 из 49» с только что купленным в ячейке.
+    const mine = MARKS.filter((mark) => markAllowed(mark.id, this.earned)).length;
+    this.setNote('marks', `${mine} из ${MARKS.length}`);
   }
 
   private async loadFriends(): Promise<void> {
@@ -1020,10 +1025,6 @@ export class Cabinet {
     // Подписи разделов: в столбике должно быть видно, что за строкой.
     this.setNote('rating', me.placement ? 'калибровка' : me.league);
     this.setNote('history', me.duels.played === 0 ? '—' : String(me.duels.played));
-    // Считаем не выданное, а носимое: кличка есть у всех даром, и «0 из 64»
-    // на полном каталоге кличек читалось бы как поломка.
-    const mine = MARKS.filter((mark) => markAllowed(mark.id, me.earned)).length;
-    this.setNote('marks', `${mine} из ${MARKS.length}`);
 
     this.leagueEl.innerHTML =
       '<span class="league-name"></span>' +

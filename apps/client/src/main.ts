@@ -1158,6 +1158,14 @@ function renderPuzzleBoard(view: PuzzleView): void {
   boardCache = signature;
   overNoteEl.hidden = false;
   shareBtn.hidden = !view.played?.done;
+  // За что играют и что принёс вчерашний день — строкой под таблицей: приз
+  // приходит ночью, и сказать о нём больше негде. Ставим до пустой таблицы:
+  // там, где играть ещё некому, эта строка нужнее всего.
+  boardPrizeEl.hidden = false;
+  boardPrizeEl.textContent =
+    view.won !== undefined
+      ? `Вчера первое место · +${view.won} ж`
+      : `Первому к полуночи — ${PUZZLE_WIN} ж, за сыгранный заход — ${PUZZLE_PLAY} ж`;
   if (view.entries.length === 0) {
     overNoteEl.textContent = 'Сегодня доску ещё никто не разбирал. Двадцать пять ходов — и ты первый.';
     boardListEl.hidden = true;
@@ -1168,13 +1176,6 @@ function renderPuzzleBoard(view: PuzzleView): void {
     : view.played
       ? 'Сегодняшняя попытка начата и не доиграна — в таблицу она не идёт.'
       : 'Сыграй вызов дня, чтобы попасть в таблицу.';
-  // За что играют и что принёс вчерашний день — строкой под таблицей:
-  // приз приходит ночью, и сказать о нём больше негде.
-  boardPrizeEl.hidden = false;
-  boardPrizeEl.textContent =
-    view.won !== undefined
-      ? `Вчера первое место · +${view.won} ж`
-      : `Первому к полуночи — ${PUZZLE_WIN} ж, за сыгранный заход — ${PUZZLE_PLAY} ж`;
   renderSprintBoard({ entries: view.entries, me: view.me });
 }
 
