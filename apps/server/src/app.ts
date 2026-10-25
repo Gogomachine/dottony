@@ -68,7 +68,10 @@ import {
   SHIFT_BONUS,
   SPRINT_SECONDS,
   PUZZLE_MOVES,
+  PUZZLE_PLAY,
+  PUZZLE_WIN,
   puzzleDay,
+  puzzleDayShift,
   puzzleSeed,
   tourneyDay,
   tourneyEntryDay,
@@ -1020,14 +1023,30 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   }
 
   /**
+   * Считает прошедшие дни вызова: пять сотен тому, кто остался первым.
+   *
+   * Сегодняшний день не трогаем — он живой до полуночи. Запускается так же,
+   * как раздача котла: по часам и при каждом взгляде на вызов дня. Платит
+   * не этот код, а запись приза в строке дня (см. `puzzleSettle`): два
+   * одновременных подсчёта иначе заплатили бы дважды.
+   */
+  async function settlePuzzles(): Promise<void> {
+    const days = await store.puzzleDaysToSettle(puzzleDay(new Date()));
+    for (const day of days) {
+      const paid = await store.puzzleSettle(day, PUZZLE_WIN);
+      if (paid) app.log.info({ day, ...paid }, 'puzzle day settled');
+    }
+  }
+
+  /**
    * Часы турнира. Раздача по времени — вежливость, а не гарантия: на спящем
    * хостинге таймер не тикает, поэтому итоги всё равно наступают при первом
    * взгляде на турнир. Здесь мы лишь стараемся, чтобы взгляд не понадобился.
    */
-  const tourneyClock = setInterval(
-    () => void settleTourneys().catch((error: unknown) => app.log.error(error, 'tourney settle failed')),
-    5 * 60_000,
-  );
+  const tourneyClock = setInterval(() => {
+    void settleTourneys().catch((error: unknown) => app.log.error(error, 'tourney settle failed'));
+    void settlePuzzles().catch((error: unknown) => app.log.error(error, 'puzzle settle failed'));
+  }, 5 * 60_000);
   tourneyClock.unref?.();
   app.addHook('onClose', () => clearInterval(tourneyClock));
 
@@ -1479,22 +1498,27 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       me: null,
     };
     if (userId === null) return view;
-    const [played, rank, marks] = await Promise.all([
+    const [played, rank, marks, won] = await Promise.all([
       store.puzzleOf(userId, day),
       store.puzzleRank(userId, day),
       store.marksOf(userId),
+      // Приз вчерашнего дня показываем ровно сутки: жетоны пришли ночью, и
+      // без этой строки они выросли бы молча, без всякой причины.
+      store.puzzlePrizeOf(userId, puzzleDayShift(day, -1)),
     ]);
-    if (played === null) return view;
+    const prize = won === null ? {} : { won };
+    if (played === null) return { ...view, ...prize };
     // Взятая, но не доигранная попытка — это тоже состояние, и прибор о нём
     // говорит: места у неё нет, а начать заново уже нельзя.
     if (!played.done || rank === null) {
-      return { ...view, played: { score: 0, rank: null, done: false } };
+      return { ...view, ...prize, played: { score: 0, rank: null, done: false } };
     }
     const mark = marks.find((id) => id !== null) ?? null;
     const art = isOwnMark(mark) ? artField(await store.artOf(userId)) : {};
     const name = entries.find((entry) => entry.rank === rank)?.name ?? '';
     return {
       ...view,
+      ...prize,
       played: { score: played.score, rank, done: true },
       me: { rank, name, score: played.score, mark, ...art },
     };
@@ -1503,6 +1527,9 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   /** Доска дня и таблица. Без токена — просто таблица, без строки «я». */
   app.get('/api/puzzle', async (request): Promise<PuzzleView> => {
     const day = puzzleDay(new Date());
+    // Вчерашний день считается при первом же взгляде: на спящем хостинге
+    // часы не тикают, а заглядывают сюда каждое утро.
+    await settlePuzzles();
     try {
       const user = await requireUser(request);
       return await puzzleView(user.sub, day);
@@ -1563,6 +1590,11 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       JSON.stringify(parsed.data.moves),
     );
     if (!saved) return reply.code(409).send({ error: 'played' });
+
+    // Сотня за участие — всем, кто довёл попытку до конца. Платим здесь, а
+    // не в раздаче дня: запись доигранности проходит ровно один раз, и
+    // второй платёж за тот же день этой дверью не пройдёт.
+    await store.addTokens(user.sub, PUZZLE_PLAY);
 
     // Попытка одна на день, и в таблицу идёт она же: смотреть есть смысл
     // на каждую, а не только на рекордную.

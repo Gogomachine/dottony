@@ -251,6 +251,13 @@ export class Store {
             * всяких последствий.
             */
            done INTEGER NOT NULL DEFAULT 0,
+           /*
+            * Сколько день принёс сверх сотни за участие: приз первого
+            * места. NULL — день ещё не посчитан; ноль — посчитан, и игрок
+            * в нём не первый. По этой же колонке приз и не платится
+            * дважды: право заплатить даёт её заполнение.
+            */
+           prize INTEGER,
            created_at TEXT NOT NULL DEFAULT (datetime('now')),
            PRIMARY KEY (user_id, day)
          )`,
@@ -512,6 +519,10 @@ export class Store {
     // что легли до этого правила, все доигранные — иначе их бы в таблице не
     // было вовсе.
     await this.addColumnIfMissing('puzzle_days', 'done', 'INTEGER NOT NULL DEFAULT 1');
+    // Вызов дня стал платить: сотня за сыгранный заход и пять сотен первому.
+    // У дней, сыгранных до этого правила, приза нет и не будет — считать их
+    // задним числом значило бы заплатить за дни, в которые не обещали.
+    await this.addColumnIfMissing('puzzle_days', 'prize', 'INTEGER');
     /*
      * Лаборатории PETRIDOT больше нет, и всё выращенное уходит вместе с ней.
      *
@@ -1425,6 +1436,84 @@ export class Store {
         mark,
         ...this.ownArt(mark, row.art),
       };
+    });
+  }
+
+  /**
+   * Дни вызова, за которые ещё не платили: все прошедшие, где есть хоть
+   * одна доигранная попытка без записанного приза.
+   *
+   * Сегодняшний день не берём никогда: таблица дня живая до самой
+   * полуночи, и первое место в ней меняется до последнего захода.
+   */
+  async puzzleDaysToSettle(today: string): Promise<string[]> {
+    const rows = await this.client.execute({
+      sql: `SELECT DISTINCT day FROM puzzle_days
+             WHERE done = 1 AND prize IS NULL AND day < ?
+             ORDER BY day ASC`,
+      args: [today],
+    });
+    return rows.rows.map((row) => String(row.day));
+  }
+
+  /**
+   * Считает день: приз первому, нули остальным.
+   *
+   * Право заплатить даёт заполнение приза, а не пометка дня — тем же
+   * правилом, что и котёл турнира (см. `tourneySettle`): счёт идут
+   * смотреть разом, и два одновременных подсчёта иначе заплатили бы
+   * дважды. Нули проставляются после: если оборвётся посередине,
+   * следующий запуск доведёт день до конца, а призёр уже с деньгами.
+   *
+   * Возвращает, кому и сколько досталось; null — платить было некому.
+   */
+  async puzzleSettle(day: string, prize: number): Promise<{ userId: string; prize: number } | null> {
+    const top = await this.client.execute({
+      // Порядок тот же, что у таблицы дня: счёт, а при равном счёте время.
+      sql: `SELECT user_id FROM puzzle_days
+             WHERE day = ? AND done = 1
+             ORDER BY score DESC, created_at ASC, rowid ASC
+             LIMIT 1`,
+      args: [day],
+    });
+    const winner = top.rows[0]?.user_id;
+    if (typeof winner !== 'string') return null;
+
+    const claimed = await this.client.execute({
+      sql: `UPDATE puzzle_days SET prize = ?
+             WHERE day = ? AND user_id = ? AND prize IS NULL`,
+      args: [prize, day, winner],
+    });
+    if (claimed.rowsAffected > 0 && prize > 0) {
+      await this.client.execute({
+        sql: 'UPDATE users SET tokens = tokens + ? WHERE id = ?',
+        args: [prize, winner],
+      });
+    }
+    // Остальным день тоже посчитан — просто без приза.
+    await this.client.execute({
+      sql: 'UPDATE puzzle_days SET prize = 0 WHERE day = ? AND prize IS NULL',
+      args: [day],
+    });
+    return claimed.rowsAffected > 0 ? { userId: winner, prize } : null;
+  }
+
+  /** Чем кончился для игрока день вызова: null — приза не было. */
+  async puzzlePrizeOf(userId: string, day: string): Promise<number | null> {
+    const rows = await this.client.execute({
+      sql: 'SELECT prize FROM puzzle_days WHERE user_id = ? AND day = ?',
+      args: [userId, day],
+    });
+    const prize = rows.rows[0]?.prize;
+    return typeof prize === 'number' && prize > 0 ? prize : null;
+  }
+
+  /** Кладёт жетоны на счёт — без условий и порогов: платит сам прибор. */
+  async addTokens(userId: string, amount: number): Promise<void> {
+    if (amount <= 0) return;
+    await this.client.execute({
+      sql: 'UPDATE users SET tokens = tokens + ? WHERE id = ?',
+      args: [amount, userId],
     });
   }
 

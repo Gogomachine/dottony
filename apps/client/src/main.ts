@@ -3,6 +3,8 @@ import {
   markById,
   DEFAULT_CONFIG,
   PUZZLE_MOVES,
+  PUZZLE_PLAY,
+  PUZZLE_WIN,
   puzzleDay,
   puzzleSeed,
   nextSample,
@@ -141,6 +143,7 @@ const brandEl = el<HTMLElement>('brand-line');
 const overlay = el<HTMLDivElement>('game-over');
 const overTitleEl = el<HTMLHeadingElement>('over-title');
 const overNoteEl = el<HTMLParagraphElement>('over-note');
+const boardPrizeEl = el<HTMLParagraphElement>('board-prize');
 const finalScoreEl = el<HTMLSpanElement>('final-score');
 const boardListEl = el<HTMLOListElement>('board-list');
 const boardTabsEl = el<HTMLDivElement>('board-tabs');
@@ -943,7 +946,9 @@ async function finishPuzzle(score: number): Promise<void> {
     puzzleToday = view;
     const place = view.played ? `${view.played.rank}-е место` : 'вне таблицы';
     const shift = view.shift ? ` · смена +${view.shift}` : '';
-    resultSubEl.textContent = `${place} из ${view.entries.length}${shift}`;
+    // Сотня за участие приходит сразу и называется сразу: игрок должен
+    // видеть, за что ему заплатили, а не находить это в счётчике жетонов.
+    resultSubEl.textContent = `${place} из ${view.entries.length} · +${PUZZLE_PLAY} ж${shift}`;
     // Доска дня у всех одна — это единственный итог прибора, который есть
     // с чем сравнить, и единственный, о котором есть что сказать в чате.
     resultShareEl.hidden = dailyLine(view) === null;
@@ -1118,6 +1123,13 @@ function renderPuzzleBoard(view: PuzzleView): void {
     : view.played
       ? 'Сегодняшняя попытка начата и не доиграна — в таблицу она не идёт.'
       : 'Сыграй вызов дня, чтобы попасть в таблицу.';
+  // За что играют и что принёс вчерашний день — строкой под таблицей:
+  // приз приходит ночью, и сказать о нём больше негде.
+  boardPrizeEl.hidden = false;
+  boardPrizeEl.textContent =
+    view.won !== undefined
+      ? `Вчера первое место · +${view.won} ж`
+      : `Первому к полуночи — ${PUZZLE_WIN} ж, за сыгранный заход — ${PUZZLE_PLAY} ж`;
   renderSprintBoard({ entries: view.entries, me: view.me });
 }
 
@@ -1280,6 +1292,8 @@ function showOverModal(options: {
   boardListEl.hidden = true;
   // Переключатель периода принадлежит таблице: её показ его и поднимет.
   boardTabsEl.hidden = true;
+  // Строка о жетонах — тоже: она есть только у вызова дня.
+  boardPrizeEl.hidden = true;
   openBoard = null;
   ratingLineEl.hidden = true;
   if (options.rating) showRatingChange(options.rating);

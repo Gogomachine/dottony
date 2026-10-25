@@ -53,7 +53,7 @@ export {
 } from './art.js';
 export type { ArtCell } from './art.js';
 export { SAMPLES, nextSample, sampleAt, samplesValid } from './samples.js';
-export { SHIFT_BONUS } from './tokens.js';
+export { SHIFT_BONUS, PUZZLE_PLAY, PUZZLE_WIN } from './tokens.js';
 export { CHAIN_SEARCH_BUDGET, longestChain, paceSpread } from './judge.js';
 export {
   TOURNEY_ENTRY,

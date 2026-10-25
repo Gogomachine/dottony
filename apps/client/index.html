@@ -1068,6 +1068,15 @@
       color: var(--silk-2);
     }
     .board-list .pts { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+    .board-prize {
+      font-family: var(--mono);
+      font-size: 9.5px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--silk-2);
+      text-align: center;
+    }
+    .board-prize[hidden] { display: none; }
 
     /* ---------- Изъятый прибор ---------- */
 
@@ -2227,6 +2236,12 @@
             <button data-period="all">За всё время</button>
           </div>
           <ol id="board-list" class="board-list" hidden></ol>
+          <!--
+            Что день приносит жетонами: сотня за сыгранный заход и пять
+            сотен первому к полуночи. Приз платится ночью, когда таблица
+            закрылась, и сутки после этого строка говорит о нём.
+          -->
+          <p id="board-prize" class="board-prize" hidden></p>
           <!--
             Отдать результат в чат. Стоит в таблице дня, а не только в
             итоге: разобрал доску утром, позвал вечером — это один и тот же

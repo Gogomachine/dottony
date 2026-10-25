@@ -35,6 +35,8 @@ import {
   DEFAULT_CONFIG,
   PUZZLE_CONFIG,
   PUZZLE_MOVES,
+  PUZZLE_PLAY,
+  PUZZLE_WIN,
   puzzleDay,
   puzzleSeed,
   type Board,
@@ -4238,6 +4240,91 @@ describe('вызов дня', () => {
     const done = await app.inject({ method: 'POST', url: '/api/puzzle', headers, payload: { moves } });
     expect(done.statusCode).toBe(200);
     expect((done.json() as PuzzleView).played).toMatchObject({ score, rank: 1, done: true });
+  });
+
+  it('сотня за участие приходит каждому, кто доиграл попытку', async () => {
+    const day = puzzleDay(new Date());
+    const { moves, score } = playPuzzle(puzzleSeed(day));
+    const headers = await player('Ада');
+    const tokensOf = async (): Promise<number> => {
+      const me = await app.inject({ method: 'GET', url: '/api/me', headers });
+      return (me.json() as MeResponse).tokens;
+    };
+    const before = await tokensOf();
+
+    expect(
+      (await app.inject({ method: 'POST', url: '/api/puzzle/start', headers })).statusCode,
+    ).toBe(200);
+    // Взятая попытка сама по себе не платит: платят за сыгранное.
+    expect(await tokensOf()).toBe(before);
+
+    const sent = await app.inject({ method: 'POST', url: '/api/puzzle', headers, payload: { moves } });
+    expect(sent.statusCode).toBe(200);
+    expect((sent.json() as PuzzleView).played).toMatchObject({ score, done: true });
+    // Сотня за участие плюс обычная плата за доведённый заход и смена дня.
+    const after = await tokensOf();
+    expect(after - before).toBeGreaterThanOrEqual(PUZZLE_PLAY);
+    expect(after - before).toBeLessThanOrEqual(PUZZLE_PLAY + SHIFT_BONUS + 1);
+  });
+
+  it('пять сотен достаются первому, когда день закрылся, и только раз', async () => {
+    const prizeApp = await buildApp({ databaseUrl: ':memory:', jwtSecret: 'test-jwt' });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const guest = async (name: string): Promise<Record<string, string>> => {
+        const auth = await prizeApp.inject({ method: 'POST', url: '/api/auth/guest', payload: { name } });
+        return { authorization: `Bearer ${(auth.json() as { token: string }).token}` };
+      };
+      const tokensOf = async (headers: Record<string, string>): Promise<number> => {
+        const me = await prizeApp.inject({ method: 'GET', url: '/api/me', headers });
+        return (me.json() as MeResponse).tokens;
+      };
+
+      vi.setSystemTime(new Date(Date.UTC(2026, 4, 10, 12, 0, 0)));
+      const day = puzzleDay(new Date());
+      const full = playPuzzle(puzzleSeed(day));
+      const short = playPuzzle(puzzleSeed(day), 5);
+
+      const winner = await guest('Первая');
+      const other = await guest('Второй');
+      for (const [headers, run] of [
+        [winner, full],
+        [other, short],
+      ] as const) {
+        expect(
+          (await prizeApp.inject({ method: 'POST', url: '/api/puzzle/start', headers })).statusCode,
+        ).toBe(200);
+        expect(
+          (await prizeApp.inject({ method: 'POST', url: '/api/puzzle', headers, payload: { moves: run.moves } }))
+            .statusCode,
+        ).toBe(200);
+      }
+      const wonBefore = await tokensOf(winner);
+      const lostBefore = await tokensOf(other);
+
+      // День ещё идёт — приза нет ни у кого: таблица живая до полуночи.
+      await prizeApp.inject({ method: 'GET', url: '/api/puzzle', headers: winner });
+      expect(await tokensOf(winner)).toBe(wonBefore);
+
+      // Полночь прошла: первый взгляд на вызов дня и считает вчерашний день.
+      vi.setSystemTime(new Date(Date.UTC(2026, 4, 11, 0, 30, 0)));
+      const look = await prizeApp.inject({ method: 'GET', url: '/api/puzzle', headers: winner });
+      expect(await tokensOf(winner)).toBe(wonBefore + PUZZLE_WIN);
+      expect(await tokensOf(other)).toBe(lostBefore);
+      // И прибор говорит, откуда взялись жетоны, — ровно сутки.
+      expect((look.json() as PuzzleView).won).toBe(PUZZLE_WIN);
+      expect(
+        ((await prizeApp.inject({ method: 'GET', url: '/api/puzzle', headers: other })).json() as PuzzleView).won,
+      ).toBeUndefined();
+
+      // Второй взгляд ничего не добавляет: заплачено один раз.
+      await prizeApp.inject({ method: 'GET', url: '/api/puzzle', headers: winner });
+      await prizeApp.inject({ method: 'GET', url: '/api/puzzle', headers: other });
+      expect(await tokensOf(winner)).toBe(wonBefore + PUZZLE_WIN);
+    } finally {
+      vi.useRealTimers();
+      await prizeApp.close();
+    }
   });
 
   it('заход через полночь считается в тот день, в который взят', async () => {
