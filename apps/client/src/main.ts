@@ -912,8 +912,6 @@ function movesWord(left: number): string {
 async function finishPuzzle(score: number): Promise<void> {
   const run = puzzleRun;
   puzzleRun = null;
-  // Возвращаться больше не к чему: ходы кончились, и доска дня доиграна.
-  if (run !== null) writeStore(PUZZLE_RUN_KEY, '');
   if (run === null) {
     showResult('Доска разобрана', score);
     resultSubEl.textContent = 'Свободно · попыток сколько угодно';
@@ -937,6 +935,11 @@ async function finishPuzzle(score: number): Promise<void> {
 
   try {
     const view = await sendPuzzle(run.moves);
+    // Засчитано — вот теперь журнал и не нужен: возвращаться больше не к
+    // чему. Раньше он стирался до отправки, и оборванная связь уносила с
+    // собой весь заход: попытка потрачена, двадцать пять ходов сыграны, а
+    // послать их второй раз нечем.
+    writeStore(PUZZLE_RUN_KEY, '');
     puzzleToday = view;
     const place = view.played ? `${view.played.rank}-е место` : 'вне таблицы';
     const shift = view.shift ? ` · смена +${view.shift}` : '';
@@ -944,7 +947,11 @@ async function finishPuzzle(score: number): Promise<void> {
     // Доска дня у всех одна — это единственный итог прибора, который есть
     // с чем сравнить, и единственный, о котором есть что сказать в чате.
     resultShareEl.hidden = dailyLine(view) === null;
-    updateMenuPuzzle();
+    // Заход, начатый до полуночи, засчитан во вчерашний день — а прибор
+    // стоит уже в сегодняшнем: спрашиваем нынешнюю доску заново, иначе
+    // панель покажет вчерашнее «сыграно» над сегодняшней доской.
+    if (view.day !== puzzleDay(new Date())) void refreshPuzzle();
+    else updateMenuPuzzle();
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) resetAuth();
     const code = error instanceof ApiError ? error.code : '';
@@ -954,7 +961,12 @@ async function finishPuzzle(score: number): Promise<void> {
       'too-many': 'Ходов больше двадцати пяти — в зачёт не идёт',
       'bad-timing': 'Ходы пришли быстрее, чем их можно сделать',
     };
-    resultSubEl.textContent = rules[code] ?? 'Попытка не дошла до таблицы';
+    // Отказ по существу сервер повторит и завтра — журнал стираем. Не
+    // дошло по сети — держим: заход цел, и прибор доошлёт его, когда
+    // игрок откроет вызов дня снова.
+    if (rules[code] !== undefined) writeStore(PUZZLE_RUN_KEY, '');
+    resultSubEl.textContent =
+      rules[code] ?? 'Не дошло до таблицы — откройте вызов дня ещё раз';
   }
 }
 

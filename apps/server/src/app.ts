@@ -1543,7 +1543,12 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     const parsed = SubmitPuzzleRequestSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
 
-    const day = puzzleDay(new Date());
+    // День захода — тот, в который взята попытка, а не нынешний. Доска
+    // меняется в полночь по всемирному времени, и заход, начатый до неё и
+    // доигранный после, считался бы «не взятым»: попытка потрачена, ходы
+    // сделаны, а засчитать их некуда. Игрок играл вчерашнюю доску — в
+    // её день счёт и идёт.
+    const day = (await store.puzzleOpenDay(user.sub)) ?? puzzleDay(new Date());
     const taken = await store.puzzleOf(user.sub, day);
     if (taken === null) return reply.code(409).send({ error: 'not-started' });
     if (taken.done) return reply.code(409).send({ error: 'played' });

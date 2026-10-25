@@ -4240,6 +4240,46 @@ describe('вызов дня', () => {
     expect((done.json() as PuzzleView).played).toMatchObject({ score, rank: 1, done: true });
   });
 
+  it('заход через полночь считается в тот день, в который взят', async () => {
+    // Доска меняется в полночь по всемирному времени, а заход, начатый до
+    // неё, кончается уже после. Ходы сделаны на вчерашней доске, попытка
+    // потрачена вчера — и счёт идёт во вчерашнюю таблицу. Иначе прибор
+    // отвечал бы «попытка не взята» на доигранный заход.
+    const night = await buildApp({ databaseUrl: ':memory:', jwtSecret: 'test-jwt' });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const auth = await night.inject({
+        method: 'POST',
+        url: '/api/auth/guest',
+        payload: { name: 'Полуночник' },
+      });
+      const headers = { authorization: `Bearer ${(auth.json() as { token: string }).token}` };
+
+      vi.setSystemTime(new Date(Date.UTC(2026, 4, 10, 23, 58, 0)));
+      const day = puzzleDay(new Date());
+      expect(
+        (await night.inject({ method: 'POST', url: '/api/puzzle/start', headers })).statusCode,
+      ).toBe(200);
+      const { moves, score } = playPuzzle(puzzleSeed(day));
+
+      // Полночь прошла, доска сменилась — заход доигран на вчерашней.
+      vi.setSystemTime(new Date(Date.UTC(2026, 4, 11, 0, 3, 0)));
+      expect(puzzleDay(new Date())).not.toBe(day);
+      const sent = await night.inject({ method: 'POST', url: '/api/puzzle', headers, payload: { moves } });
+      expect(sent.statusCode).toBe(200);
+      const view = sent.json() as PuzzleView;
+      expect(view.day).toBe(day);
+      expect(view.played).toMatchObject({ score, rank: 1, done: true });
+
+      // А сегодняшняя доска при этом не сыграна: попытка была вчерашняя.
+      const today = await night.inject({ method: 'GET', url: '/api/puzzle', headers });
+      expect((today.json() as PuzzleView).played).toBeNull();
+    } finally {
+      vi.useRealTimers();
+      await night.close();
+    }
+  });
+
   it('на ничьей место называют то же, под которым игрок стоит в таблице', async () => {
     // Доска у всех одна, и одинаковый счёт на ней — дело обычное. Считать
     // место числом тех, кто строго выше, значило бы называть игроку номер,
