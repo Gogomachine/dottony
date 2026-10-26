@@ -362,7 +362,7 @@ function startGame(seed?: number): void {
   updateKeys();
 }
 
-/** Текущее увеличение: следующая вспышка умножит потенциал на столько. */
+/** Текущий множитель: следующая вспышка умножит потенциал на столько. */
 function updateStreak(streak: number): void {
   const active = streak > 0;
   gainEl.hidden = !active;

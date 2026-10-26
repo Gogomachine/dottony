@@ -913,6 +913,16 @@
       box-shadow: 0 1px 0 rgba(255, 255, 255, 0.55) inset, 0 2px 4px rgba(0, 0, 0, 0.1);
       /* Не меньше ряда клавиш, который она собой заменяет: корпус не дёргается. */
       min-height: 74px;
+      /*
+       * И не больше двух пятых прибора. Подпись росла по тексту, а место
+       * отдавал ей единственный, кто умеет ужиматься, — окуляр: на телефоне
+       * 360×640 от доски оставалась полоска, а на 320 она пропадала вовсе,
+       * и показ объяснял игру, которой не видно. Теперь уступает подпись:
+       * длинный текст прокручивается внутри неё.
+       */
+      display: flex;
+      flex-direction: column;
+      max-height: 30%;
     }
     .tut[hidden] { display: none; }
     .tut-head { display: flex; align-items: center; gap: 9px; }
@@ -954,7 +964,14 @@
       font-size: 12.5px;
       line-height: 1.45;
       color: var(--silk);
+      /* Прокручивается текст, а не вся подпись: номер шага, название и
+         клавиши листания должны стоять на месте. */
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
     }
+    .tut-head,
+    .tut-paging { flex: 0 0 auto; }
 
     /* Палец сценария: кольцо, которое ведёт цепочку вместо руки игрока. */
     .finger {
@@ -1768,6 +1785,12 @@
       .menu-list li.mode b { font-size: 15px; }
       .menu-list li.mode .hint { font-size: 11px; line-height: 1.25; }
       .menu-extra button { padding: 9px 10px; }
+      /* Подпись показа на низком экране отдаёт окуляру всё, что может
+         отдать, не теряя слов: поля, междустрочье и кегль. */
+      .tut { margin-top: 9px; padding: 9px 11px 11px; }
+      .tut-text { font-size: 12px; line-height: 1.38; margin-top: 6px; }
+      .tut-paging { margin-top: 8px; }
+      .tut-page { padding: 6px 10px; }
     }
 
     .history {
