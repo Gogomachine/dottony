@@ -45,6 +45,8 @@ import {
   getRatingBoard,
   getReplay,
   getPuzzle,
+  getFreeBoard,
+  sendFree,
   getSprintBoard,
   hasAuth,
   inviteFriend,
@@ -176,6 +178,7 @@ const tourneyBoardEl = el<HTMLOListElement>('tourney-board');
 const tourneyGoEl = el<HTMLButtonElement>('tourney-go');
 const shareBtn = el<HTMLButtonElement>('over-share');
 const resultShareEl = el<HTMLButtonElement>('result-share');
+const resultBoardEl = el<HTMLButtonElement>('result-board');
 const addOpponentBtn = el<HTMLButtonElement>('add-opponent');
 const reportBtn = el<HTMLButtonElement>('report-opponent');
 const inviteBarEl = el<HTMLDivElement>('invite-bar');
@@ -270,13 +273,33 @@ let sprintRun: { seed: number; moves: MoveLog[] } | null = null;
  * Журнал рейтинговой попытки пазла. Сида в нём нет нарочно: доска дня одна
  * на всех, и сервер считает её сам — присланному сиду там веры нет.
  *
- * `null` значит «идёт свободная доска»: её никуда не отправляют, и писать
- * нечего.
+ * `null` значит «идёт свободная доска»: её журнал ведётся рядом, своим, —
+ * у неё и сид свой, и таблица своя (см. `freeRun`).
  */
 let puzzleRun: { moves: PuzzleMove[] } | null = null;
 
+/**
+ * Журнал свободного захода. Сид тут есть — доска своя у каждого, и серверу
+ * восстановить её больше не из чего.
+ *
+ * На диск он, в отличие от попытки дня, не ложится: свободных заходов
+ * сколько угодно, и оборванный ничего не стоит — играют следующий.
+ */
+let freeRun: { seed: number; moves: PuzzleMove[] } | null = null;
+
 /** Идёт ли сейчас вызов дня, а не свободная доска. */
 let puzzleRated = false;
+
+/**
+ * Какую из двух таблиц пазла открывать клавишей «Результат».
+ *
+ * Прибор включается на свободной доске — но клавиша не должна с порога
+ * вести в её таблицу: главный режим здесь вызов дня, и вопрос «как там
+ * сегодня» — про него. Поэтому следим не за тем, что лежит на стекле, а
+ * за тем, что игрок последним выбрал сам: сыграл свободную — клавиша
+ * ведёт в свободную таблицу, и наоборот.
+ */
+let puzzleBoard: 'daily' | 'free' = 'daily';
 
 /** Что сервер рассказал про сегодняшний пазл: доска, попытка, таблица. */
 let puzzleToday: PuzzleView | null = null;
@@ -342,6 +365,12 @@ function startGame(seed?: number): void {
     session.mode === 'sprint' && !replay ? { seed: session.seed, moves: [] } : null;
   // Вызов дня — тоже: его счёт ставит сервер, переиграв присланные ходы.
   puzzleRun = session.mode === 'puzzle' && puzzleRated && !replay ? { moves: [] } : null;
+  // Свободный заход пишется так же: у него своя таблица, и счёт в неё
+  // ставит сервер, переиграв присланные ходы.
+  freeRun =
+    session.mode === 'puzzle' && !puzzleRated && !replay
+      ? { seed: session.seed, moves: [] }
+      : null;
   renderer.resetAnims();
   updateStreak(0);
   // Третье поле приборной строки занимают дуэль и заказы; заказы поднимут
@@ -800,6 +829,7 @@ async function finishTourneyRound(moves: MoveLog[], score: number): Promise<void
  */
 function startFreeBoard(): void {
   puzzleRated = false;
+  puzzleBoard = 'free';
   closeWindows();
   menuEl.hidden = true;
   setMode('puzzle');
@@ -813,13 +843,16 @@ function startFreeBoard(): void {
 const PUZZLE_RUN_KEY = 'doton.puzzle.run';
 
 /**
- * Личный рекорд свободной доски.
+ * Личный рекорд свободной доски — на самом приборе.
  *
- * Живёт на самом приборе, а не на сервере, и это не экономия: свободная
- * доска никуда не идёт, её счёт никто не пересчитывает, и ставить
- * непроверенное число в общую память значило бы врать тем, кто в неё
- * смотрит. Рекорд тут — спор с собой вчерашним, и честнее держать его
- * там же, где лист: на самом приборе.
+ * Своя строка в вечной таблице у него теперь тоже есть, и считает её
+ * сервер, переиграв ходы. Но копию рекорда прибор держит у себя, и это не
+ * дублирование: панель называет рекорд в строке режима, а связь бывает не
+ * всегда — и спорить с собой вчерашним можно и без неё.
+ *
+ * Серверный рекорд главнее: пришёл ответ с числом больше — записываем
+ * его. На другом телефоне играл тот же человек под тем же именем, и
+ * прибору незачем спорить с тем, что уже засчитано.
  */
 const FREE_BEST_KEY = 'doton.free.best';
 
@@ -877,6 +910,7 @@ async function startDaily(): Promise<void> {
 
   puzzleToday = taken;
   puzzleRated = true;
+  puzzleBoard = 'daily';
   closeWindows();
   menuEl.hidden = true;
   setMode('puzzle', taken.seed);
@@ -910,6 +944,7 @@ function resumeDaily(): boolean {
   if (kept.day !== puzzleToday.day) return false;
 
   puzzleRated = true;
+  puzzleBoard = 'daily';
   closeWindows();
   menuEl.hidden = true;
   setMode('puzzle', puzzleToday.seed);
@@ -938,21 +973,65 @@ function movesWord(left: number): string {
 }
 
 /**
- * Попытка кончилась. Свободная доска на этом и заканчивается — она никуда
- * не идёт; вызов дня уходит на сервер, и место в таблице называет он.
+ * Свободный заход кончился.
+ *
+ * Личный рекорд остаётся на самом приборе: он виден и без связи, и в
+ * панели стоит он же. Сверх него заход идёт в вечную таблицу — жетонов за
+ * неё не платят, и говорить об оплате нечего: вся награда тут — строка.
+ *
+ * Сервер молчит или прибор играет без него — заход всё равно засчитан
+ * себе: свободная доска не обязана никуда доезжать.
+ */
+async function finishFree(score: number, run: { seed: number; moves: PuzzleMove[] } | null): Promise<void> {
+  showResult('Доска разобрана', score);
+  const own = keepFreeBest(score);
+  const mine = own.beaten
+    ? own.was > 0
+      ? `Личный рекорд · было ${groupDigits(own.was)}`
+      : 'Личный рекорд · первый'
+    : `Свободно · рекорд ${groupDigits(own.best)}`;
+  resultSubEl.textContent = mine;
+  updateMenuPuzzle();
+
+  if (!apiAvailable || run === null || run.moves.length === 0) return;
+  // Заход идёт в общую таблицу — имя тут спросить уместно, как и у вызова
+  // дня: безымянной строки в таблице не бывает. Спросят один раз за всю
+  // жизнь прибора, дальше имя уже известно.
+  if (!hasAuth()) {
+    try {
+      await ensureAuth(guestName);
+    } catch {
+      return;
+    }
+  }
+  // Таблицу показываем сразу: заход в неё и уехал, и смотреть её идут
+  // отсюда. Без связи клавиши нет — открывать нечего.
+  resultBoardEl.hidden = false;
+  try {
+    const sent = await sendFree(run.seed, run.moves);
+    // Рекорд сервера главнее своего: на другом телефоне его ставили тем же
+    // именем, и прибор должен знать о нём, а не спорить.
+    if (sent.best > freeBest()) keepFreeBest(sent.best);
+    resultSubEl.textContent = sent.record
+      ? `Личный рекорд · ${sent.rank}-е место в таблице`
+      : `${mine} · в таблице ${sent.rank}-е место`;
+    updateMenuPuzzle();
+  } catch {
+    // Не дошло — и ладно: заход свободный, таблица подождёт следующего.
+  }
+}
+
+/**
+ * Попытка дня кончилась. Она уходит на сервер, и место в таблице называет
+ * он же; свободная доска считается отдельно — см. `finishFree`.
  */
 async function finishPuzzle(score: number): Promise<void> {
   const run = puzzleRun;
+  const free = freeRun;
   puzzleRun = null;
+  freeRun = null;
   if (run === null) {
-    showResult('Доска разобрана', score);
-    const own = keepFreeBest(score);
-    resultSubEl.textContent = own.beaten
-      ? own.was > 0
-        ? `Личный рекорд · было ${groupDigits(own.was)}`
-        : 'Личный рекорд · первый'
-      : `Свободно · рекорд ${groupDigits(own.best)}`;
-    updateMenuPuzzle();
+    await finishFree(score, free);
     return;
   }
 
@@ -1139,7 +1218,7 @@ function boardSignature(
  * гасят окна в полудюжине мест, и помнить про таймер в каждом из них
  * значило бы однажды про него забыть.
  */
-function pollBoard(kind: 'sprint' | 'order' | 'puzzle', draw: () => Promise<unknown>): void {
+function pollBoard(kind: BoardKind, draw: () => Promise<unknown>): void {
   if (boardPoll !== null) clearInterval(boardPoll);
   boardPoll = window.setInterval(() => {
     if (overlay.hidden || openBoard !== kind) {
@@ -1196,6 +1275,9 @@ function renderPuzzleBoard(view: PuzzleView): void {
 async function showPuzzleBoard(): Promise<void> {
   showOverModal({ title: 'Вызов дня', note: 'Загружаю таблицу…', viewing: true });
   openBoard = 'puzzle';
+  // Смотрели эту — к ней же ведёт и клавиша «Результат»: вопрос «как там
+  // сегодня» у игрока один, и прибор должен помнить, про что он был.
+  puzzleBoard = 'daily';
   boardCache = '';
   const draw = async (): Promise<boolean> => {
     try {
@@ -1252,6 +1334,53 @@ async function showSprintBoard(period: BoardPeriod = boardPeriod): Promise<void>
   pollBoard('sprint', draw);
 }
 
+/**
+ * Таблица свободной доски: лучший заход каждого за всё время.
+ *
+ * Периода у неё нет — переключатель «сегодня / за всё время» не
+ * показываем: дневной список свободных заходов был бы списком упорства, а
+ * не умения. И жетонов за неё не дают, о чём таблица говорит прямо: иначе
+ * игрок будет ждать их и не поймёт, почему не пришли.
+ */
+async function showFreeBoard(): Promise<void> {
+  showOverModal({ title: 'Свободная доска', note: 'Загружаю таблицу…', viewing: true });
+  openBoard = 'free';
+  puzzleBoard = 'free';
+  boardTabsEl.hidden = true;
+  boardCache = '';
+  const draw = async (): Promise<boolean> => {
+    try {
+      const board = await getFreeBoard();
+      const signature = boardSignature(
+        board.entries,
+        `free:${board.me ? `${board.me.score}:${board.me.rank}` : '-'}`,
+      );
+      if (signature === boardCache) return true;
+      boardCache = signature;
+      overNoteEl.hidden = false;
+      if (board.entries.length === 0) {
+        overNoteEl.textContent =
+          'Таблица пока пуста. Двадцать пять ходов на случайной доске — и ты в ней.';
+        boardListEl.hidden = true;
+        return true;
+      }
+      overNoteEl.textContent = board.me
+        ? `Твой рекорд ${groupDigits(board.me.score)} · ${board.me.rank}-е место`
+        : 'Сыграй свободную доску, чтобы попасть в таблицу.';
+      renderSprintBoard(board);
+      return true;
+    } catch {
+      overNoteEl.hidden = false;
+      overNoteEl.textContent = 'Таблица свободной доски недоступна. Попробуй позже.';
+      boardListEl.hidden = true;
+      return false;
+    }
+  };
+  if (boardPoll !== null) clearInterval(boardPoll);
+  if (!(await draw())) return;
+  pollBoard('free', draw);
+}
+
 function renderSprintBoard(board: SprintLeaderboardResponse): void {
   boardListEl.hidden = false;
   boardListEl.innerHTML = '';
@@ -1270,12 +1399,18 @@ function renderSprintBoard(board: SprintLeaderboardResponse): void {
 }
 
 /**
+ * Какая таблица открыта. У свободной доски периода нет вовсе — она одна и
+ * вечная, — поэтому переключатель над ней не показываем.
+ */
+type BoardKind = 'sprint' | 'order' | 'puzzle' | 'free';
+
+/**
  * Какой период таблиц смотрят сейчас. День — по умолчанию: он живой и
  * начинается заново каждые сутки, вечная таблица нужна реже.
  */
 let boardPeriod: BoardPeriod = 'day';
 /** Какую таблицу перерисовывать при переключении периода. */
-let openBoard: 'sprint' | 'order' | 'puzzle' | null = null;
+let openBoard: BoardKind | null = null;
 
 function showBoardTabs(board: 'sprint' | 'order'): void {
   openBoard = board;
@@ -2064,6 +2199,9 @@ const input = new ChainInput(
     if (sprintRun) {
       sprintRun.moves.push({ path: path.map((cell) => ({ ...cell })), t: Number(elapsed.toFixed(3)) });
     }
+    if (freeRun) {
+      freeRun.moves.push({ path: path.map((cell) => ({ ...cell })), t: Number(elapsed.toFixed(3)) });
+    }
     if (puzzleRun) {
       puzzleRun.moves.push({ path: path.map((cell) => ({ ...cell })), t: Number(elapsed.toFixed(3)) });
       // Каждый ход — на диск: попытка потрачена, и перезагруженная вкладка
@@ -2145,8 +2283,10 @@ el<HTMLButtonElement>('theme-toggle').addEventListener('click', function () {
 /** Итог соло-партии — крупным числом внутри окуляра. */
 function showResult(cap: string, score: number): void {
   // Клавишу «в чат» поднимает только доигранный вызов дня: остальным
-  // заходам в чате сказать нечего — доска у них своя.
+  // заходам в чате сказать нечего — доска у них своя. Клавишу таблицы —
+  // только свободный заход, и поднимает её тот, кто его досчитал.
   resultShareEl.hidden = true;
+  resultBoardEl.hidden = true;
   resultCapEl.textContent = cap;
   resultBigEl.textContent = String(score);
   resultSubEl.textContent = `образец #${session.seed.toString(16)}`;
@@ -2827,7 +2967,7 @@ const MENU_ACTIONS: Record<string, () => void> = {
   result: () => {
     closeMenu();
     if (deviceKind === 'puzzle') {
-      void showPuzzleBoard();
+      void (puzzleBoard === 'free' ? showFreeBoard() : showPuzzleBoard());
       return;
     }
     boardFromCabinet = false;
@@ -3040,6 +3180,7 @@ resetKey.addEventListener('click', () => {
 
 shareBtn.addEventListener('click', () => void shareDaily());
 resultShareEl.addEventListener('click', () => void shareDaily());
+resultBoardEl.addEventListener('click', () => void showFreeBoard());
 
 el<HTMLButtonElement>('mark-toggle').addEventListener('click', function () {
   const on = !loadMarks();

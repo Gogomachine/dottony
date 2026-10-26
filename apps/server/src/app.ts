@@ -25,6 +25,7 @@ import {
   RenameRequestSchema,
   SubmitOrderRequestSchema,
   SubmitPuzzleRequestSchema,
+  SubmitFreeRequestSchema,
   SubmitSprintRequestSchema,
   TelegramAuthRequestSchema,
   type AdminCard,
@@ -34,6 +35,8 @@ import {
   type AdminNoticesResponse,
   type AdminReportsResponse,
   type DuelKind,
+  type FreeLeaderboardResponse,
+  type SubmitFreeResponse,
   type TourneyHistoryResponse,
   type TourneyResponse,
   type AuthResponse,
@@ -103,7 +106,15 @@ import {
   PLACEMENT_GAMES,
   type Rating,
 } from '@doton/core';
-import { Bot, makeLinkToken, parseStart, type BotUpdate } from './bot.js';
+import { callToPuzzle } from './call.js';
+import {
+  Bot,
+  makeLinkToken,
+  parseStart,
+  wantsCalls,
+  wantsSilence,
+  type BotUpdate,
+} from './bot.js';
 import { orderTempo, replayOrder } from './order.js';
 import { replaySprint } from './sprint.js';
 import { judgeRun } from './judge.js';
@@ -1039,13 +1050,30 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   }
 
   /**
+   * Зов к доске дня: раз в сутки тем, у кого сегодняшняя попытка ещё не
+   * взята. Что именно шлётся и по какому правилу — в `call.ts`; здесь
+   * только повод позвать.
+   */
+  async function dailyCall(now = new Date()): Promise<void> {
+    if (!bot) return;
+    const day = puzzleDay(now);
+    const sent = await callToPuzzle(store, bot, day, now);
+    if (sent !== null) app.log.info({ day, sent }, 'daily call sent');
+  }
+
+  /**
    * Часы турнира. Раздача по времени — вежливость, а не гарантия: на спящем
    * хостинге таймер не тикает, поэтому итоги всё равно наступают при первом
    * взгляде на турнир. Здесь мы лишь стараемся, чтобы взгляд не понадобился.
+   *
+   * Зову к доске дня деваться некуда: он и нужен ровно тем, кто сегодня не
+   * заходил, и ничьим взглядом не вызывается. Поэтому на спящем хостинге он
+   * уйдёт при первом пробуждении после десяти утра, а не в десять.
    */
   const tourneyClock = setInterval(() => {
     void settleTourneys().catch((error: unknown) => app.log.error(error, 'tourney settle failed'));
     void settlePuzzles().catch((error: unknown) => app.log.error(error, 'puzzle settle failed'));
+    void dailyCall().catch((error: unknown) => app.log.error(error, 'daily call failed'));
   }, 5 * 60_000);
   tourneyClock.unref?.();
   app.addHook('onClose', () => clearInterval(tourneyClock));
@@ -1604,6 +1632,75 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return { ...view, ...(shift > 0 ? { shift } : {}) };
   });
 
+  // ---------- Свободная доска ----------
+
+  /**
+   * Заход свободной доски. Правила те же, что у вызова дня, доска — своя,
+   * и потому сид присылает клиент: общей доски тут нет, проверять нечего.
+   *
+   * **Жетонов за свободную доску не платят.** Ни сотни за заход, ни
+   * надбавки за смену, ни отметки на корпус, — и это не экономия. Заходов
+   * тут сколько угодно; привяжи к ним хоть один жетон, и режим перестанет
+   * быть игрой, а станет станком по их печати. Платит вызов дня, где
+   * попытка одна; свободная доска даёт только строку в таблице.
+   */
+  app.post('/api/free', async (request, reply) => {
+    const user = await requireUser(request);
+    const parsed = SubmitFreeRequestSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'bad-request' });
+
+    const replay = replayPuzzle(parsed.data.seed, parsed.data.moves);
+    if (typeof replay === 'string') return reply.code(400).send({ error: replay });
+
+    const saved = await store.saveFree(
+      user.sub,
+      replay.score,
+      parsed.data.seed,
+      JSON.stringify(parsed.data.moves),
+    );
+    // Смотрим на рекорды: проходной заход в таблицу не идёт, и забивать им
+    // журнал службы незачем — а заходов тут сколько угодно.
+    if (saved.improved) await notice(user.sub, 'свободная доска', replay, parsed.data.moves);
+
+    const response: SubmitFreeResponse = {
+      score: replay.score,
+      best: saved.best,
+      record: saved.improved,
+      rank: (await store.freeRank(user.sub)) ?? 1,
+    };
+    return response;
+  });
+
+  /** Вечная таблица свободной доски. Дневной у неё нет — см. `free_runs`. */
+  app.get('/api/free/leaderboard', async (request): Promise<FreeLeaderboardResponse> => {
+    const rows = await store.freeTop(LEADERBOARD_SIZE);
+    const entries = rows.map((row, index) => ({
+      rank: index + 1,
+      name: row.name,
+      score: row.score,
+      mark: row.mark,
+      ...artField(row.art),
+    }));
+
+    // Авторизация не обязательна: без токена просто не будет строки «я».
+    let me: FreeLeaderboardResponse['me'] = null;
+    try {
+      const user = await requireUser(request);
+      const [best, rank, marks] = await Promise.all([
+        store.bestFree(user.sub),
+        store.freeRank(user.sub),
+        store.marksOf(user.sub),
+      ]);
+      const mark = marks.find((id) => id !== null) ?? null;
+      const art = isOwnMark(mark) ? artField(await store.artOf(user.sub)) : {};
+      if (best > 0 && rank !== null) me = { rank, name: user.name, score: best, mark, ...art };
+    } catch {
+      // нет или битый токен — гость смотрит таблицу анонимно
+    }
+
+    return { entries, me };
+  });
+
   // ---------- Заказы ----------
 
   /**
@@ -1813,11 +1910,14 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       return 'Готово: теперь этот Telegram открывает твой профиль на любом устройстве.';
     }
 
-    // Само нажатие Start — разрешение писать: до него бот молчит.
+    // Само нажатие Start — разрешение писать: до него бот молчит. Оно же
+    // возвращает ежедневный зов тому, кто раньше от него отказался: «стоп»
+    // и «старт» — два конца одной ручки.
     const user =
       existing ??
       (await store.createUser(randomUUID(), name, { kind: 'telegram', externalId: telegramId }));
     await store.markBotStarted(telegramId);
+    await store.setNotifyByTelegram(telegramId, true);
 
     if (payload.startsWith('f_')) {
       const friend = await store.userByFriendCode(payload.slice(2).toUpperCase());
@@ -1844,9 +1944,24 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
 
       const update = request.body as BotUpdate;
       const message = update.message;
-      const payload = parseStart(message?.text);
       const telegramId = message?.from?.id;
-      if (payload === null || telegramId === undefined) return { ok: true };
+      if (telegramId === undefined) return { ok: true };
+
+      // «Стоп» — отказ от ежедневного зова. Отвечаем тем же чатом и тут же
+      // говорим, чем его вернуть: выключатель без надписи — не выключатель.
+      if (wantsSilence(message?.text)) {
+        await store.setNotifyByTelegram(String(telegramId), false);
+        await bot.sendMessage(
+          String(message?.chat?.id ?? telegramId),
+          'Больше не зову к доске дня. Вернуть — напиши «старт».',
+        );
+        return { ok: true };
+      }
+
+      // Слово «старт» делает то же, что и кнопка: команду надо знать, а
+      // слово приходит само — и чаще всего именно им и отвечают.
+      const payload = parseStart(message?.text) ?? (wantsCalls(message?.text) ? '' : null);
+      if (payload === null) return { ok: true };
 
       const name = message?.from?.username || message?.from?.first_name || `tg${telegramId}`;
       try {

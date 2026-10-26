@@ -52,6 +52,17 @@ export const SubmitPuzzleRequestSchema = z.object({
   moves: z.array(PuzzleMoveSchema).min(1).max(25),
 });
 
+/**
+ * Заход свободной доски. Правила те же, что у вызова дня, а доска — своя у
+ * каждого, поэтому сид присылает клиент, как в спринте: проверить его
+ * нечем и незачем — общей доски тут нет, есть только пересчёт ходов по
+ * присланному раскладу.
+ */
+export const SubmitFreeRequestSchema = z.object({
+  seed: z.number().int().min(0).max(0xffffffff),
+  moves: z.array(PuzzleMoveSchema).min(1).max(25),
+});
+
 export const NameSchema = z.string().trim().min(1).max(24);
 
 export const GuestAuthRequestSchema = z.object({ name: NameSchema });
@@ -458,6 +469,29 @@ export interface SprintEntry {
 }
 
 export interface SprintLeaderboardResponse {
+  entries: SprintEntry[];
+  me: SprintEntry | null;
+}
+
+/**
+ * Свободная доска: лучший заход за всё время.
+ *
+ * Жетонов за неё не платят и надбавки за смену не бывает — поэтому ответ
+ * короче спринтового ровно на неё: платить тут не за что, и говорить об
+ * оплате нечего.
+ */
+export interface SubmitFreeResponse {
+  /** Счёт этого захода — по пересчёту сервера. */
+  score: number;
+  /** Личный рекорд после захода. */
+  best: number;
+  /** Рекорд обновлён. */
+  record: boolean;
+  rank: number;
+}
+
+/** Строки у свободной таблицы те же, что у рекордов цепочек. */
+export interface FreeLeaderboardResponse {
   entries: SprintEntry[];
   me: SprintEntry | null;
 }

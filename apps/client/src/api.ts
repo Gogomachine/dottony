@@ -17,6 +17,8 @@ import type {
   MoveLog,
   PuzzleMove,
   PuzzleView,
+  FreeLeaderboardResponse,
+  SubmitFreeResponse,
   RatingLeaderboardResponse,
   ReplayResponse,
   SprintLeaderboardResponse,
@@ -430,6 +432,24 @@ export function startPuzzleRun(): Promise<PuzzleView> {
 
 export function sendPuzzle(moves: PuzzleMove[]): Promise<PuzzleView> {
   return request<PuzzleView>('/api/puzzle', { method: 'POST', body: JSON.stringify({ moves }) });
+}
+
+/**
+ * Заход свободной доски на проверку. Сид едет вместе с ходами: доска тут
+ * своя у каждого, и восстановить её серверу больше не из чего.
+ *
+ * Жетонов за это не платят — в ответе их и нет: только счёт, рекорд и
+ * место в вечной таблице.
+ */
+export function sendFree(seed: number, moves: PuzzleMove[]): Promise<SubmitFreeResponse> {
+  return request<SubmitFreeResponse>('/api/free', {
+    method: 'POST',
+    body: JSON.stringify({ seed, moves }),
+  });
+}
+
+export function getFreeBoard(): Promise<FreeLeaderboardResponse> {
+  return request<FreeLeaderboardResponse>('/api/free/leaderboard');
 }
 
 /** Жалоба на соперника: называем его тем же кодом, что и при добавлении в друзья. */

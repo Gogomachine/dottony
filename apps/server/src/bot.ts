@@ -156,6 +156,28 @@ export function makeLinkToken(): string {
 }
 
 /**
+ * Слова, которыми в чате отказываются от ежедневного зова и возвращают
+ * его обратно.
+ *
+ * Не команды со слэшем: команду надо знать, а слово приходит само. Зов и
+ * сам говорит, каким словом его выключить, — и ответ на это слово должен
+ * быть, как бы его ни написали.
+ */
+export function wantsSilence(text: string | undefined): boolean {
+  return plainWord(text, ['стоп', 'stop']);
+}
+
+export function wantsCalls(text: string | undefined): boolean {
+  return plainWord(text, ['старт', 'start']);
+}
+
+function plainWord(text: string | undefined, words: string[]): boolean {
+  if (!text) return false;
+  const word = text.trim().toLowerCase().replace(/^\/+/, '').replace(/[.!…]+$/, '');
+  return words.includes(word);
+}
+
+/**
  * Разбирает `/start <payload>`. Возвращает полезную нагрузку или пустую
  * строку, если её не было; null — если это вообще не команда старта.
  */

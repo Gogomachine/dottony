@@ -47,8 +47,14 @@ export interface UserRow {
  */
 export type IdentityKind = 'guest' | 'telegram' | 'ton';
 
-/** Какая из двух таблиц рекордов: спринт или челлендж комбо. */
-type Board = 'sprint' | 'order';
+/**
+ * Какая из таблиц рекордов: спринт, челлендж комбо или свободная доска.
+ *
+ * У первых двух таблиц по две — вечная и дневная; у свободной только
+ * вечная, и дневной её не спрашивают (см. `freeTop`): рекорд свободной
+ * доски копится, а не начинается заново каждые сутки.
+ */
+type Board = 'sprint' | 'order' | 'free';
 
 export interface Identity {
   kind: IdentityKind;
@@ -262,6 +268,39 @@ export class Store {
            PRIMARY KEY (user_id, day)
          )`,
         `CREATE INDEX IF NOT EXISTS idx_puzzle_days ON puzzle_days (day, score DESC)`,
+        /*
+         * Свободная доска: лучший заход игрока за всё время.
+         *
+         * Таблица одна, дневной у неё нет. Свободных заходов сколько
+         * угодно, и дневной список был бы списком упорства, а не умения:
+         * кто сегодня сел на час, тот его и занял. Вечная же держит лучшее
+         * из сыгранного — и за неё не платят жетонами, иначе заходы без
+         * счёта попыток стали бы станком для их печати.
+         *
+         * Ходы лежат рядом со счётом: попавшее в таблицу число должно
+         * оставаться доказуемым и после того, как его засчитали.
+         */
+        `CREATE TABLE IF NOT EXISTS free_runs (
+           user_id TEXT PRIMARY KEY REFERENCES users(id),
+           score INTEGER NOT NULL,
+           seed INTEGER NOT NULL,
+           moves TEXT NOT NULL,
+           created_at TEXT NOT NULL DEFAULT (datetime('now'))
+         )`,
+        `CREATE INDEX IF NOT EXISTS idx_free_runs_score ON free_runs (score DESC)`,
+        /*
+         * Ежедневный зов к доске дня: по строке на день рассылки.
+         *
+         * Строка и есть право рассылать: заводится она ключом, поэтому
+         * второй подсчёт в тот же день никому не напишет, сколько бы раз
+         * ни сработали часы и сколько бы серверов ни стояло рядом.
+         */
+        `CREATE TABLE IF NOT EXISTS mailings (
+           day TEXT PRIMARY KEY,
+           started_at TEXT NOT NULL DEFAULT (datetime('now')),
+           sent INTEGER NOT NULL DEFAULT 0,
+           finished_at TEXT
+         )`,
         // Заказы: у игрока хранится только лучший заход. Ходы лежат рядом
         // с числом — рекорд должен оставаться доказуемым и после того, как
         // его засчитали.
@@ -463,6 +502,10 @@ export class Store {
     // День последней смены: за первый заход дня прибор доплачивает, и
     // отметка нужна, чтобы доплатить один раз, а не за каждый заход.
     await this.addColumnIfMissing('users', 'shift_day', 'TEXT');
+    // Звать ли игрока к доске дня. По умолчанию зовём: он сам нажал Start
+    // у бота, а это и есть разрешение писать. Отказаться можно словом
+    // «стоп» в том же чате — и вернуть всё словом «старт».
+    await this.addColumnIfMissing('users', 'notify', 'INTEGER NOT NULL DEFAULT 1');
     // Когда заход турнира начат. Время конца писалось поверх времени
     // начала, и заход становился бессрочным: сид выдан утром, журнал можно
     // прислать вечером. Колонка отдельная — по ней решают, уложился ли
@@ -1299,6 +1342,54 @@ export class Store {
     return this.rank('sprint', userId, period);
   }
 
+  /** Личный рекорд свободной доски; 0 — заходов ещё не было. */
+  async bestFree(userId: string): Promise<number> {
+    return this.best('free', userId, 'all');
+  }
+
+  /**
+   * Оставляет у игрока лучший заход свободной доски. Заход слабее не
+   * сохраняем: таблица про рекорд, а не про число попыток, — а попыток
+   * тут сколько угодно.
+   */
+  async saveFree(
+    userId: string,
+    score: number,
+    seed: number,
+    movesJson: string,
+  ): Promise<{ best: number; improved: boolean }> {
+    const previous = await this.bestFree(userId);
+    if (score <= previous) return { best: previous, improved: false };
+
+    await this.client.execute({
+      sql: `INSERT INTO free_runs (user_id, score, seed, moves)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT (user_id) DO UPDATE
+              SET score = excluded.score,
+                  seed = excluded.seed,
+                  moves = excluded.moves,
+                  created_at = datetime('now')`,
+      args: [userId, score, seed, movesJson],
+    });
+    return { best: score, improved: true };
+  }
+
+  async freeRank(userId: string): Promise<number | null> {
+    return this.rank('free', userId, 'all');
+  }
+
+  async freeTop(
+    limit: number,
+  ): Promise<{ name: string; score: number; mark: string | null; art?: string }[]> {
+    const rows = await this.top('free', limit, 'all');
+    return rows.map((row) => ({
+      name: row.name,
+      score: row.value,
+      mark: row.mark,
+      ...this.ownArt(row.mark, row.art),
+    }));
+  }
+
   async sprintTop(
     limit: number,
     period: BoardPeriod = 'all',
@@ -1593,6 +1684,66 @@ export class Store {
     return row ? String(row.external_id) : null;
   }
 
+  /**
+   * Кого звать к сегодняшней доске: у кого запущен бот, кто не отказался
+   * от зова, не изъят — и у кого сегодняшняя попытка ещё не взята.
+   *
+   * Сыгравшего не зовём вовсе: доска одна и попытка одна, и звать его
+   * было бы предложением сделать то, чего сделать уже нельзя.
+   */
+  async puzzleIdlers(day: string): Promise<{ id: string; chat: string }[]> {
+    const result = await this.client.execute({
+      sql: `SELECT u.id, MIN(i.external_id) AS chat
+              FROM users u
+              JOIN identities i
+                ON i.user_id = u.id AND i.kind = 'telegram' AND i.bot_started = 1
+             WHERE u.notify = 1
+               AND u.banned_forever = 0
+               AND (u.banned_until IS NULL OR u.banned_until <= datetime('now'))
+               AND NOT EXISTS (
+                     SELECT 1 FROM puzzle_days p WHERE p.user_id = u.id AND p.day = ?)
+             GROUP BY u.id`,
+      args: [day],
+    });
+    return result.rows.map((row) => ({ id: String(row.id), chat: String(row.chat) }));
+  }
+
+  /**
+   * Право разослать зов за этот день. `false` — его уже кто-то взял.
+   *
+   * Право берётся записью строки, а не проверкой «не рассылали ли»: между
+   * проверкой и рассылкой помещается вторая такая же, и день ушёл бы к
+   * игрокам дважды. Ключ не помещает ничего.
+   */
+  async mailingClaim(day: string): Promise<boolean> {
+    const result = await this.client.execute({
+      sql: `INSERT INTO mailings (day) VALUES (?) ON CONFLICT (day) DO NOTHING`,
+      args: [day],
+    });
+    return result.rowsAffected > 0;
+  }
+
+  /** Рассылка кончилась: сколько писем ушло и когда. */
+  async mailingDone(day: string, sent: number): Promise<void> {
+    await this.client.execute({
+      sql: `UPDATE mailings SET sent = ?, finished_at = datetime('now') WHERE day = ?`,
+      args: [sent, day],
+    });
+  }
+
+  /**
+   * Звать ли игрока. Ставится словом в чате бота, поэтому ищем по
+   * телеграму, а не по игроку: в чате у нас есть только он.
+   */
+  async setNotifyByTelegram(telegramId: string, on: boolean): Promise<void> {
+    await this.client.execute({
+      sql: `UPDATE users SET notify = ?
+             WHERE id IN (SELECT user_id FROM identities
+                           WHERE kind = 'telegram' AND external_id = ?)`,
+      args: [on ? 1 : 0, telegramId],
+    });
+  }
+
   /** Выдаёт одноразовый код привязки. Старые коды того же игрока гасим. */
   async createLinkToken(userId: string, token: string): Promise<void> {
     await this.client.batch(
@@ -1678,7 +1829,9 @@ export class Store {
    * первая строка таблицы.
    */
   private async champions(): Promise<Map<string, string[]>> {
-    const boards: Board[] = ['order', 'sprint'];
+    // Свободной доски здесь нет и не будет: золото — награда, а свободный
+    // режим ничего не награждает, кроме строки в своей таблице.
+    const boards: ('order' | 'sprint')[] = ['order', 'sprint'];
     const holders = new Map<string, string[]>();
     for (const board of boards) {
       const { table, where } = this.source(board, 'all');

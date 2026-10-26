@@ -53,6 +53,8 @@ import type {
   AdminNoticesResponse,
   AdminReportsResponse,
   DuelServerMessage,
+  FreeLeaderboardResponse,
+  SubmitFreeResponse,
   SubmitSprintResponse,
   TourneyHistoryResponse,
   TourneyResponse,
@@ -65,6 +67,7 @@ import type {
 import { buildApp, loggedUrl } from './app.js';
 import { INVITE_LIMIT } from './limits.js';
 import { parseStart } from './bot.js';
+import { CALL_HOUR_UTC, callToPuzzle, type CallBot } from './call.js';
 import { Store } from './db.js';
 import { replayOrder } from './order.js';
 import { SIGNUP_LIMIT } from './limits.js';
@@ -699,6 +702,26 @@ describe('бот', () => {
     const sent = [...calls].reverse().find((call) => call.method === 'sendMessage');
     return String(sent?.payload.text ?? '');
   }
+
+  it('«стоп» выключает ежедневный зов, «старт» возвращает его', async () => {
+    // Сначала Start: до него бот молчит, и отказываться не от чего.
+    await app.inject(update('/start'));
+    expect(lastMessage()).toContain('dotoscope');
+
+    // Слово, а не команда: команду надо знать, а слово приходит само.
+    await app.inject(update('Стоп.'));
+    expect(lastMessage()).toContain('Больше не зову');
+    // Выключатель без надписи — не выключатель: ответ говорит, чем вернуть.
+    expect(lastMessage()).toContain('старт');
+
+    await app.inject(update('старт'));
+    expect(lastMessage()).toContain('dotoscope');
+
+    // Всё прочее бот по-прежнему пропускает мимо: он не чат.
+    const before = calls.length;
+    await app.inject(update('а что тут у вас'));
+    expect(calls).toHaveLength(before);
+  });
 
   it('без секрета вебхук не отвечает', async () => {
     const response = await app.inject({
@@ -4471,5 +4494,209 @@ describe('порог гостевых аккаунтов', () => {
     expect(blocked.statusCode).toBe(429);
     expect(blocked.json()).toEqual({ error: 'too-many' });
     await app.close();
+  });
+});
+
+describe('свободная доска', () => {
+  let app: FastifyInstance;
+
+  beforeEach(async () => {
+    app = await buildApp({ databaseUrl: ':memory:', jwtSecret: 'test-jwt' });
+  });
+
+  afterEach(async () => {
+    await app.close();
+  });
+
+  async function player(name: string): Promise<Record<string, string>> {
+    const auth = await app.inject({ method: 'POST', url: '/api/auth/guest', payload: { name } });
+    return { authorization: `Bearer ${(auth.json() as { token: string }).token}` };
+  }
+
+  const tokensOf = async (headers: Record<string, string>): Promise<number> => {
+    const me = await app.inject({ method: 'GET', url: '/api/me', headers });
+    return (me.json() as { tokens: number }).tokens;
+  };
+
+  const board = async (headers?: Record<string, string>): Promise<FreeLeaderboardResponse> =>
+    (
+      await app.inject({
+        method: 'GET',
+        url: '/api/free/leaderboard',
+        ...(headers ? { headers } : {}),
+      })
+    ).json() as FreeLeaderboardResponse;
+
+  it('счёт считает сервер, а жетонов за свободную доску не платят', async () => {
+    const headers = await player('Ада');
+    expect(await tokensOf(headers)).toBe(0);
+
+    const { moves, score } = playPuzzle(555);
+    const sent = await app.inject({ method: 'POST', url: '/api/free', headers, payload: { seed: 555, moves } });
+    expect(sent.statusCode).toBe(200);
+    const result = sent.json() as SubmitFreeResponse;
+    expect(result.score).toBe(score);
+    expect(result.best).toBe(score);
+    expect(result.record).toBe(true);
+    expect(result.rank).toBe(1);
+
+    // Ни сотни за заход, ни надбавки за смену: свободных заходов сколько
+    // угодно, и любой жетон за них был бы станком по их печати.
+    expect(await tokensOf(headers)).toBe(0);
+    expect(result).not.toHaveProperty('shift');
+  });
+
+  it('в таблице остаётся лучший заход, а слабый её не трогает', async () => {
+    const headers = await player('Ада');
+    const strong = playPuzzle(555);
+    const weak = playPuzzle(555, 3);
+    expect(weak.score).toBeLessThan(strong.score);
+
+    await app.inject({ method: 'POST', url: '/api/free', headers, payload: { seed: 555, moves: strong.moves } });
+    const second = await app.inject({
+      method: 'POST',
+      url: '/api/free',
+      headers,
+      payload: { seed: 555, moves: weak.moves },
+    });
+    const result = second.json() as SubmitFreeResponse;
+    expect(result.score).toBe(weak.score);
+    expect(result.best).toBe(strong.score);
+    expect(result.record).toBe(false);
+
+    const table = await board(headers);
+    expect(table.entries).toHaveLength(1);
+    expect(table.entries[0]!.score).toBe(strong.score);
+  });
+
+  it('таблица открыта и без токена, но строки «я» в ней нет', async () => {
+    const ada = await player('Ада');
+    const bob = await player('Боб');
+    const big = playPuzzle(555);
+    const small = playPuzzle(555, 6);
+    await app.inject({ method: 'POST', url: '/api/free', headers: ada, payload: { seed: 555, moves: big.moves } });
+    await app.inject({ method: 'POST', url: '/api/free', headers: bob, payload: { seed: 555, moves: small.moves } });
+
+    const anon = await board();
+    expect(anon.entries.map((row) => row.name)).toEqual(['Ада', 'Боб']);
+    expect(anon.entries.map((row) => row.rank)).toEqual([1, 2]);
+    expect(anon.me).toBeNull();
+
+    const mine = await board(bob);
+    expect(mine.me).toEqual({ rank: 2, name: 'Боб', score: small.score, mark: null });
+  });
+
+  it('чужие ходы на присланном сиде не проходят', async () => {
+    const headers = await player('Ада');
+    const alien = playPuzzle(777);
+    const sent = await app.inject({
+      method: 'POST',
+      url: '/api/free',
+      headers,
+      payload: { seed: 555, moves: alien.moves },
+    });
+    expect(sent.statusCode).toBe(400);
+    expect((await board(headers)).entries).toHaveLength(0);
+  });
+});
+
+describe('зов к доске дня', () => {
+  /** Бот, который никуда не ходит: письма складываются в список. */
+  function fakeBot(): CallBot & { sent: { chat: string; text: string }[] } {
+    const sent: { chat: string; text: string }[] = [];
+    return {
+      sent,
+      miniAppLink: (param: string) => `https://t.me/dotoscope_bot?startapp=${param}`,
+      sendMessage: async (chat: string, text: string) => {
+        sent.push({ chat, text });
+        return true;
+      },
+    };
+  }
+
+  /** Десять утра по Москве — то самое время, в которое зов и уходит. */
+  const morning = new Date(Date.UTC(2026, 2, 15, CALL_HOUR_UTC, 0, 0));
+  const day = puzzleDay(morning);
+
+  async function store(): Promise<Store> {
+    const made = new Store({ url: ':memory:' });
+    await made.migrate();
+    return made;
+  }
+
+  /** Игрок с запущенным ботом: именно ему прибор и может написать. */
+  async function withBot(db: Store, id: string, telegramId: string): Promise<void> {
+    await db.createUser(id, id, { kind: 'telegram', externalId: telegramId });
+    await db.markBotStarted(telegramId);
+  }
+
+  it('зовёт тех, кто не играл сегодня, и только раз в день', async () => {
+    const db = await store();
+    const bot = fakeBot();
+    try {
+      await withBot(db, 'ada', '1');
+      await withBot(db, 'bob', '2');
+      // Сыгравшего не зовём: попытка одна, и звать его некуда.
+      await withBot(db, 'клара', '3');
+      expect(await db.puzzleStart('клара', day)).toBe(true);
+      // Бот не запущен — писать нельзя, API всё равно откажет.
+      await db.createUser('немой', 'немой', { kind: 'telegram', externalId: '4' });
+
+      expect(await callToPuzzle(db, bot, day, morning, { gapMs: 0 })).toBe(2);
+      expect(bot.sent.map((letter) => letter.chat).sort()).toEqual(['1', '2']);
+      expect(bot.sent[0]!.text).toContain('Доска дня ждёт');
+      // Зов сам говорит, как его выключить: иначе это не зов, а навязчивость.
+      expect(bot.sent[0]!.text).toContain('стоп');
+
+      // Часы тикают каждые пять минут — второй раз день никому не уходит.
+      expect(await callToPuzzle(db, bot, day, morning, { gapMs: 0 })).toBeNull();
+      expect(bot.sent).toHaveLength(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('до десяти утра не зовёт вовсе', async () => {
+    const db = await store();
+    const bot = fakeBot();
+    try {
+      await withBot(db, 'ada', '1');
+      const night = new Date(Date.UTC(2026, 2, 15, CALL_HOUR_UTC - 1, 59, 0));
+      expect(await callToPuzzle(db, bot, puzzleDay(night), night, { gapMs: 0 })).toBeNull();
+      expect(bot.sent).toHaveLength(0);
+
+      // Время пришло — и тот же день уходит нормально.
+      expect(await callToPuzzle(db, bot, day, morning, { gapMs: 0 })).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('«стоп» выключает зов, «старт» возвращает', async () => {
+    const db = await store();
+    const bot = fakeBot();
+    try {
+      await withBot(db, 'ada', '1');
+      await db.setNotifyByTelegram('1', false);
+      expect(await db.puzzleIdlers(day)).toHaveLength(0);
+      expect(await callToPuzzle(db, bot, day, morning, { gapMs: 0 })).toBe(0);
+      expect(bot.sent).toHaveLength(0);
+
+      await db.setNotifyByTelegram('1', true);
+      expect((await db.puzzleIdlers(day)).map((row) => row.chat)).toEqual(['1']);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('изъятый прибор не зовут', async () => {
+    const db = await store();
+    try {
+      await withBot(db, 'ada', '1');
+      await db.ban('ada', null, 'перебор');
+      expect(await db.puzzleIdlers(day)).toHaveLength(0);
+    } finally {
+      db.close();
+    }
   });
 });
