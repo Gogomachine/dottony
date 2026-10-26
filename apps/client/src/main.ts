@@ -159,7 +159,6 @@ const vsNameEl = el<HTMLSpanElement>('vs-name');
 const vsScoreEl = el<HTMLSpanElement>('vs-score');
 const ratingLineEl = el<HTMLDivElement>('rating-line');
 const menuEl = el<HTMLDivElement>('menu');
-const menuSeedEl = el<HTMLSpanElement>('menu-seed');
 const resultEl = el<HTMLDivElement>('result');
 const resultCapEl = el<HTMLSpanElement>('result-cap');
 const resultBigEl = el<HTMLSpanElement>('result-big');
@@ -357,7 +356,6 @@ function startGame(seed?: number): void {
   menuEl.hidden = true;
   setStat('Готов к наблюдению');
   seedEl.textContent = `образец #${session.seed.toString(16)}`;
-  menuSeedEl.textContent = `#${session.seed.toString(16)}`;
   updateHud();
   updateKeys();
 }
