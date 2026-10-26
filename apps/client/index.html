@@ -2416,6 +2416,16 @@
           <h2 id="over-title">Время вышло</h2>
           <span id="final-score" class="mono">0</span>
           <div id="rating-line" class="rating-line" hidden></div>
+          <!--
+            Таблиц у пазла две, и они стоят вкладками в одном окне: это две
+            доски одной игры, и вопрос у игрока один — «как там мой счёт».
+            Разводить их по разным дверям значило бы заставлять помнить, из
+            какой двери какая таблица видна.
+          -->
+          <div id="puzzle-tabs" class="board-tabs" hidden>
+            <button data-board="daily" class="on">Вызов дня</button>
+            <button data-board="free">Свободная</button>
+          </div>
           <p id="over-note" hidden></p>
           <div id="room-box" hidden>
             <span class="room-label">Код комнаты</span>

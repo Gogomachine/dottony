@@ -149,6 +149,7 @@ const boardPrizeEl = el<HTMLParagraphElement>('board-prize');
 const finalScoreEl = el<HTMLSpanElement>('final-score');
 const boardListEl = el<HTMLOListElement>('board-list');
 const boardTabsEl = el<HTMLDivElement>('board-tabs');
+const puzzleTabsEl = el<HTMLDivElement>('puzzle-tabs');
 const modalBtn = el<HTMLButtonElement>('modal-action');
 const scopeEl = el<HTMLDivElement>('scope');
 const miniEl = el<HTMLDivElement>('mini');
@@ -289,17 +290,6 @@ let freeRun: { seed: number; moves: PuzzleMove[] } | null = null;
 
 /** Идёт ли сейчас вызов дня, а не свободная доска. */
 let puzzleRated = false;
-
-/**
- * Какую из двух таблиц пазла открывать клавишей «Результат».
- *
- * Прибор включается на свободной доске — но клавиша не должна с порога
- * вести в её таблицу: главный режим здесь вызов дня, и вопрос «как там
- * сегодня» — про него. Поэтому следим не за тем, что лежит на стекле, а
- * за тем, что игрок последним выбрал сам: сыграл свободную — клавиша
- * ведёт в свободную таблицу, и наоборот.
- */
-let puzzleBoard: 'daily' | 'free' = 'daily';
 
 /** Что сервер рассказал про сегодняшний пазл: доска, попытка, таблица. */
 let puzzleToday: PuzzleView | null = null;
@@ -829,7 +819,6 @@ async function finishTourneyRound(moves: MoveLog[], score: number): Promise<void
  */
 function startFreeBoard(): void {
   puzzleRated = false;
-  puzzleBoard = 'free';
   closeWindows();
   menuEl.hidden = true;
   setMode('puzzle');
@@ -910,7 +899,6 @@ async function startDaily(): Promise<void> {
 
   puzzleToday = taken;
   puzzleRated = true;
-  puzzleBoard = 'daily';
   closeWindows();
   menuEl.hidden = true;
   setMode('puzzle', taken.seed);
@@ -944,7 +932,6 @@ function resumeDaily(): boolean {
   if (kept.day !== puzzleToday.day) return false;
 
   puzzleRated = true;
-  puzzleBoard = 'daily';
   closeWindows();
   menuEl.hidden = true;
   setMode('puzzle', puzzleToday.seed);
@@ -1273,11 +1260,9 @@ function renderPuzzleBoard(view: PuzzleView): void {
  * таймер в каждом из этих мест значило бы однажды про него забыть.
  */
 async function showPuzzleBoard(): Promise<void> {
-  showOverModal({ title: 'Вызов дня', note: 'Загружаю таблицу…', viewing: true });
+  showOverModal({ title: 'Результаты', note: 'Загружаю таблицу…', viewing: true });
   openBoard = 'puzzle';
-  // Смотрели эту — к ней же ведёт и клавиша «Результат»: вопрос «как там
-  // сегодня» у игрока один, и прибор должен помнить, про что он был.
-  puzzleBoard = 'daily';
+  showPuzzleTabs('daily');
   boardCache = '';
   const draw = async (): Promise<boolean> => {
     try {
@@ -1343,10 +1328,9 @@ async function showSprintBoard(period: BoardPeriod = boardPeriod): Promise<void>
  * игрок будет ждать их и не поймёт, почему не пришли.
  */
 async function showFreeBoard(): Promise<void> {
-  showOverModal({ title: 'Свободная доска', note: 'Загружаю таблицу…', viewing: true });
+  showOverModal({ title: 'Результаты', note: 'Загружаю таблицу…', viewing: true });
   openBoard = 'free';
-  puzzleBoard = 'free';
-  boardTabsEl.hidden = true;
+  showPuzzleTabs('free');
   boardCache = '';
   const draw = async (): Promise<boolean> => {
     try {
@@ -1411,6 +1395,29 @@ type BoardKind = 'sprint' | 'order' | 'puzzle' | 'free';
 let boardPeriod: BoardPeriod = 'day';
 /** Какую таблицу перерисовывать при переключении периода. */
 let openBoard: BoardKind | null = null;
+
+/**
+ * Вкладки двух таблиц пазла. Обе двери — и клавиша «Результат», и клавиша
+ * под итогом свободного захода — ведут в одно окно; вкладка говорит, какая
+ * из таблиц открыта сейчас, и переводит в другую одним нажатием.
+ */
+function showPuzzleTabs(which: 'daily' | 'free'): void {
+  puzzleTabsEl.hidden = false;
+  // Период у таблиц пазла не спрашивают: доска дня живёт сутки, а
+  // свободная таблица вечная — делить её на дни нечего.
+  boardTabsEl.hidden = true;
+  for (const button of puzzleTabsEl.querySelectorAll('button')) {
+    button.classList.toggle('on', button.dataset.board === which);
+  }
+}
+
+puzzleTabsEl.addEventListener('click', (event) => {
+  const button = (event.target as HTMLElement).closest('button');
+  const board = button?.dataset.board;
+  if (board !== 'daily' && board !== 'free') return;
+  if (openBoard === (board === 'daily' ? 'puzzle' : 'free')) return;
+  void (board === 'daily' ? showPuzzleBoard() : showFreeBoard());
+});
 
 function showBoardTabs(board: 'sprint' | 'order'): void {
   openBoard = board;
@@ -1479,6 +1486,9 @@ function showOverModal(options: {
   boardListEl.hidden = true;
   // Переключатель периода принадлежит таблице: её показ его и поднимет.
   boardTabsEl.hidden = true;
+  // И вкладки двух таблиц пазла — тоже: их поднимает та из них, которую
+  // открыли.
+  puzzleTabsEl.hidden = true;
   // Строка о жетонах — тоже: она есть только у вызова дня.
   boardPrizeEl.hidden = true;
   openBoard = null;
@@ -2967,7 +2977,9 @@ const MENU_ACTIONS: Record<string, () => void> = {
   result: () => {
     closeMenu();
     if (deviceKind === 'puzzle') {
-      void (puzzleBoard === 'free' ? showFreeBoard() : showPuzzleBoard());
+      // Открываем вызов дня: он главный, и клавиша должна вести всегда в
+      // одно место. Вторая таблица — вкладкой рядом, в одно нажатие.
+      void showPuzzleBoard();
       return;
     }
     boardFromCabinet = false;
